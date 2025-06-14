@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Upload, Plus, Trash2, DollarSign, Calendar, Store, Tag, CreditCard, List, X, Camera } from 'lucide-react';
+import { Upload, Plus, Trash2, DollarSign, Calendar, Store, Tag, CreditCard, List, X, Camera, CheckCircle, XCircle, PlusCircle, Save, Edit } from 'lucide-react';
 import {
   Select,
   SelectContent,
@@ -191,6 +191,7 @@ export default function ReceiptUploader() {
       };
       await addDoc(receiptsCollectionRef, newReceipt);
       console.log("Receipt saved:", newReceipt);
+      fetchReceipts(); // Refresh receipts after saving
       // Clear form
       setFile(null);
       setPreviewImageSrc(null); // Clear preview image source
@@ -217,6 +218,7 @@ export default function ReceiptUploader() {
     try {
       await deleteDoc(doc(db, "receipts", id));
       console.log("Receipt deleted:", id);
+      fetchReceipts(); // Refresh receipts after deleting
     } catch (e) {
       console.error("Error deleting document: ", e);
       setFirestoreError("Failed to delete receipt. Please try again.");
@@ -229,8 +231,8 @@ export default function ReceiptUploader() {
     const { name, value } = e.target;
     if (name === "amount" || name === "subtotal") {
       setFormErrors(prev => ({ ...prev, [name]: '' })); // Clear error for this field
-      // Allow empty string or numbers with up to 2 decimal places
-      if (value === '' || /^[0-9]*\.?[0-9]{0,2}$/.test(value)) {
+      // Allow empty string, negative numbers, or positive numbers with up to 2 decimal places
+      if (value === '' || /^-?[0-9]*\.?[0-9]{0,2}$/.test(value)) {
         if (name === "amount") setAmount(value);
         if (name === "subtotal") setSubtotal(value);
       }
@@ -467,7 +469,8 @@ export default function ReceiptUploader() {
     setEditForm(prev => {
       const updatedForm = { ...prev, [name]: value };
       if (name === "amount" || name === "subtotal") {
-        if (value === '' || /^[0-9]*\.?[0-9]{0,2}$/.test(value)) {
+        // Allow empty string, negative numbers, or positive numbers with up to 2 decimal places
+        if (value === '' || /^-?[0-9]*\.?[0-9]{0,2}$/.test(value)) {
           return updatedForm;
         } else {
           return prev; // Prevent invalid input
@@ -495,6 +498,7 @@ export default function ReceiptUploader() {
       };
       await updateDoc(receiptRef, updatedReceipt);
       console.log("Receipt updated:", updatedReceipt);
+      fetchReceipts(); // Refresh receipts after editing
       setIsEditing(false); // Close edit form
       setEditingReceipt(null);
       setEditForm({ merchant: '', amount: '', date: '', category: '', subtotal: '', payment_method: '', items: [] });
@@ -524,8 +528,8 @@ export default function ReceiptUploader() {
       return;
     }
     const priceNum = parseFloat(newItem.price);
-    if (isNaN(priceNum) || priceNum < 0) {
-      alert('Item price must be a valid non-negative number.');
+    if (isNaN(priceNum)) {
+      alert('Item price must be a valid number.');
       return;
     }
 
@@ -564,8 +568,8 @@ export default function ReceiptUploader() {
       return;
     }
     const priceNum = parseFloat(currentNewItem.price);
-    if (isNaN(priceNum) || priceNum < 0) {
-      alert('Item price must be a valid non-negative number.');
+    if (isNaN(priceNum)) {
+      alert('Item price must be a valid number.');
       return;
     }
 
@@ -593,8 +597,8 @@ export default function ReceiptUploader() {
       return;
     }
     const priceNum = parseFloat(currentNewItem.price);
-    if (isNaN(priceNum) || priceNum < 0) {
-      alert('Item price must be a valid non-negative number.');
+    if (isNaN(priceNum)) {
+      alert('Item price must be a valid number.');
       return;
     }
 
@@ -905,13 +909,13 @@ export default function ReceiptUploader() {
                                 disabled={isBusyGlobal}
                               />
                               <Button onClick={() => handleAddItem(index)} size="sm" className="bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white" disabled={isBusyGlobal}>Save</Button>
-                              <Button onClick={handleEditCancel} size="sm" variant="outline" className="border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 active:bg-gray-300 dark:active:bg-gray-500" disabled={isBusyGlobal}>Cancel</Button>
+                              <Button onClick={handleEditCancel} size="sm" variant="outline" className="border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:active:bg-gray-500" disabled={isBusyGlobal}>Cancel</Button>
                             </>
                           ) : (
                             <>
                               <span className="flex-grow text-gray-800 dark:text-gray-200">{item.name}</span>
                               <span className="text-gray-600 dark:text-gray-400">${parseFloat(item.price).toFixed(2)}</span>
-                              <Button onClick={() => handleEditItem(index)} size="sm" variant="outline" className="border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 active:bg-gray-300 dark:active:bg-gray-500" disabled={isBusyGlobal}>Edit</Button>
+                              <Button onClick={() => handleEditItem(index)} size="sm" variant="outline" className="border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:active:bg-gray-500" disabled={isBusyGlobal}>Edit</Button>
                               <Button onClick={() => handleRemoveItem(index)} size="sm" variant="destructive" className="bg-red-600 hover:bg-red-700 active:bg-red-800 text-white" disabled={isBusyGlobal}>Remove</Button>
                             </>
                           )}
@@ -962,13 +966,13 @@ export default function ReceiptUploader() {
         )}
 
         {/* Edit Receipt Form View */}
-        {currentStep === 'edit' && currentReceipt && (
-          <div className="w-full max-w-2xl mx-auto"> {/* Centering the edit form */}
-            <Card className="bg-white dark:bg-gray-800 shadow-xl rounded-xl border border-gray-200 dark:border-gray-700 mt-8 mb-8 hover:shadow-2xl transition-shadow duration-300 ease-in-out">
-              <CardHeader className="pb-4 flex justify-between items-center">
+        {currentStep === 'edit' && editingReceipt && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-75 p-4">
+            <Card className="bg-white dark:bg-gray-800 shadow-xl rounded-xl border border-gray-200 dark:border-gray-700 hover:shadow-2xl transition-shadow duration-300 ease-in-out w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+              <CardHeader className="pb-4 flex justify-between items-center sticky top-0 bg-white dark:bg-gray-800 z-10">
                 <CardTitle className="text-2xl font-bold text-gray-900 dark:text-white">Edit Receipt</CardTitle>
                 <Button
-                  onClick={handleEditCancel} // Already sets step to upload_options
+                  onClick={handleEditCancel}
                   variant="outline"
                   className="bg-transparent text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 border-none px-4 py-2"
                   disabled={isBusyGlobal}
@@ -1035,121 +1039,105 @@ export default function ReceiptUploader() {
                       </SelectContent>
                     </Select>
                   </div>
-                  {/* Edit Subtotal (Optional) */}
                   <div className="space-y-2">
-                    <Label htmlFor="edit-subtotal" className="text-gray-700 dark:text-gray-300">Subtotal (Optional)</Label>
+                    <Label htmlFor="edit-subtotal" className="text-gray-700 dark:text-gray-300">Subtotal</Label>
                     <Input
                       id="edit-subtotal"
                       name="subtotal"
                       type="number"
-                      min="0"
-                      value={editForm.subtotal || ''}
+                      value={editForm.subtotal}
                       onChange={handleEditChange}
+                      placeholder="0.00 (Optional)"
                       className="border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 ease-in-out"
                       disabled={isBusyGlobal}
                     />
                   </div>
-                  {/* Edit Payment Method (Optional) */}
                   <div className="space-y-2">
-                    <Label htmlFor="edit-payment_method" className="text-gray-700 dark:text-gray-300">Payment Method (Optional)</Label>
+                    <Label htmlFor="edit-payment-method" className="text-gray-700 dark:text-gray-300">Payment Method</Label>
                     <Input
-                      id="edit-payment_method"
+                      id="edit-payment-method"
                       name="payment_method"
-                      value={editForm.payment_method || ''}
+                      value={editForm.payment_method}
                       onChange={handleEditChange}
+                      placeholder="e.g., Credit Card, Cash"
                       className="border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 ease-in-out"
                       disabled={isBusyGlobal}
                     />
                   </div>
                 </div>
-
-                {/* Edit Items Section */}
-                <div className="mt-6 space-y-4">
-                  <h3 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center gap-2">
-                    <List className="h-5 w-5 text-gray-500 dark:text-gray-400" /> Items (Optional)
-                  </h3>
-                  <div className="space-y-3">
-                    {editForm.items && editForm.items.length > 0 ? (
-                      editForm.items.map((item, index) => (
-                        <div key={index} className="flex items-center gap-2 bg-gray-100 dark:bg-gray-700 p-2 rounded-md">
-                          {currentEditingItemIndex === index ? (
-                            <>
-                              <Input
-                                type="text"
-                                value={currentNewItem.name}
-                                onChange={(e) => setCurrentNewItem({ ...currentNewItem, name: e.target.value })}
-                                placeholder="Item Name"
-                                className="flex-grow border-gray-300 dark:border-gray-600 dark:bg-gray-600 dark:text-white rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 ease-in-out"
-                                disabled={isBusyGlobal}
-                              />
-                              <Input
-                                type="number"
-                                value={currentNewItem.price}
-                                onChange={(e) => setCurrentNewItem({ ...currentNewItem, price: e.target.value })}
-                                placeholder="Price"
-                                className="w-24 border-gray-300 dark:border-gray-600 dark:bg-gray-600 dark:text-white rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 ease-in-out"
-                                disabled={isBusyGlobal}
-                              />
-                              <Button onClick={handleEditItemSave} size="sm" className="bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white" disabled={isBusyGlobal}>Save</Button>
-                              <Button onClick={handleEditItemCancel} size="sm" variant="outline" className="border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 active:bg-gray-300 dark:active:bg-gray-500" disabled={isBusyGlobal}>Cancel</Button>
-                            </>
-                          ) : (
-                            <>
-                              <span className="flex-grow text-gray-800 dark:text-gray-200">{item.name}</span>
-                              <span className="text-gray-600 dark:text-gray-400">${parseFloat(item.price).toFixed(2)}</span>
-                              <Button onClick={() => handleEditItemEdit(index)} size="sm" variant="outline" className="border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 active:bg-gray-300 dark:active:bg-gray-500" disabled={isBusyGlobal}>Edit</Button>
-                              <Button onClick={() => handleRemoveItemEdit(index)} size="sm" variant="destructive" className="bg-red-600 hover:bg-red-700 active:bg-red-800 text-white" disabled={isBusyGlobal}>Remove</Button>
-                            </>
-                          )}
-                        </div>
-                      ))
-                    ) : (
-                      <p className="text-gray-500 dark:text-gray-400 text-center py-4">No items extracted yet.</p>
-                    )}
-
-                    {currentEditingItemIndex === null && (
-                      <div className="flex items-center gap-2">
-                        <Input
-                          type="text"
-                          value={currentNewItem.name}
-                          onChange={(e) => setCurrentNewItem({ ...currentNewItem, name: e.target.value })}
-                          placeholder="Add new item name"
-                          className="flex-grow border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 ease-in-out"
-                          disabled={isBusyGlobal}
-                        />
-                        <Input
-                          type="number"
-                          value={currentNewItem.price}
-                          onChange={(e) => setCurrentNewItem({ ...currentNewItem, price: e.target.value })}
-                          placeholder="Price"
-                          className="w-24 border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 ease-in-out"
-                          disabled={isBusyGlobal}
-                        />
-                        <Button onClick={handleEditItemAdd} className="bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white" disabled={isBusyGlobal}>Add Item</Button>
-                      </div>
-                    )}
+                <h3 className="text-xl font-bold text-gray-900 dark:text-white mt-8 mb-4">Items</h3>
+                <div className="flex flex-col gap-4">
+                  {(editForm.items || []).map((item, index) => (
+                    <div key={index} className="flex items-center gap-2 bg-gray-50 dark:bg-gray-700 p-3 rounded-md shadow-sm">
+                      {currentEditingItemIndex === index ? (
+                        <> {/* Editing fields */}
+                          <Input
+                            value={currentNewItem.name}
+                            onChange={(e) => setCurrentNewItem(prev => ({ ...prev, name: e.target.value }))}
+                            placeholder="Item name"
+                            className="flex-1 border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 ease-in-out"
+                            disabled={isBusyGlobal}
+                          />
+                          <Input
+                            value={currentNewItem.price}
+                            onChange={(e) => setCurrentNewItem(prev => ({ ...prev, price: e.target.value }))}
+                            placeholder="Price"
+                            type="number"
+                            className="w-24 border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 ease-in-out"
+                            disabled={isBusyGlobal}
+                          />
+                          <Button onClick={handleEditItemSave} size="icon" className="bg-green-500 hover:bg-green-600 active:bg-green-700 text-white transition-colors" disabled={isBusyGlobal}><CheckCircle className="h-4 w-4" /></Button>
+                          <Button onClick={handleEditItemCancel} size="icon" variant="outline" className="bg-transparent hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300 border-none transition-colors" disabled={isBusyGlobal}><XCircle className="h-4 w-4" /></Button>
+                        </>
+                      ) : (
+                        <> {/* Display fields */}
+                          <span className="flex-1 text-gray-800 dark:text-gray-200">{item.name}</span>
+                          <span className="text-gray-800 dark:text-gray-200">${parseFloat(item.price).toFixed(2)}</span>
+                          <Button onClick={() => handleEditItemEdit(index)} size="icon" className="bg-blue-500 hover:bg-blue-600 active:bg-blue-700 text-white transition-colors" disabled={isBusyGlobal}><Edit className="h-4 w-4" /></Button>
+                          <Button onClick={() => handleRemoveItemEdit(index)} size="icon" variant="destructive" className="bg-red-500 hover:bg-red-600 active:bg-red-700 text-white transition-colors" disabled={isBusyGlobal}><Trash2 className="h-4 w-4" /></Button>
+                        </>
+                      )}
+                    </div>
+                  ))}
+                  <div className="flex items-center gap-2 bg-gray-50 dark:bg-gray-700 p-3 rounded-md shadow-sm mt-4">
+                    <Input
+                      name="name"
+                      value={currentNewItem.name}
+                      onChange={(e) => setCurrentNewItem(prev => ({ ...prev, name: e.target.value }))}
+                      placeholder="New item name"
+                      className="flex-1 border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 ease-in-out"
+                      disabled={isBusyGlobal}
+                    />
+                    <Input
+                      name="price"
+                      value={currentNewItem.price}
+                      onChange={(e) => setCurrentNewItem(prev => ({ ...prev, price: e.target.value }))}
+                      placeholder="Price"
+                      type="number"
+                      className="w-24 border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 ease-in-out"
+                      disabled={isBusyGlobal}
+                    />
+                    <Button onClick={handleEditItemAdd} size="icon" className="bg-green-500 hover:bg-green-600 active:bg-green-700 text-white transition-colors" disabled={isBusyGlobal}><PlusCircle className="h-4 w-4" /></Button>
                   </div>
-                </div>
-
-                <div className="flex justify-end gap-4 mt-6">
-                  <Button
-                    onClick={() => handleEditSave(currentReceipt.id)}
-                    className="bg-green-600 text-white hover:bg-green-700 active:bg-green-800 transition-colors"
-                    disabled={isBusyGlobal}
-                  >
-                    <span className="flex items-center gap-2">
-                      <DollarSign className="h-5 w-5" /> Save Changes
-                    </span>
-                  </Button>
-                  <Button
-                    onClick={handleEditCancel}
-                    className="bg-gray-600 text-white hover:bg-gray-700 active:bg-gray-800 transition-colors"
-                    disabled={isBusyGlobal}
-                  >
-                    Cancel
-                  </Button>
                 </div>
               </CardContent>
+              <CardFooter className="flex justify-end gap-4 pt-4 sticky bottom-0 bg-white dark:bg-gray-800 z-10">
+                <Button
+                  onClick={handleEditCancel}
+                  variant="outline"
+                  className="bg-gray-200 hover:bg-gray-300 active:bg-gray-400 text-gray-800 dark:bg-gray-700 dark:hover:bg-gray-600 dark:active:bg-gray-500 dark:text-gray-200 transition-colors"
+                  disabled={isBusyGlobal}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  onClick={() => handleEditSave(editingReceipt.id)}
+                  className="bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white transition-colors"
+                  disabled={isBusyGlobal}
+                >
+                  <Save className="mr-2 h-4 w-4" /> Save Changes
+                </Button>
+              </CardFooter>
             </Card>
           </div>
         )}
