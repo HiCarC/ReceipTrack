@@ -47,6 +47,8 @@ export default function ReceiptUploader() {
   const [isCameraOpen, setIsCameraOpen] = useState(false);
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
+  const [showFullScreenPreview, setShowFullScreenPreview] = useState(false);
+  const [previewImageSrc, setPreviewImageSrc] = useState(null);
 
   const categories = [
     "Groceries",
@@ -407,15 +409,11 @@ export default function ReceiptUploader() {
   };
 
   const handleImageChange = (e) => {
-    const file = e.target.files[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setFile(file);
-      };
-      reader.readAsDataURL(file);
-    } else {
-      setFile(null);
+    const selectedFile = e.target.files[0];
+    if (selectedFile) {
+      setFile(selectedFile);
+      setPreviewImageSrc(URL.createObjectURL(selectedFile));
+      setShowFullScreenPreview(true);
     }
   };
 
@@ -430,11 +428,12 @@ export default function ReceiptUploader() {
       });
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
+        videoRef.current.play();
       }
       setIsCameraOpen(true);
     } catch (err) {
       console.error("Error accessing camera:", err);
-      setOcrError("Could not access camera. Please try uploading an image instead.");
+      setOcrError("Could not access camera. Please ensure camera permissions are granted and try again.");
     }
   };
 
@@ -467,16 +466,34 @@ export default function ReceiptUploader() {
           const file = new File([blob], "receipt.jpg", { type: "image/jpeg" });
           handleImageChange({ target: { files: [file] } });
           stopCamera();
+          setPreviewImageSrc(URL.createObjectURL(file));
+          setShowFullScreenPreview(true);
         }
       }, 'image/jpeg', 0.95);
     }
   };
 
+  const handleConfirmPreview = () => {
+    setShowFullScreenPreview(false);
+    // The OCR process will be triggered by the `file` state change in useEffect
+  };
+
+  const handleRetakePreview = () => {
+    setFile(null);
+    setPreviewImageSrc(null);
+    setShowFullScreenPreview(false);
+    // Optionally restart camera if it was from camera
+    // startCamera(); // Only if we want to immediately restart camera
+  };
+
   useEffect(() => {
     return () => {
       stopCamera();
+      if (previewImageSrc) {
+        URL.revokeObjectURL(previewImageSrc);
+      }
     };
-  }, []);
+  }, [previewImageSrc]);
 
   const handleEditClick = (receipt) => {
     setEditingReceipt(receipt.id);
@@ -580,7 +597,33 @@ export default function ReceiptUploader() {
           <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-6">Receipt Uploader</h1>
 
           {/* Upload Section */}
-          <div className="mb-8">
+          <div className="mb-8 relative">
+            {showFullScreenPreview && previewImageSrc && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-90 p-4">
+                <div className="relative w-full h-full max-w-4xl max-h-[90vh] flex flex-col items-center justify-center">
+                  <img
+                    src={previewImageSrc}
+                    alt="Receipt preview"
+                    className="max-w-full max-h-full object-contain rounded-lg shadow-xl"
+                  />
+                  <div className="absolute bottom-4 flex gap-4">
+                    <button
+                      onClick={handleConfirmPreview}
+                      className="bg-blue-500 text-white px-6 py-3 rounded-full shadow-lg hover:bg-blue-600 transition-colors text-lg font-semibold"
+                    >
+                      Use Image
+                    </button>
+                    <button
+                      onClick={handleRetakePreview}
+                      className="bg-gray-700 text-white px-6 py-3 rounded-full shadow-lg hover:bg-gray-800 transition-colors text-lg font-semibold"
+                    >
+                      Retake / Re-upload
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
             <div className="flex flex-col sm:flex-row items-center gap-4">
               <div className="w-full sm:w-1/2">
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
@@ -589,33 +632,52 @@ export default function ReceiptUploader() {
                 <div className="mt-1 flex flex-col gap-4">
                   {/* Camera View */}
                   {isCameraOpen && (
-                    <div className="relative rounded-lg overflow-hidden">
+                    <div className="relative rounded-lg overflow-hidden w-full" style={{ paddingTop: '75%' }}> {/* Aspect ratio box */}
                       <video
                         ref={videoRef}
                         autoPlay
                         playsInline
-                        className="w-full h-auto rounded-lg"
+                        muted // Added muted attribute for autoplay policies
+                        className="absolute inset-0 w-full h-full object-contain rounded-lg"
                       />
                       <canvas ref={canvasRef} className="hidden" />
-                      <div className="absolute bottom-4 left-0 right-0 flex justify-center gap-4">
+                      {/* Guidance Overlay */}
+                      <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                        <div className="border-2 border-dashed border-white opacity-75 w-3/4 h-3/4 rounded-lg flex items-center justify-center">
+                          <p className="text-white text-lg font-semibold text-center hidden sm:block">Align receipt within the frame</p>
+                        </div>
+                      </div>
+                      {/* Loading/Status indicator */}
+                      {!videoRef.current?.srcObject && (
+                        <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-75 rounded-lg">
+                          <p className="text-white text-lg">Awaiting camera feed...</p>
+                        </div>
+                      )}
+
+                      <div className="absolute bottom-4 left-0 right-0 flex justify-center gap-4 p-2">
+                        {/* Capture Button */}
                         <button
                           onClick={capturePhoto}
-                          className="bg-white p-3 rounded-full shadow-lg hover:bg-gray-100 transition-colors"
+                          className="bg-blue-500 text-white p-4 rounded-full shadow-lg hover:bg-blue-600 transition-colors flex items-center justify-center border-4 border-white"
+                          style={{ width: '70px', height: '70px' }}
+                          aria-label="Capture Photo"
                         >
-                          <div className="w-12 h-12 rounded-full border-4 border-blue-500"></div>
-                        </button>
-                        <button
-                          onClick={stopCamera}
-                          className="bg-red-500 text-white p-3 rounded-full shadow-lg hover:bg-red-600 transition-colors"
-                        >
-                          <X className="h-6 w-6" />
+                          <Camera className="h-8 w-8" />
                         </button>
                       </div>
+                      {/* Close Camera Button */}
+                      <button
+                        onClick={stopCamera}
+                        className="absolute top-4 right-4 bg-gray-800 bg-opacity-50 text-white p-2 rounded-full hover:bg-opacity-75 transition-colors shadow-lg"
+                        aria-label="Close Camera"
+                      >
+                        <X className="h-6 w-6" />
+                      </button>
                     </div>
                   )}
 
-                  {/* Upload Area */}
-                  {!isCameraOpen && (
+                  {/* Upload Area (Hidden when preview is open or camera is open) */}
+                  {!isCameraOpen && !showFullScreenPreview && (
                     <div className="flex flex-col gap-4">
                       <div className="flex justify-center px-6 pt-5 pb-6 border-2 border-gray-300 dark:border-gray-600 border-dashed rounded-lg hover:border-blue-500 dark:hover:border-blue-400 transition-colors">
                         <div className="space-y-4 text-center">
@@ -654,7 +716,8 @@ export default function ReceiptUploader() {
                   )}
                 </div>
               </div>
-              {file && (
+              {/* Existing preview removed as it's replaced by full-screen preview */}
+              {/* {file && (
                 <div className="w-full sm:w-1/2">
                   <div className="relative">
                     <img
@@ -673,7 +736,7 @@ export default function ReceiptUploader() {
                     </button>
                   </div>
                 </div>
-              )}
+              )} */}
             </div>
           </div>
 
