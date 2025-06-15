@@ -6,6 +6,15 @@ export default {
   ],
   theme: {
     extend: {
+      keyframes: {
+        'very-slow-pulse': {
+          '0%, 100%': { opacity: '1' },
+          '50%': { opacity: '0' }, // Fade to completely transparent
+        },
+      },
+      animation: {
+        'very-slow-pulse': 'very-slow-pulse 10s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+      },
       colors: {
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",

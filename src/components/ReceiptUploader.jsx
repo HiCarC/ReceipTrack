@@ -3,7 +3,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Upload, Plus, Trash2, DollarSign, Calendar, Store, Tag, CreditCard, List, X, Camera, CheckCircle, XCircle, PlusCircle, Save, Edit } from 'lucide-react';
+import { Upload, Plus, Trash2, DollarSign, Calendar, Store, Tag, CreditCard, List, X, Camera, CheckCircle, XCircle, PlusCircle, Save, Edit, Mail, LineChart, Lock } from 'lucide-react';
 import {
   Select,
   SelectContent,
@@ -11,11 +11,33 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-
+import { useToast } from "@/components/ui/use-toast";
 import { db } from '@/firebase'; // Import your Firebase db instance
 import { collection, addDoc, getDocs, deleteDoc, doc, serverTimestamp, updateDoc } from "firebase/firestore"; // Import Firestore functions
+import { 
+  SUPPORTED_CURRENCIES, 
+  fetchExchangeRates, 
+  convertCurrency, 
+  formatCurrency, 
+  getCurrencySymbol,
+  initializeExchangeRates 
+} from '@/utils/currencyUtils';
+import { loadSettings, formatAmount, formatDate } from '@/utils/settingsUtils';
+import { useAuth } from '@/contexts/AuthContext';
+import { convertToBaseCurrency } from '@/utils/currencyUtils';
 
-export default function ReceiptUploader() {
+// Add currency conversion rates (you would typically fetch these from an API)
+const CURRENCY_RATES = {
+  EUR: 1,
+  USD: 1.08, // Example rate
+  GBP: 0.86, // Example rate
+  // Add more currencies as needed
+};
+
+export default function ReceiptUploader({ className }) {
+  const { toast } = useToast();
+  const authContext = useAuth();
+  const user = authContext ? authContext.user : null;
   const [file, setFile] = useState(null);
   const [amount, setAmount] = useState('');
   const [merchant, setMerchant] = useState('');
@@ -109,20 +131,20 @@ export default function ReceiptUploader() {
   const receiptsCollectionRef = collection(db, "receipts");
 
   const fetchReceipts = async () => {
+    if (!user) return;
     setIsFirestoreLoading(true);
     setFirestoreError(null);
     try {
       const data = await getDocs(receiptsCollectionRef);
       const receiptsList = data.docs.map((doc) => ({ ...doc.data(), id: doc.id }));
-      
+      // Only show receipts for the current user
+      const userReceipts = receiptsList.filter(r => r.user_id === user.uid);
       // Sort receipts by created_at timestamp in descending order (newest first)
-      const sortedReceipts = receiptsList.sort((a, b) => {
-        // Handle cases where created_at might be null or undefined
+      const sortedReceipts = userReceipts.sort((a, b) => {
         const dateA = a.created_at?.toDate?.() || new Date(0);
         const dateB = b.created_at?.toDate?.() || new Date(0);
         return dateB - dateA;
       });
-      
       setReceipts(sortedReceipts);
     } catch (error) {
       console.error("Error fetching receipts:", error);
@@ -162,54 +184,196 @@ export default function ReceiptUploader() {
     }
   }, [isLoading, isFirestoreLoading]); // Depend on the raw state variables
 
+  const [currency, setCurrency] = useState({ symbol: '€', code: 'EUR', format: '1.234,56' });
+  const [convertedAmount, setConvertedAmount] = useState(null);
+  const [convertedSubtotal, setConvertedSubtotal] = useState(null);
+  const [convertedItems, setConvertedItems] = useState([]);
+  const [exchangeRates, setExchangeRates] = useState(null);
+
+  // Initialize exchange rates on component mount
+  useEffect(() => {
+    initializeExchangeRates().then(rates => {
+      setExchangeRates(rates);
+    });
+  }, []);
+
+  // Update exchange rates periodically
+  useEffect(() => {
+    const interval = setInterval(async () => {
+      try {
+        const rates = await fetchExchangeRates();
+        setExchangeRates(rates);
+      } catch (error) {
+        console.error('Failed to update exchange rates:', error);
+      }
+    }, 3600000); // Update every hour
+
+    return () => clearInterval(interval);
+  }, []);
+
+  // Function to convert amount to EUR
+  const convertToEUR = (amount, fromCurrency) => {
+    if (!amount || !fromCurrency || fromCurrency === 'EUR') return amount;
+    const rate = CURRENCY_RATES[fromCurrency];
+    return rate ? amount / rate : amount;
+  };
+
+  // Function to format currency
+  const formatCurrency = (amount, currencyCode = 'EUR') => {
+    if (amount === null || amount === undefined) return '';
+    const formatter = new Intl.NumberFormat('de-DE', {
+      style: 'currency',
+      currency: currencyCode,
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    });
+    return formatter.format(amount);
+  };
+
+  // Add state for OCR data
+  const [ocrData, setOcrData] = useState(null);
+  const [detectedCurrency, setDetectedCurrency] = useState(null);
+
+  // Update handleSaveReceipt to check for user
   const handleSaveReceipt = async () => {
-    console.log("Save Receipt button clicked. Attempting to save...");
-    setFormErrors({});
-    let errors = {};
-
-    if (!merchant.trim()) errors.merchant = "Merchant is required.";
-    if (!amount || isNaN(parseFloat(amount))) errors.amount = "Amount is required and must be a number.";
-    if (!date) errors.date = "Date is required.";
-    if (!category) errors.category = "Category is required.";
-
-    if (Object.keys(errors).length > 0) {
-      setFormErrors(errors);
+    if (!user) {
+      toast({
+        title: "Authentication Required",
+        description: "Please log in to save receipts.",
+        variant: "destructive",
+      });
       return;
     }
 
-    setIsLoading(true); // Start loading for Firestore operation
     try {
-      const newReceipt = {
-        merchant,
-        amount: parseFloat(amount),
-        date,
-        category,
-        subtotal: subtotal ? parseFloat(subtotal) : null,
-        payment_method: paymentMethod || null,
-        items: items.filter(item => item.name && item.price), // Filter out empty items
-        created_at: serverTimestamp(), // Add timestamp
+      console.log('Save Receipt button clicked. Attempting to save...');
+      setIsLoading(true);
+      setIsBusy(true);
+
+      // Get the original amount from OCR data or form
+      const originalAmount = ocrData?.total || parseFloat(amount) || 0;
+      const originalCurrency = detectedCurrency?.code || settings.baseCurrency;
+
+      // Convert amount to base currency if needed
+      const baseAmount = originalCurrency !== settings.baseCurrency
+        ? await convertToBaseCurrency(originalAmount, originalCurrency)
+        : originalAmount;
+
+      // Ensure all required fields are present and valid
+      const receiptData = {
+        merchant: ocrData?.merchant || merchant || 'Unknown Merchant',
+        amount: baseAmount,
+        originalAmount: originalAmount,
+        originalCurrency: originalCurrency,
+        date: ocrData?.date || date || new Date().toISOString().split('T')[0],
+        category: ocrData?.category || category || 'Uncategorized',
+        payment_method: ocrData?.payment_method || paymentMethod || 'Unknown',
+        items: (ocrData?.items || items).map(item => ({
+          name: item.name || 'Unknown Item',
+          price: parseFloat(item.price) || 0,
+          originalPrice: parseFloat(item.originalPrice) || parseFloat(item.price) || 0,
+          quantity: parseInt(item.quantity) || 1
+        })),
+        created_at: new Date(),
+        user_id: user.uid
       };
-      await addDoc(receiptsCollectionRef, newReceipt);
-      console.log("Receipt saved:", newReceipt);
-      fetchReceipts(); // Refresh receipts after saving
-      // Clear form
-      setFile(null);
-      setPreviewImageSrc(null); // Clear preview image source
-      setAmount('');
-      setMerchant('');
-      setDate('');
-      setCategory('');
-      setSubtotal('');
-      setPaymentMethod('');
-      setItems([]);
-      setFormErrors({});
-      setCurrentStep('upload_options'); // Navigate back to upload options for new upload
-    } catch (e) {
-      console.error("Error adding document: ", e);
-      setFirestoreError("Failed to save receipt. Please try again.");
+
+      // Add subtotal if available
+      if (ocrData?.subtotal || subtotal) {
+        const originalSubtotal = ocrData?.subtotal || parseFloat(subtotal);
+        receiptData.subtotal = originalCurrency !== settings.baseCurrency
+          ? await convertToBaseCurrency(originalSubtotal, originalCurrency)
+          : originalSubtotal;
+        receiptData.originalSubtotal = originalSubtotal;
+      }
+
+      // Add tax if available
+      if (ocrData?.tax || tax) {
+        const originalTax = ocrData?.tax || parseFloat(tax);
+        receiptData.tax = originalCurrency !== settings.baseCurrency
+          ? await convertToBaseCurrency(originalTax, originalCurrency)
+          : originalTax;
+        receiptData.originalTax = originalTax;
+      }
+
+      // Add tax rate if available
+      if (ocrData?.taxRate || taxRate) {
+        receiptData.taxRate = parseFloat(ocrData?.taxRate || taxRate);
+      }
+
+      // Add tax type if available
+      if (ocrData?.taxType || taxType) {
+        receiptData.taxType = ocrData?.taxType || taxType;
+      }
+
+      // Add tax number if available
+      if (ocrData?.taxNumber || taxNumber) {
+        receiptData.taxNumber = ocrData?.taxNumber || taxNumber;
+      }
+
+      // Add notes if available
+      if (ocrData?.notes || notes) {
+        receiptData.notes = ocrData?.notes || notes;
+      }
+
+      // Add location if available
+      if (ocrData?.location || location) {
+        receiptData.location = ocrData?.location || location;
+      }
+
+      // Add receipt number if available
+      if (ocrData?.receiptNumber || receiptNumber) {
+        receiptData.receiptNumber = ocrData?.receiptNumber || receiptNumber;
+      }
+
+      // Add payment details if available
+      if (ocrData?.paymentDetails || paymentDetails) {
+        receiptData.paymentDetails = ocrData?.paymentDetails || paymentDetails;
+      }
+
+      // Add tags if available
+      if (ocrData?.tags || tags) {
+        receiptData.tags = ocrData?.tags || tags;
+      }
+
+      // Add attachments if available
+      if (attachments && attachments.length > 0) {
+        receiptData.attachments = attachments;
+      }
+
+      // Add metadata
+      receiptData.metadata = {
+        created_at: new Date(),
+        updated_at: new Date(),
+        version: '1.0',
+        source: ocrData ? 'ocr' : 'manual_entry'
+      };
+
+      console.log('Saving receipt with data:', receiptData);
+      const docRef = await addDoc(collection(db, 'receipts'), receiptData);
+      console.log('Receipt saved: ', receiptData);
+
+      // Reset form and OCR data
+      resetForm();
+      setOcrData(null);
+      setDetectedCurrency(null);
+      setShowAddReceipt(false);
+
+      toast({
+        title: "Success",
+        description: "Receipt saved successfully",
+        variant: "default",
+      });
+    } catch (error) {
+      console.error('Error adding document: ', error);
+      toast({
+        title: "Error",
+        description: "Failed to save receipt: " + error.message,
+        variant: "destructive",
+      });
     } finally {
-      setIsLoading(false); // End loading for Firestore operation
-      setIsBusy(false); // Also ensure isBusy state is cleared
+      setIsLoading(false);
+      setIsBusy(false);
     }
   };
 
@@ -365,7 +529,7 @@ export default function ReceiptUploader() {
               content: [
                 {
                   type: "text",
-                  text: "Extract the following information from this receipt image: date, merchant name, total amount, tax amount, subtotal (if available), payment method (if available), and a list of items with their prices (if available). Format the response as a JSON object with these fields: date, merchant, total, tax, subtotal, paymentMethod, and items (as an array of objects with name and price). If any field is not found, set it to null. For the date, use YYYY-MM-DD format. For monetary values, use numbers without currency symbols."
+                  text: "Analyze this receipt image and extract the following information with high precision:\n\n1. Basic Information:\n- Date (convert to YYYY-MM-DD format)\n- Merchant name\n- Total amount\n- Tax amount\n- Subtotal (if available)\n- Payment method (if available)\n\n2. Currency Analysis:\n- Detect the currency symbol and code (€, $, £, etc.)\n- Identify the currency format (e.g., 1,234.56 or 1.234,56)\n- Note any currency-specific patterns or conventions\n\n3. Category Classification:\nDetermine the most appropriate category from: Groceries, Dining, Transportation, Shopping, Bills, Entertainment, Health, Other\nBase this on:\n- Merchant name and type\n- Items purchased\n- Overall purchase context\n- Common patterns for similar merchants\n\n4. Items Analysis:\n- List all items with their prices\n- Group similar items\n- Note any special categories or departments\n\nFormat the response as a JSON object with these fields:\n{\n  \"date\": \"YYYY-MM-DD\",\n  \"merchant\": \"string\",\n  \"total\": number,\n  \"tax\": number,\n  \"subtotal\": number,\n  \"paymentMethod\": \"string\",\n  \"category\": \"string\",\n  \"currency\": {\n    \"symbol\": \"string\",\n    \"code\": \"string\",\n    \"format\": \"string\"\n  },\n  \"items\": [\n    {\n      \"name\": \"string\",\n      \"price\": number,\n      \"group\": \"string\"\n    }\n  ]\n}\n\nRules:\n1. If any field is not found, set it to null\n2. For monetary values, use numbers without currency symbols\n3. Ensure all numbers are properly formatted according to the detected currency format\n4. Group similar items under appropriate categories\n5. Use the most specific category possible based on the available information"
                 },
                 {
                   type: "image_url",
@@ -406,13 +570,40 @@ export default function ReceiptUploader() {
       const parsedData = JSON.parse(jsonStr);
       console.log('Parsed OCR data:', parsedData);
 
-      // Update individual form fields
+      // Set the detected currency
+      if (parsedData.currency) {
+        const detectedCurrency = SUPPORTED_CURRENCIES[parsedData.currency.code] || SUPPORTED_CURRENCIES.EUR;
+        setCurrency(detectedCurrency);
+      }
+
+      // Convert amounts to EUR
+      const totalInEUR = convertCurrency(parsedData.total, parsedData.currency?.code);
+      const subtotalInEUR = convertCurrency(parsedData.subtotal, parsedData.currency?.code);
+      
+      // Convert item prices to EUR
+      const itemsInEUR = parsedData.items ? parsedData.items.map(item => ({
+        ...item,
+        price: convertCurrency(item.price, parsedData.currency?.code)
+      })) : [];
+
+      // Update form fields with converted values
       setMerchant(parsedData.merchant || '');
-      setAmount(parsedData.total ? parsedData.total.toString() : '');
+      setAmount(totalInEUR ? totalInEUR.toString() : '');
       setDate(parsedData.date || '');
-      setSubtotal(parsedData.subtotal ? parsedData.subtotal.toString() : '');
+      setSubtotal(subtotalInEUR ? subtotalInEUR.toString() : '');
       setPaymentMethod(parsedData.paymentMethod || '');
-      setItems(parsedData.items || []);
+      setCategory(parsedData.category || '');
+      setItems(itemsInEUR);
+
+      // Store original amounts for display
+      setConvertedAmount(parsedData.total);
+      setConvertedSubtotal(parsedData.subtotal);
+      setConvertedItems(parsedData.items || []);
+
+      // Log currency information for debugging
+      if (parsedData.currency) {
+        console.log('Detected Currency:', parsedData.currency);
+      }
 
       // Show success message
       setMessage({ type: 'success', text: 'Receipt processed successfully!' });
@@ -636,604 +827,268 @@ export default function ReceiptUploader() {
 
   const fileInputRef = useRef(null); // Ref for the file input element
 
+  const [settings, setSettings] = useState(loadSettings());
+
+  // Update settings when they change
+  useEffect(() => {
+    const handleStorageChange = () => {
+      setSettings(loadSettings());
+    };
+
+    window.addEventListener('storage', handleStorageChange);
+    return () => window.removeEventListener('storage', handleStorageChange);
+  }, []);
+
+  // Update the receipt display to show both original and converted amounts
+  const renderReceiptAmount = (receipt) => {
+    const originalAmount = receipt.originalAmount;
+    const baseAmount = receipt.amount;
+    const originalCurrency = receipt.originalCurrency || settings.baseCurrency;
+    const { showOriginalAmounts, showConvertedAmounts } = settings;
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-200 dark:from-gray-900 dark:to-gray-700 flex flex-col items-center justify-center py-10 px-4 sm:px-6 lg:px-8 transition-colors duration-300">
-      {/* Global Loading Overlay for OCR Processing - Takes over the screen */}
-      {currentStep === 'processing_ocr' && (
-        <div className="fixed inset-0 bg-black bg-opacity-95 flex flex-col items-center justify-center z-[999999]">
-          <div className="relative w-32 h-32 flex items-center justify-center mb-8">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
-            <span className="relative inline-flex text-7xl animate-bounce">🧾</span>
-          </div>
-          <p className="text-2xl sm:text-3xl font-semibold text-white text-center animate-pulse tracking-wide max-w-2xl px-4">
-            {currentFunnyMessage}
-          </p>
-        </div>
-      )}
-
-      <main className="w-full max-w-3xl">
-        {/* Global Error Message Display */}
-        {(ocrError || firestoreError) && (
-          <div className="bg-red-100 border border-red-400 text-red-700 dark:text-red-400 px-4 py-3 rounded relative mb-4" role="alert">
-            <strong className="font-bold">Error!</strong>
-            <span className="block sm:inline"> {ocrError || firestoreError}</span>
-          </div>
+      <div className="flex flex-col">
+        <span className="text-xl font-bold text-blue-600 dark:text-blue-400">
+          {formatAmount(originalAmount, originalCurrency, settings)}
+        </span>
+        {showConvertedAmounts && originalCurrency !== settings.baseCurrency && (
+          <span className="text-sm text-gray-600 dark:text-gray-300">
+            {formatAmount(baseAmount, settings.baseCurrency, settings)}
+          </span>
         )}
+          </div>
+    );
+  };
 
-        {/* Main View: Upload Options and Receipts List */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8 md:gap-12 lg:gap-16">
-          {/* Upload Options Card */}
-          <Card className="bg-white dark:bg-gray-800 shadow-xl rounded-xl border border-gray-200 dark:border-gray-700 hover:shadow-2xl transition-shadow duration-300 ease-in-out p-8 text-center flex flex-col items-center">
-            <CardHeader className="w-full pb-4">
-              <CardTitle className="text-2xl font-bold text-gray-900 dark:text-white mb-6">Choose Upload Method</CardTitle>
-            </CardHeader>
-            <CardContent className="w-full pt-0 flex flex-col items-center">
-              <div className="flex flex-col gap-6 mb-6"> {/* Ensure vertical stacking for image options */}
-                <label
-                  htmlFor="file-upload"
-                  className="relative cursor-pointer bg-blue-600 text-white rounded-md font-medium hover:bg-blue-700 active:bg-blue-800 focus-within:outline-none px-6 py-4 text-xl font-bold transition-all duration-200 ease-in-out flex items-center gap-3 shadow-lg"
-                  style={isBusyGlobal ? { pointerEvents: 'none', opacity: 0.5 } : {}}
-                >
-                  <Upload className="h-7 w-7" />
-                  <span>Upload File</span>
-                  <input
-                    id="file-upload"
-                    name="file-upload"
-                    type="file"
-                    accept="image/*"
-                    onChange={handleImageChange}
-                    className="sr-only"
-                    disabled={isBusyGlobal}
-                    ref={fileInputRef}
-                  />
-                </label>
-                <Button
-                  onClick={startCamera}
-                  className="flex items-center gap-3 bg-gray-200 text-gray-800 dark:bg-gray-700 dark:text-gray-200 px-6 py-4 text-xl font-bold rounded-md hover:bg-gray-300 dark:hover:bg-gray-600 active:bg-gray-400 dark:active:bg-gray-500 transition-all duration-200 ease-in-out border border-gray-300 dark:border-gray-600 shadow-lg"
-                  disabled={isBusyGlobal}
-                >
-                  <Camera className="h-7 w-7" />
-                  <span>Take Photo</span>
-                </Button>
-              </div>
-              <Button
-                onClick={() => setCurrentStep('form')} // Directly to form for manual entry
-                variant="outline" /* Restored outline variant */
-                className="mt-4 bg-transparent text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 border-none px-6 py-3"
-                disabled={isBusyGlobal}
-              >
-                <span className="flex items-center gap-2">
-                  <List className="h-7 w-7" /> Enter Manually
+  // Update the receipt items display
+  const renderReceiptItems = (items, originalItems) => {
+    const { showOriginalAmounts, showConvertedAmounts } = settings;
+    
+    return items.map((item, index) => (
+      <li key={index} className="flex justify-between">
+        <span>{item.name}</span>
+        <div className="flex flex-col items-end">
+          <span>{formatAmount(item.price, settings.baseCurrency, settings)}</span>
+          {showOriginalAmounts && originalItems?.[index]?.price && 
+           item.price !== originalItems[index].price && (
+            <span className="text-xs text-gray-500">
+              {formatAmount(originalItems[index].price, originalItems[index].currency || settings.baseCurrency, settings)}
                 </span>
-              </Button>
-            </CardContent>
-          </Card>
+          )}
+        </div>
+      </li>
+    ));
+  };
 
-          {/* Receipts List */}
-          <Card className="bg-white dark:bg-gray-800 shadow-xl rounded-xl border border-gray-200 dark:border-gray-700 mt-8 hover:shadow-2xl transition-shadow duration-300 ease-in-out">
-            <CardHeader className="pb-4">
-              <CardTitle className="text-2xl font-bold text-gray-900 dark:text-white">Your Receipts</CardTitle>
-            </CardHeader>
-            <CardContent className="pt-0">
-              {totalExpenses !== null && (
+  // Update the total expenses display
+  const renderTotalExpenses = () => {
+    if (totalExpenses === null) return null;
+
+    const { showOriginalAmounts, showConvertedAmounts } = settings;
+    const hasMultipleCurrencies = receipts.some(r => r.originalCurrency !== settings.baseCurrency);
+
+    // Calculate totals by currency
+    const currencyTotals = receipts.reduce((acc, receipt) => {
+      if (receipt.originalCurrency) {
+        acc[receipt.originalCurrency] = (acc[receipt.originalCurrency] || 0) + (receipt.originalAmount || 0);
+      }
+      return acc;
+    }, {});
+
+    return (
                 <div className="text-xl font-semibold text-gray-800 dark:text-gray-200 mb-4">
-                  Total Expenses: <span className="text-blue-600"> ${totalExpenses.toFixed(2)}</span>
+        Total Expenses: 
+        <span className="text-blue-600 ml-2">
+          {formatAmount(totalExpenses, settings.baseCurrency, settings)}
+        </span>
+        {hasMultipleCurrencies && showOriginalAmounts && (
+          <div className="text-sm text-gray-600 dark:text-gray-300 mt-1">
+            {Object.entries(currencyTotals).map(([currency, amount]) => (
+              <div key={currency}>
+                {formatAmount(amount, currency, settings)}
+              </div>
+            ))}
                 </div>
               )}
-              {receipts.length === 0 && !isFirestoreLoading && (
-                <p className="text-gray-500 dark:text-gray-400 text-center py-8">No receipts found. Upload one to get started!</p>
-              )}
-              <div className="space-y-4">
-                {receipts.map((receipt) => (
-                  <Card key={receipt.id} className="bg-gray-50 dark:bg-gray-700 p-4 rounded-lg shadow-sm flex flex-col sm:flex-row justify-between items-start sm:items-center hover:shadow-md transition-shadow duration-200 ease-in-out hover:scale-[1.01] active:scale-[0.99] transform origin-center duration-150 ease-out">
-                    <div className="flex-grow space-y-1 mb-2 sm:mb-0">
-                      <p className="text-lg font-semibold text-gray-900 dark:text-white">{receipt.merchant}</p>
-                      <p className="text-xl font-bold text-blue-600 dark:text-blue-400">${receipt.amount.toFixed(2)}</p>
-                      <p className="text-sm text-gray-600 dark:text-gray-300">Date: {receipt.date}</p>
-                      <p className="text-sm text-gray-600 dark:text-gray-300">Category: {receipt.category}</p>
-                      {receipt.subtotal && <p className="text-sm text-gray-600 dark:text-gray-300">Subtotal: ${parseFloat(receipt.subtotal).toFixed(2)}</p>}
-                      {receipt.payment_method && <p className="text-sm text-gray-600 dark:text-gray-300">Payment Method: {receipt.payment_method}</p>}
+      </div>
+    );
+  };
+
+  // Update the receipt card display
+  const renderReceiptCard = (receipt) => (
+    <Card key={receipt.id} className="mb-4">
+      <CardContent className="p-4">
+        <div className="flex justify-between items-start">
+          <div className="flex-grow space-y-1">
+            <p className="text-lg font-semibold text-gray-900 dark:text-white">
+              {receipt.merchant}
+            </p>
+            {renderReceiptAmount(receipt)}
+            <p className="text-sm text-gray-600 dark:text-gray-300">
+              Date: {formatDate(receipt.date, settings)}
+            </p>
+            <p className="text-sm text-gray-600 dark:text-gray-300">
+              Category: {receipt.category}
+            </p>
+            {receipt.subtotal && (
+              <p className="text-sm text-gray-600 dark:text-gray-300">
+                Subtotal: {formatAmount(receipt.subtotal, settings.baseCurrency, settings)}
+                {settings.showOriginalAmounts && receipt.originalSubtotal && 
+                 receipt.originalSubtotal !== receipt.subtotal && (
+                  <span className="text-xs text-gray-500 ml-2">
+                    ({formatAmount(receipt.originalSubtotal, receipt.originalCurrency, settings)})
+                  </span>
+                )}
+              </p>
+            )}
+            {receipt.payment_method && (
+              <p className="text-sm text-gray-600 dark:text-gray-300">
+                Payment Method: {receipt.payment_method}
+              </p>
+            )}
                       {receipt.items && receipt.items.length > 0 && (
                         <div className="mt-2">
-                          <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Items:</p>
+                <p className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                  Items:
+                </p>
                           <ul className="list-disc list-inside text-sm text-gray-600 dark:text-gray-300">
-                            {receipt.items.map((item, itemIndex) => (
-                              <li key={itemIndex}>{item.name}: ${parseFloat(item.price).toFixed(2)}</li>
-                            ))}
+                  {renderReceiptItems(receipt.items, receipt.originalItems)}
                           </ul>
                         </div>
                       )}
-                      <p className="text-xs text-gray-500 dark:text-gray-400">
-                        Saved on: {receipt.created_at?.toDate().toLocaleString() || 'N/A'}
-                      </p>
                     </div>
-                    <div className="flex flex-col sm:flex-row gap-2 mt-4 sm:mt-0">
-                      <button
+          <div className="flex space-x-2">
+            <Button
                         onClick={() => handleEditClick(receipt)}
-                        className="bg-blue-600 text-white px-3 py-1 rounded-lg hover:bg-blue-700 active:bg-blue-800 transition-colors"
-                        disabled={isBusyGlobal}
+              size="sm"
+              variant="outline"
+              className="border-gray-300 dark:border-gray-600"
                       >
                         Edit
-                      </button>
-                      <button
+            </Button>
+            <Button
                         onClick={() => handleDeleteReceipt(receipt.id)}
-                        className="bg-red-600 text-white px-3 py-1 rounded-lg hover:bg-red-700 active:bg-red-800 transition-colors"
-                        disabled={isBusyGlobal}
+              size="sm"
+              variant="destructive"
+              className="bg-red-600 hover:bg-red-700"
                       >
                         Delete
-                      </button>
+            </Button>
                     </div>
-                  </Card>
-                ))}
               </div>
             </CardContent>
           </Card>
-        </div>
+  );
 
-        {/* New Receipt Form View */}
-        {currentStep === 'form' && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-75 p-4">
-            <Card className="bg-white dark:bg-gray-800 shadow-xl rounded-xl border border-gray-200 dark:border-gray-700 hover:shadow-2xl transition-shadow duration-300 ease-in-out w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-              <CardHeader className="pb-4 flex justify-between items-center sticky top-0 bg-white dark:bg-gray-800 z-10">
-                <CardTitle className="text-2xl font-bold text-gray-900 dark:text-white">Enter Receipt Details</CardTitle>
-                <Button
-                  onClick={() => setCurrentStep('upload_options')}
-                  variant="outline"
-                  className="bg-transparent text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 border-none px-4 py-2"
-                  disabled={isBusyGlobal}
-                >
-                  <span className="flex items-center gap-1">
-                    <X className="h-4 w-4" /> Cancel
-                  </span>
-                </Button>
-              </CardHeader>
-              <CardContent className="pt-0">
-                {/* Main Form content */}
-                <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label htmlFor="merchant" className="text-gray-700 dark:text-gray-300">Merchant</Label>
-                    <Input
-                      id="merchant"
-                      name="merchant"
-                      value={merchant}
-                      onChange={handleChange}
-                      placeholder="Enter merchant name"
-                      className="border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 ease-in-out"
-                      disabled={isBusyGlobal}
-                    />
-                    {formErrors.merchant && <p className="text-red-500 text-sm dark:text-red-400">{formErrors.merchant}</p>}
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="amount" className="text-gray-700 dark:text-gray-300">Amount</Label>
-                    <Input
-                      id="amount"
-                      name="amount"
-                      type="number"
-                      value={amount}
-                      onChange={handleChange}
-                      placeholder="0.00"
-                      className="border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 ease-in-out"
-                      disabled={isBusyGlobal}
-                    />
-                    {formErrors.amount && <p className="text-red-500 text-sm dark:text-red-400">{formErrors.amount}</p>}
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="date" className="text-gray-700 dark:text-gray-300">Date</Label>
-                    <Input
-                      id="date"
-                      name="date"
-                      type="date"
-                      value={date}
-                      onChange={handleChange}
-                      className="border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 ease-in-out"
-                      disabled={isBusyGlobal}
-                    />
-                    {formErrors.date && <p className="text-red-500 text-sm dark:text-red-400">{formErrors.date}</p>}
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="category" className="text-gray-700 dark:text-gray-300">Category</Label>
-                    <Select
-                      name="category"
-                      value={category}
-                      onValueChange={(value) => setCategory(value)}
-                      disabled={isBusyGlobal}
-                    >
-                      <SelectTrigger className="w-full border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 ease-in-out">
-                        <SelectValue placeholder="Select a category" />
-                      </SelectTrigger>
-                      <SelectContent className="dark:bg-gray-800 dark:text-white">
-                        {categories.map((cat) => (
-                          <SelectItem key={cat} value={cat}>
-                            {cat}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    {formErrors.category && <p className="text-red-500 text-sm dark:text-red-400">{formErrors.category}</p>}
-                  </div>
-                  {/* Subtotal (Optional) */}
-                  <div className="space-y-2">
-                    <Label htmlFor="subtotal" className="text-gray-700 dark:text-gray-300">Subtotal (Optional)</Label>
-                    <Input
-                      id="subtotal"
-                      name="subtotal"
-                      type="number"
-                      min="0"
-                      value={subtotal}
-                      onChange={handleChange}
-                      placeholder="0.00"
-                      className="border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 ease-in-out"
-                      disabled={isBusyGlobal}
-                    />
-                  </div>
-                  {/* Payment Method (Optional) */}
-                  <div className="space-y-2">
-                    <Label htmlFor="payment_method" className="text-gray-700 dark:text-gray-300">Payment Method (Optional)</Label>
-                    <Input
-                      id="payment_method"
-                      name="payment_method"
-                      value={paymentMethod}
-                      onChange={handleChange}
-                      placeholder="e.g., Credit Card, Cash"
-                      className="border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 ease-in-out"
-                      disabled={isBusyGlobal}
-                    />
-                  </div>
-                </div>
+  const [scrollProgress, setScrollProgress] = useState(0);
 
-                {/* Items Section */}
-                <div className="mt-6 space-y-4">
-                  <h3 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center gap-2">
-                    <List className="h-5 w-5 text-gray-500 dark:text-gray-400" /> Items (Optional)
-                  </h3>
-                  <div className="space-y-3">
-                    {items && items.length > 0 ? (
-                      items.map((item, index) => (
-                        <div key={index} className="flex items-center gap-2 bg-gray-100 dark:bg-gray-700 p-2 rounded-md">
-                          {editingItemIndex === index ? (
-                            <>
-                              <Input
-                                type="text"
-                                value={newItem.name}
-                                onChange={(e) => setNewItem({ ...newItem, name: e.target.value })}
-                                placeholder="Item Name"
-                                className="flex-grow border-gray-300 dark:border-gray-600 dark:bg-gray-600 dark:text-white rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 ease-in-out"
-                                disabled={isBusyGlobal}
-                              />
-                              <Input
-                                type="number"
-                                value={newItem.price}
-                                onChange={(e) => setNewItem({ ...newItem, price: e.target.value })}
-                                placeholder="Price"
-                                className="w-24 border-gray-300 dark:border-gray-600 dark:bg-gray-600 dark:text-white rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 ease-in-out"
-                                disabled={isBusyGlobal}
-                              />
-                              <Button onClick={() => handleAddItem(index)} size="sm" className="bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white" disabled={isBusyGlobal}>Save</Button>
-                              <Button onClick={handleEditCancel} size="sm" variant="outline" className="border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:active:bg-gray-500" disabled={isBusyGlobal}>Cancel</Button>
-                            </>
-                          ) : (
-                            <>
-                              <span className="flex-grow text-gray-800 dark:text-gray-200">{item.name}</span>
-                              <span className="text-gray-600 dark:text-gray-400">${parseFloat(item.price).toFixed(2)}</span>
-                              <Button onClick={() => handleEditItem(index)} size="sm" variant="outline" className="border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:active:bg-gray-500" disabled={isBusyGlobal}>Edit</Button>
-                              <Button onClick={() => handleRemoveItem(index)} size="sm" variant="destructive" className="bg-red-600 hover:bg-red-700 active:bg-red-800 text-white" disabled={isBusyGlobal}>Remove</Button>
-                            </>
-                          )}
-                        </div>
-                      ))
-                    ) : (
-                      !isLoading && <p className="text-gray-500 dark:text-gray-400 text-center py-4">No items extracted yet. Add items manually or upload a receipt.</p>
-                    )}
+  useEffect(() => {
+    const handleScroll = () => {
+      const scrollPosition = window.scrollY;
+      const windowHeight = window.innerHeight;
+      const scrollStart = windowHeight * 0.2; // Match header animation start
+      const scrollEnd = windowHeight * 0.5; // Match header animation end
+      
+      if (scrollPosition > scrollStart) {
+        const progress = Math.min(1, (scrollPosition - scrollStart) / (scrollEnd - scrollStart));
+        setScrollProgress(progress);
+      } else {
+        setScrollProgress(0);
+      }
+    };
 
-                    {editingItemIndex === null && (
-                      <div className="flex items-center gap-2">
-                        <Input
-                          type="text"
-                          value={newItem.name}
-                          onChange={(e) => setNewItem({ ...newItem, name: e.target.value })}
-                          placeholder="Add new item name"
-                          className="flex-grow border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 ease-in-out"
-                          disabled={isBusyGlobal}
-                        />
-                        <Input
-                          type="number"
-                          value={newItem.price}
-                          onChange={(e) => setNewItem({ ...newItem, price: e.target.value })}
-                          placeholder="Price"
-                          className="w-24 border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 ease-in-out"
-                          disabled={isBusyGlobal}
-                        />
-                        <Button onClick={handleAddItem} className="bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white" disabled={isBusyGlobal}>Add Item</Button>
-                      </div>
-                    )}
-                  </div>
-                </div>
+    window.addEventListener('scroll', handleScroll);
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
 
-                <div className="flex justify-center mt-6 sticky bottom-0 bg-white dark:bg-gray-800 py-4">
-                  <Button
-                    onClick={handleSaveReceipt}
-                    className="bg-green-600 text-white hover:bg-green-700 active:bg-green-800 transition-colors px-10 py-4 text-xl font-bold rounded-lg shadow-xl"
-                    disabled={isBusyGlobal}
-                  >
-                    <span className="flex items-center gap-2">
-                      <DollarSign className="h-6 w-6" /> Save Receipt
-                    </span>
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-        )}
-
-        {/* Edit Receipt Form View */}
-        {currentStep === 'edit' && editingReceipt && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-75 p-4">
-            <Card className="bg-white dark:bg-gray-800 shadow-xl rounded-xl border border-gray-200 dark:border-gray-700 hover:shadow-2xl transition-shadow duration-300 ease-in-out w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-              <CardHeader className="pb-4 flex justify-between items-center sticky top-0 bg-white dark:bg-gray-800 z-10">
-                <CardTitle className="text-2xl font-bold text-gray-900 dark:text-white">Edit Receipt</CardTitle>
-                <Button
-                  onClick={handleEditCancel}
-                  variant="outline"
-                  className="bg-transparent text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 border-none px-4 py-2"
-                  disabled={isBusyGlobal}
-                >
-                  <span className="flex items-center gap-1">
-                    <X className="h-4 w-4" /> Cancel
-                  </span>
-                </Button>
-              </CardHeader>
-              <CardContent className="pt-0">
-                <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label htmlFor="edit-merchant" className="text-gray-700 dark:text-gray-300">Merchant</Label>
-                    <Input
-                      id="edit-merchant"
-                      name="merchant"
-                      value={editForm.merchant}
-                      onChange={handleEditChange}
-                      className="border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 ease-in-out"
-                      disabled={isBusyGlobal}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="edit-amount" className="text-gray-700 dark:text-gray-300">Amount</Label>
-                    <Input
-                      id="edit-amount"
-                      name="amount"
-                      type="number"
-                      value={editForm.amount}
-                      onChange={handleEditChange}
-                      className="border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 ease-in-out"
-                      disabled={isBusyGlobal}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="edit-date" className="text-gray-700 dark:text-gray-300">Date</Label>
-                    <Input
-                      id="edit-date"
-                      name="date"
-                      type="date"
-                      value={editForm.date}
-                      onChange={handleEditChange}
-                      className="border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 ease-in-out"
-                      disabled={isBusyGlobal}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="edit-category" className="text-gray-700 dark:text-gray-300">Category</Label>
-                    <Select
-                      name="category"
-                      value={editForm.category}
-                      onValueChange={(value) => setEditForm(prev => ({ ...prev, category: value }))}
-                      disabled={isBusyGlobal}
-                    >
-                      <SelectTrigger className="w-full border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 ease-in-out">
-                        <SelectValue placeholder="Select a category" />
-                      </SelectTrigger>
-                      <SelectContent className="dark:bg-gray-800 dark:text-white">
-                        {categories.map((cat) => (
-                          <SelectItem key={cat} value={cat}>
-                            {cat}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="edit-subtotal" className="text-gray-700 dark:text-gray-300">Subtotal</Label>
-                    <Input
-                      id="edit-subtotal"
-                      name="subtotal"
-                      type="number"
-                      value={editForm.subtotal}
-                      onChange={handleEditChange}
-                      placeholder="0.00 (Optional)"
-                      className="border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 ease-in-out"
-                      disabled={isBusyGlobal}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="edit-payment-method" className="text-gray-700 dark:text-gray-300">Payment Method</Label>
-                    <Input
-                      id="edit-payment-method"
-                      name="payment_method"
-                      value={editForm.payment_method}
-                      onChange={handleEditChange}
-                      placeholder="e.g., Credit Card, Cash"
-                      className="border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 ease-in-out"
-                      disabled={isBusyGlobal}
-                    />
-                  </div>
-                </div>
-                <h3 className="text-xl font-bold text-gray-900 dark:text-white mt-8 mb-4">Items</h3>
-                <div className="flex flex-col gap-4">
-                  {(editForm.items || []).map((item, index) => (
-                    <div key={index} className="flex items-center gap-2 bg-gray-50 dark:bg-gray-700 p-3 rounded-md shadow-sm">
-                      {currentEditingItemIndex === index ? (
-                        <> {/* Editing fields */}
-                          <Input
-                            value={currentNewItem.name}
-                            onChange={(e) => setCurrentNewItem(prev => ({ ...prev, name: e.target.value }))}
-                            placeholder="Item name"
-                            className="flex-1 border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 ease-in-out"
-                            disabled={isBusyGlobal}
-                          />
-                          <Input
-                            value={currentNewItem.price}
-                            onChange={(e) => setCurrentNewItem(prev => ({ ...prev, price: e.target.value }))}
-                            placeholder="Price"
-                            type="number"
-                            className="w-24 border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 ease-in-out"
-                            disabled={isBusyGlobal}
-                          />
-                          <Button onClick={handleEditItemSave} size="icon" className="bg-green-500 hover:bg-green-600 active:bg-green-700 text-white transition-colors" disabled={isBusyGlobal}><CheckCircle className="h-4 w-4" /></Button>
-                          <Button onClick={handleEditItemCancel} size="icon" variant="outline" className="bg-transparent hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300 border-none transition-colors" disabled={isBusyGlobal}><XCircle className="h-4 w-4" /></Button>
-                        </>
-                      ) : (
-                        <> {/* Display fields */}
-                          <span className="flex-1 text-gray-800 dark:text-gray-200">{item.name}</span>
-                          <span className="text-gray-800 dark:text-gray-200">${parseFloat(item.price).toFixed(2)}</span>
-                          <Button onClick={() => handleEditItemEdit(index)} size="icon" className="bg-blue-500 hover:bg-blue-600 active:bg-blue-700 text-white transition-colors" disabled={isBusyGlobal}><Edit className="h-4 w-4" /></Button>
-                          <Button onClick={() => handleRemoveItemEdit(index)} size="icon" variant="destructive" className="bg-red-500 hover:bg-red-600 active:bg-red-700 text-white transition-colors" disabled={isBusyGlobal}><Trash2 className="h-4 w-4" /></Button>
-                        </>
-                      )}
-                    </div>
-                  ))}
-                  <div className="flex items-center gap-2 bg-gray-50 dark:bg-gray-700 p-3 rounded-md shadow-sm mt-4">
-                    <Input
-                      name="name"
-                      value={currentNewItem.name}
-                      onChange={(e) => setCurrentNewItem(prev => ({ ...prev, name: e.target.value }))}
-                      placeholder="New item name"
-                      className="flex-1 border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 ease-in-out"
-                      disabled={isBusyGlobal}
-                    />
-                    <Input
-                      name="price"
-                      value={currentNewItem.price}
-                      onChange={(e) => setCurrentNewItem(prev => ({ ...prev, price: e.target.value }))}
-                      placeholder="Price"
-                      type="number"
-                      className="w-24 border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 ease-in-out"
-                      disabled={isBusyGlobal}
-                    />
-                    <Button onClick={handleEditItemAdd} size="icon" className="bg-green-500 hover:bg-green-600 active:bg-green-700 text-white transition-colors" disabled={isBusyGlobal}><PlusCircle className="h-4 w-4" /></Button>
-                  </div>
-                </div>
-              </CardContent>
-              <CardFooter className="flex justify-end gap-4 pt-4 sticky bottom-0 bg-white dark:bg-gray-800 z-10">
-                <Button
-                  onClick={handleEditCancel}
-                  variant="outline"
-                  className="bg-gray-200 hover:bg-gray-300 active:bg-gray-400 text-gray-800 dark:bg-gray-700 dark:hover:bg-gray-600 dark:active:bg-gray-500 dark:text-gray-200 transition-colors"
-                  disabled={isBusyGlobal}
-                >
-                  Cancel
-                </Button>
-                <Button
-                  onClick={() => handleEditSave(editingReceipt.id)}
-                  className="bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white transition-colors"
-                  disabled={isBusyGlobal}
-                >
-                  <Save className="mr-2 h-4 w-4" /> Save Changes
-                </Button>
-              </CardFooter>
-            </Card>
-          </div>
-        )}
-
-        {/* Full Screen Image Preview Modal - with lower z-index */}
-        {currentStep === 'preview' && previewImageSrc && (
-          <div className="fixed inset-0 z-[50] flex items-center justify-center bg-black bg-opacity-90 p-4">
-            <div className="relative w-full h-full max-w-4xl max-h-[90vh] flex flex-col items-center justify-center">
-              <img
-                src={previewImageSrc}
-                alt="Receipt preview"
-                className="max-w-full max-h-full object-contain rounded-lg shadow-xl"
-              />
-              <div className="absolute bottom-4 flex gap-4">
-                <button
-                  onClick={handleUseImage}
-                  className="bg-blue-600 text-white px-6 py-3 rounded-full shadow-lg hover:bg-blue-700 active:bg-blue-800 transition-all duration-200 ease-in-out text-lg font-semibold flex items-center gap-2"
-                  disabled={isBusyGlobal}
-                >
-                  <span>Process Image</span>
-                  {isBusyGlobal && (
-                    <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
-                  )}
-                </button>
-                <button
-                  onClick={handleRetakePreview}
-                  className="bg-gray-600 text-white px-6 py-3 rounded-full shadow-lg hover:bg-gray-700 active:bg-gray-800 transition-all duration-200 ease-in-out text-lg font-semibold"
-                  disabled={isBusyGlobal}
-                >
-                  Retake / Re-upload
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Camera View - only visible when currentStep === 'camera' */}
-        {currentStep === 'camera' && (
-          <div className="fixed inset-0 z-50 flex flex-col bg-black">
-            <video
-              ref={videoRef}
-              autoPlay
-              playsInline
-              muted
-              className="absolute inset-0 w-full h-full object-cover z-10"
+  return (
+    <div className={`relative flex flex-col items-center w-full ${className}`}>
+      <div className="flex flex-col md:flex-row gap-8 w-full max-w-7xl mx-auto py-8 px-4">
+        {/* Choose Upload Method Card */}
+        <Card className="w-full md:w-1/3 p-6 flex flex-col items-center justify-start gap-6 bg-slate-800/80 text-white shadow-xl border-none">
+          <CardHeader className="w-full text-center p-0 mb-4">
+            <CardTitle className="text-2xl font-bold text-blue-100">Choose Upload Method</CardTitle>
+          </CardHeader>
+          <CardContent className="w-full flex flex-col items-center justify-center gap-4 p-0">
+            {file && <p className="text-sm text-gray-400 mb-2">File: {file.name}</p>}
+            <Button onClick={() => document.getElementById('fileInput').click()} className="w-full bg-blue-600 text-white font-semibold py-2 rounded-lg hover:bg-blue-700 transition-colors duration-200 flex items-center justify-center gap-2">
+              <Upload className="h-5 w-5" /> Upload File
+            </Button>
+            <input
+              id="fileInput"
+              type="file"
+              accept="image/*,.pdf"
+              onChange={handleImageChange}
+              className="hidden"
             />
-            <canvas ref={canvasRef} className="hidden" />
+            <Button onClick={startCamera} className="w-full bg-gray-600 text-white font-semibold py-2 rounded-lg hover:bg-gray-700 transition-colors duration-200 flex items-center justify-center gap-2">
+              <Camera className="h-5 w-5" /> Take Photo
+            </Button>
+            <Button onClick={() => setCurrentStep('manual_entry')} className="w-full bg-gray-600 text-white font-semibold py-2 rounded-lg hover:bg-gray-700 transition-colors duration-200 flex items-center justify-center gap-2">
+              <List className="h-5 w-5" /> Enter Manually
+            </Button>
+          </CardContent>
+        </Card>
 
-            {/* Top Instruction Text */}
-            <div className="w-full pt-8 pb-4 flex justify-center items-center pointer-events-none z-30">
-              <p className="text-white text-2xl font-bold text-center">Fit receipt within the blue guides</p>
-            </div>
-
-            {/* Centered Guidance Frame */}
-            <div className="flex-grow flex items-center justify-center pointer-events-none z-20">
-              <div className="relative w-[280px] h-[480px] max-w-[70vw] max-h-[70vh] border-2 border-dashed border-white opacity-75 rounded-lg">
-                {/* Corner Guides */}
-                <div className="absolute top-0 left-0 w-8 h-8 border-t-4 border-l-4 border-blue-400 rounded-tl-lg"></div>
-                <div className="absolute top-0 right-0 w-8 h-8 border-t-4 border-r-4 border-blue-400 rounded-tr-lg"></div>
-                <div className="absolute bottom-0 left-0 w-8 h-8 border-b-4 border-l-4 border-blue-400 rounded-bl-lg"></div>
-                <div className="absolute bottom-0 right-0 w-8 h-8 border-b-4 border-r-4 border-blue-400 rounded-br-lg"></div>
-              </div>
-            </div>
-
-            {/* Loading/Status indicator */}
-            {!isCameraReady && (
-              <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-75 rounded-lg z-40">
-                <p className="text-white text-lg">Awaiting camera feed...</p>
-              </div>
+        {/* Your Receipts Card */}
+        <Card className="w-full md:w-2/3 p-6 flex flex-col bg-slate-800/80 text-white shadow-xl border-none">
+          <CardHeader className="w-full p-0 mb-4 flex flex-row justify-between items-center">
+            <CardTitle className="text-2xl font-bold text-blue-100">Your Receipts</CardTitle>
+            {isFirestoreLoading ? (
+              <div className="text-gray-400 text-sm">Loading receipts...</div>
+            ) : (
+              <p className="text-lg font-semibold text-indigo-300">Total Expenses: {formatCurrency(totalExpenses, currency.code)}</p>
             )}
+          </CardHeader>
+          <CardContent className="p-0 flex-grow overflow-y-auto space-y-4 max-h-[calc(100vh-180px)]">
+            {firestoreError && <p className="text-red-500 text-center">{firestoreError}</p>}
+            {receipts.length === 0 && !isFirestoreLoading && !firestoreError && (
+              <p className="text-center text-gray-400">No receipts yet. Start by uploading or entering one!</p>
+            )}
+            {receipts.map(renderReceiptCard)}
+          </CardContent>
+        </Card>
+      </div>
 
-            {/* Close Camera Button */}
-            <button
-              onClick={() => setCurrentStep('upload_options')} // Navigate back to upload options
-              className="absolute top-4 right-4 bg-gray-800 bg-opacity-50 text-white p-2 rounded-full hover:bg-opacity-75 active:bg-opacity-90 transition-all duration-200 ease-in-out shadow-lg z-50"
-              aria-label="Close Camera"
-              disabled={isBusyGlobal}
-            >
-              <X className="h-6 w-6" />
-            </button>
+      {/* Remaining content for ReceiptUploader (Dashboard) */}
+      {/* These sections were previously outside the !user conditional, and thus remain here */}
 
-            {/* Capture Button */}
-            <div className="w-full pb-8 flex justify-center p-2 z-50">
-              <button
-                onClick={capturePhoto}
-                className="bg-blue-600 text-white p-4 rounded-full shadow-lg hover:bg-blue-700 active:bg-blue-800 transition-all duration-200 ease-in-out flex items-center justify-center border-4 border-white"
-                style={{ width: '70px', height: '70px' }}
-                aria-label="Capture Photo"
-                disabled={isBusyGlobal}
-              >
-                <Camera className="h-8 w-8" />
-              </button>
+      {/* Testimonial Carousel */}
+      <div className="w-full max-w-md mt-10">
+        <div className="bg-slate-700/95 rounded-2xl shadow-lg p-6 flex flex-col gap-4 text-white">
+          <div className="flex items-center gap-3">
+            <img src="https://randomuser.me/api/portraits/men/32.jpg" alt="User" className="h-10 w-10 rounded-full border-2 border-blue-200/40" />
+            <div>
+              <p className="text-slate-100 font-semibold">"ExpenseApp made my expense reports a breeze. Love the simplicity!"</p>
+              <span className="text-xs text-slate-300">— Alex, Freelancer</span>
             </div>
           </div>
-        )}
-      </main>
+          <div className="flex items-center gap-3">
+            <img src="https://randomuser.me/api/portraits/women/44.jpg" alt="User" className="h-10 w-10 rounded-full border-2 border-blue-200/40" />
+            <div>
+              <p className="text-slate-100 font-semibold">"Our team saves hours every month. The best receipt tool we've tried."</p>
+              <span className="text-xs text-slate-300">— Priya, Startup COO</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      {/* Client Logos */}
+      <div className="flex flex-row items-center justify-center gap-8 mt-10 opacity-80 grayscale bg-slate-700/90 rounded-xl py-4 px-8 shadow">
+        <img src="https://upload.wikimedia.org/wikipedia/commons/4/44/Microsoft_logo.svg" alt="Microsoft" className="h-8" />
+        <img src="https://upload.wikimedia.org/wikipedia/commons/a/ab/Apple-logo.png" alt="Apple" className="h-8" />
+        <img src="https://upload.wikimedia.org/wikipedia/commons/5/51/IBM_logo.svg" alt="IBM" className="h-8" />
+        <img src="https://upload.wikimedia.org/wikipedia/commons/2/2f/Google_2015_logo.svg" alt="Google" className="h-8" />
+      </div>
+      {/* Footer Branding */}
+      <footer className="py-10 bg-slate-900/90 text-slate-400 text-center w-full">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <p>&copy; {new Date().getFullYear()} ExpenseApp. All rights reserved.</p>
+          <p className="mt-2">
+            <a href="#" className="text-slate-400 hover:text-blue-400 mx-2">Privacy Policy</a>
+            <a href="#" className="text-slate-400 hover:text-blue-400 mx-2">Terms of Service</a>
+          </p>
+        </div>
+      </footer>
     </div>
   );
 }
