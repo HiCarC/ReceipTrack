@@ -930,7 +930,7 @@ export default function ReceiptUploader({ className }) {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ 
         video: { 
-          facingMode: 'user', // Use front camera
+          facingMode: 'environment', // Use back camera for better receipt photos
           width: { ideal: 1920 },
           height: { ideal: 1080 }
         } 
