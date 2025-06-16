@@ -89,14 +89,37 @@ export function formatDate(date, settings) {
   const { dateFormat } = settings;
   const d = new Date(date);
   
-  const year = d.getFullYear();
-  const month = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  
-  return dateFormat
-    .replace('YYYY', year)
-    .replace('MM', month)
-    .replace('DD', day);
+  if (isNaN(d.getTime())) {
+    return date; // Return original if invalid date
+  }
+
+  let formattedDate;
+
+  switch (dateFormat) {
+    case 'YYYY-MM-DD':
+      formattedDate = d.toISOString().split('T')[0];
+      break;
+    case 'DD MMM YYYY':
+      // Example: 23 May 2023
+      formattedDate = new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).format(d);
+      break;
+    case 'DD MMM':
+      // Example: 23 May
+      formattedDate = new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short' }).format(d);
+      break;
+    // Add more cases for other desired formats if needed
+    default:
+      // Fallback to existing logic if dateFormat is not recognized or is custom
+      const year = d.getFullYear();
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      formattedDate = dateFormat
+        .replace('YYYY', year)
+        .replace('MM', month)
+        .replace('DD', day);
+      break;
+  }
+  return formattedDate;
 }
 
 // Calculate tax amount

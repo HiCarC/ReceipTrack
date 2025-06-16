@@ -122,8 +122,8 @@ export default function ReceiptUploader({ className }) {
   const videoRef = (node) => {
     if (node) {
       _videoElement = node;
-      // Call startCamera directly here if modal is already open
-      if (isCameraOpen) {
+      // Only start camera if modal is open and camera isn't already running
+      if (isCameraOpen && !isCameraReady) {
         console.log('Video element assigned to ref, and camera modal is open. Calling startCamera.');
         startCamera();
       }
@@ -143,6 +143,7 @@ export default function ReceiptUploader({ className }) {
   const [currentReceipt, setCurrentReceipt] = useState(null); // Holds the receipt being edited
   const [currentNewItem, setCurrentNewItem] = useState({ name: '', price: '' }); // For adding/editing items in the edit form
   const [currentEditingItemIndex, setCurrentEditingItemIndex] = useState(null); // Index for editing items in the edit form
+  const [expandedReceiptId, setExpandedReceiptId] = useState(null); // New state to manage expanded receipt
 
   // State for form data
   const [formData, setFormData] = useState({
@@ -341,13 +342,16 @@ export default function ReceiptUploader({ className }) {
   console.log('ReceiptUploader component - Current settings state:', settings);
 
   // Helper function to format date safely
-  const formatDateSafely = (dateString) => {
+  const formatDateSafely = (dateString, formatOverride = null) => {
     try {
       // Ensure settings and dateFormat are available before calling formatDate
       // Provide a fallback settings object if the component's settings state is not yet ready
       const currentSettings = settings || { dateFormat: 'YYYY-MM-DD', baseCurrency: 'EUR' }; // Minimal default for formatting
-      if (!dateString || !currentSettings.dateFormat) return '';
-      return formatDate(dateString, currentSettings);
+      if (!dateString) return '';
+
+      // Use formatOverride if provided, otherwise use currentSettings.dateFormat
+      const formatToUse = formatOverride || currentSettings.dateFormat;
+      return formatDate(dateString, { ...currentSettings, dateFormat: formatToUse });
     } catch (error) {
       console.error('Error formatting date:', error);
       return dateString || '';
@@ -360,7 +364,108 @@ export default function ReceiptUploader({ className }) {
     return (parseFloat(amount) / exchangeRates[fromCurrency]).toFixed(2);
   };
 
-  const handleSaveReceipt = async () => {
+  const handleDeleteReceipt = async (id) => {
+    if (!user) {
+      toast({
+        title: "Authentication Required",
+        description: "Please sign in to delete receipts.",
+        variant: "destructive",
+      });
+      return;
+    }
+    try {
+      await deleteDoc(doc(db, "receipts", id));
+      setReceipts(receipts.filter((receipt) => receipt.id !== id));
+      toast({
+        title: "Receipt Deleted! 🗑️",
+        description: "The receipt has been successfully removed.",
+      });
+    } catch (error) {
+      console.error("Error deleting receipt:", error);
+      toast({
+        title: "Error Deleting Receipt 😥",
+        description: `There was an issue deleting the receipt: ${error.message}`,
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleImageChange = (e) => {
+    const selectedFile = e.target.files[0];
+    if (selectedFile) {
+      setFile(selectedFile);
+      // Create a preview URL for the selected file
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        setPreviewImageSrc(event.target.result);
+        setShowFullScreenPreview(true);
+      };
+      reader.readAsDataURL(selectedFile);
+      // Clear the input value to allow re-uploading the same file
+      e.target.value = null; 
+    }
+  };
+
+  // Refactor: Use a single handler for all top-level form input changes
+  const handleFormInputChange = (e) => {
+    const { name, value } = e.target;
+    const targetStateSetter = editingReceipt ? setEditForm : setFormData;
+
+    targetStateSetter(prev => {
+      let updatedData = { ...prev };
+      if (name === "total" || name === "subtotal" || name === "tax") {
+        // Allow empty string or numbers with up to 2 decimal places
+        if (value === '' || /^-?[0-9]*\.?[0-9]{0,2}$/.test(value.replace(',', '.'))) {
+          updatedData[name] = value.replace(',', '.');
+        }
+      } else if (name === "date") {
+        updatedData[name] = normalizeDate(value);
+      } else {
+        updatedData[name] = value;
+      }
+      return updatedData;
+    });
+
+    // If editing, also update currentReceipt to reflect changes live in the modal for item management
+    if (editingReceipt) {
+      setCurrentReceipt(prev => {
+        let updatedReceipt = { ...prev };
+        // Special handling for numerical fields to ensure they are parsed correctly for currentReceipt
+        updatedReceipt[name] = (name === "total" || name === "subtotal" || name === "tax") ? (value === '' ? '' : parseFloat(value.replace(',', '.'))) : value;
+        return updatedReceipt;
+      });
+    }
+  };
+
+  // Refactor: Use a single handler for all item input changes within the form
+  const handleItemInputChange = (e, index, field) => {
+    const { value } = e.target;
+    const targetStateSetter = editingReceipt ? setEditForm : setFormData;
+
+    targetStateSetter(prev => {
+      const updatedItems = [...(prev.items || [])];
+      updatedItems[index] = {
+        ...updatedItems[index],
+        [field]: (field === 'price') ? (value === '' ? '' : parseFloat(value.replace(',', '.')).toFixed(2)) : value
+      };
+      return { ...prev, items: updatedItems };
+    });
+
+    // If editing, also update currentReceipt items to reflect changes live in the modal
+    if (editingReceipt) {
+      setCurrentReceipt(prev => {
+        const updatedItems = [...(prev.items || [])];
+        updatedItems[index] = {
+          ...updatedItems[index],
+          [field]: (field === 'price') ? (value === '' ? '' : parseFloat(value.replace(',', '.')).toFixed(2)) : value
+        };
+        return { ...prev, items: updatedItems };
+      });
+    }
+  };
+
+  // Update the `handleSaveReceipt` for new receipts
+  const handleSaveReceiptSubmit = async () => {
     if (!user) {
       toast({
         title: "Authentication Required",
@@ -440,8 +545,9 @@ export default function ReceiptUploader({ className }) {
         title: "Receipt Saved! 🎉",
         description: "Your expense has been successfully recorded.",
       });
-      setFormData({
-        date: '',
+      // Reset form and close modal
+      setFormData({ // Ensure formData is reset for next new entry
+        date: new Date().toISOString().split('T')[0],
         merchant: '',
         total: '',
         tax: '',
@@ -454,8 +560,8 @@ export default function ReceiptUploader({ className }) {
       setNewItem({ name: '', price: '' });
       setEditingReceipt(null);
       setIsEditing(false);
-      setFile(null); // Clear the selected file after saving
-      setPreviewImageSrc(null); // Clear the preview image after saving
+      setFile(null);
+      setPreviewImageSrc(null);
       setCurrentStep('upload_options');
       fetchReceipts();
     } catch (error) {
@@ -470,62 +576,341 @@ export default function ReceiptUploader({ className }) {
     }
   };
 
-  const handleDeleteReceipt = async (id) => {
+  // Update the `handleEditSave` for existing receipts
+  const handleEditSaveSubmit = async (event) => {
+    event.preventDefault(); // Prevent default form submission
+
     if (!user) {
       toast({
         title: "Authentication Required",
-        description: "Please sign in to delete receipts.",
+        description: "Please sign in to save changes.",
         variant: "destructive",
       });
       return;
     }
-    try {
-      await deleteDoc(doc(db, "receipts", id));
-      setReceipts(receipts.filter((receipt) => receipt.id !== id));
+
+    if (!editingReceipt) {
       toast({
-        title: "Receipt Deleted! 🗑️",
-        description: "The receipt has been successfully removed.",
-      });
-    } catch (error) {
-      console.error("Error deleting receipt:", error);
-      toast({
-        title: "Error Deleting Receipt 😥",
-        description: `There was an issue deleting the receipt: ${error.message}`,
+        title: "Error",
+        description: "No receipt selected for editing.",
         variant: "destructive",
       });
+      return;
     }
-  };
 
-  const handleChange = (e, itemIndex = null, fieldName = null) => {
-    const { name, value } = e.target;
-    setFormData(prev => {
-      const updatedData = { ...prev };
-      if (name === "total" || name === "subtotal" || name === "tax") {
-        // Allow empty string or numbers with up to 2 decimal places
-      if (value === '' || /^-?[0-9]*\.?[0-9]{0,2}$/.test(value)) {
-          updatedData[name] = value;
+    // Validate essential fields for edit form
+    if (!editForm.merchant || !editForm.date || !editForm.total) { // Use editForm.total here
+      toast({
+        title: "Missing Information",
+        description: "Please fill in all required fields: Merchant, Total, and Date.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // Validate items in edit form
+    const hasIncompleteItem = editForm.items.some(item => (item.name && !item.price) || (!item.name && item.price));
+    if (hasIncompleteItem) {
+      toast({
+        title: "Incomplete Item",
+        description: "Please ensure all items have both a name and a price, or remove incomplete items.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsBusy(true);
+
+    try {
+      const parsedTotal = parseFloat(editForm.total); // Use editForm.total
+      const parsedSubtotal = parseFloat(editForm.subtotal);
+
+      if (isNaN(parsedTotal) || parsedTotal <= 0) {
+        toast({
+          title: "Invalid Total Amount",
+          description: "Please enter a valid positive number for the total amount.",
+          variant: "destructive",
+        });
+        return;
       }
+      if (editForm.subtotal && (isNaN(parsedSubtotal) || parsedSubtotal < 0)) {
+        toast({
+          title: "Invalid Subtotal",
+          description: "Please enter a valid non-negative number for the subtotal.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      // Calculate tax if not provided
+      let taxAmount = parseFloat(editForm.tax); // Use editForm.tax
+      if (isNaN(taxAmount) || editForm.tax === '') {
+        taxAmount = (parsedTotal - (parsedSubtotal || parsedTotal)).toFixed(2); // If subtotal exists, tax is total - subtotal, else 0
       } else {
-        updatedData[name] = value;
+        taxAmount = taxAmount.toFixed(2);
       }
-      return updatedData;
-    });
+
+      const updatedReceiptData = {
+        userId: user.uid, // Use userId for consistency
+        merchant: editForm.merchant,
+        total: parsedTotal.toFixed(2), // Store as string with 2 decimal places
+        subtotal: parsedSubtotal ? parsedSubtotal.toFixed(2) : undefined, // Store as string with 2 decimal places
+        tax: parseFloat(taxAmount).toFixed(2), // Ensure tax is also 2 decimal places
+        transactionDate: editForm.date, // Use transactionDate for consistency
+        category: editForm.category,
+        paymentMethod: editForm.payment_method,
+        currency: editForm.currency || editingReceipt.currency || settings.baseCurrency,
+        items: editForm.items.map(item => ({
+          name: item.name,
+          price: parseFloat(item.price).toFixed(2) // Ensure item prices are 2 decimal places
+        })),
+        updated_at: serverTimestamp()
+      };
+
+      await updateDoc(doc(db, "receipts", editingReceipt.id), updatedReceiptData);
+      toast({
+        title: "Receipt Updated! 🚀",
+        description: "Your receipt has been successfully updated.",
+      });
+
+      // Reset editing state and close modal
+      setEditingReceipt(null);
+      setIsEditing(false);
+      setCurrentStep('upload_options');
+      fetchReceipts();
+    } catch (error) {
+      console.error("Error updating receipt:", error);
+      toast({
+        title: "Error Updating Receipt 😥",
+        description: `There was an issue updating your receipt: ${error.message}`,
+        variant: "destructive",
+      });
+    } finally {
+      setIsBusy(false);
+    }
   };
 
-  const handleImageChange = (e) => {
-    const selectedFile = e.target.files[0];
-    if (selectedFile) {
-      setFile(selectedFile);
-      // Create a preview URL for the selected file
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        setPreviewImageSrc(event.target.result);
-        setShowFullScreenPreview(true);
-      };
-      reader.readAsDataURL(selectedFile);
-      // Clear the input value to allow re-uploading the same file
-      e.target.value = null; 
+  const handleEditCancel = () => {
+    setEditingReceipt(null);
+    setIsEditing(false);
+    // Ensure editForm is reset when cancelling edit
+    setEditForm({
+      merchant: '',
+      amount: '',
+      date: '',
+      category: '',
+      subtotal: '',
+      payment_method: '',
+      currency: 'EUR',
+      items: []
+    });
+    setCurrentNewItem({ name: '', price: '' });
+    setCurrentEditingItemIndex(null);
+  };
+
+  // Add Item to manual entry form
+  const handleAddItem = () => {
+    if (!newItem.name.trim() && !newItem.price.trim()) {
+      return;
     }
+    if (!newItem.name.trim() || !newItem.price.trim()) {
+      toast({
+        title: "Incomplete Item",
+        description: "Please provide both item name and price.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const priceNum = parseFloat(newItem.price.replace(',', '.'));
+    if (isNaN(priceNum)) {
+      toast({
+        title: "Invalid Price",
+        description: "Item price must be a valid number.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setFormData(prev => ({
+      ...prev,
+      items: [...(prev.items || []), { name: newItem.name.trim(), price: priceNum.toFixed(2) }]
+    }));
+    setNewItem({ name: '', price: '' });
+  };
+
+  // Add Item to edit form
+  const handleEditItemAdd = () => {
+    if (!currentNewItem.name.trim() || !currentNewItem.price.trim()) {
+      toast({
+        title: "Incomplete Item",
+        description: "Please provide both item name and price for the new item.",
+        variant: "destructive",
+      });
+      return;
+    }
+    const priceNum = parseFloat(currentNewItem.price.replace(',', '.'));
+    if (isNaN(priceNum)) {
+      toast({
+        title: "Invalid Price",
+        description: "New item price must be a valid number.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setEditForm(prev => ({
+      ...prev,
+      items: [...(prev.items || []), { name: currentNewItem.name.trim(), price: priceNum.toFixed(2) }]
+    }));
+    setCurrentReceipt(prev => ({
+      ...prev,
+      items: [...(prev.items || []), { name: currentNewItem.name.trim(), price: priceNum.toFixed(2) }]
+    }));
+    setCurrentNewItem({ name: '', price: '' });
+  };
+
+  // Helper for adding new item fields dynamically
+  const handleAddItemField = (insertIndex) => {
+    const targetStateSetter = editingReceipt ? setEditForm : setFormData;
+    targetStateSetter(prevData => {
+      const newItems = [...(prevData.items || [])];
+      newItems.splice(insertIndex, 0, { name: '', price: '' });
+      return { ...prevData, items: newItems };
+    });
+    if (editingReceipt) {
+    setCurrentReceipt(prev => {
+      const newItems = [...(prev.items || [])];
+      newItems.splice(insertIndex, 0, { name: '', price: '' });
+      return { ...prev, items: newItems };
+    });
+    }
+  };
+
+  // Helper for removing item fields dynamically
+  const handleRemoveItemField = (removeIndex) => {
+    const targetStateSetter = editingReceipt ? setEditForm : setFormData;
+    targetStateSetter(prevData => {
+      if ((prevData.items || []).length === 1 && (!prevData.items[0].name && !prevData.items[0].price)) {
+        return prevData; // Prevent removing the last empty item if it's the only one
+      }
+      if ((prevData.items || []).length > 0) {
+        const newItems = (prevData.items || []).filter((_, i) => i !== removeIndex);
+        return { ...prevData, items: newItems };
+      }
+      return prevData; // Do nothing if trying to remove from empty list
+    });
+    if (editingReceipt) {
+    setCurrentReceipt(prev => {
+        if ((prev.items || []).length === 1 && (!prev.items[0].name && !prev.items[0].price)) {
+        return prev;
+      }
+        if ((prev.items || []).length > 0) {
+          const newItems = (prev.items || []).filter((_, i) => i !== removeIndex);
+        return { ...prev, items: newItems };
+      }
+      return prev;
+    });
+    }
+  };
+
+  // Determine which form state to use based on editingReceipt
+  const activeFormData = editingReceipt ? editForm : formData;
+
+  // Update the receipt card rendering
+  const renderReceiptCard = (receipt) => {
+    const isExpanded = expandedReceiptId === receipt.id;
+
+    return (
+      <Card
+        key={receipt.id}
+        className={`bg-slate-700/80 p-5 rounded-xl shadow-lg text-white border border-gray-700 cursor-pointer transition-all duration-300 ease-in-out ${isExpanded ? 'ring-2 ring-blue-500/50 scale-[1.01]' : 'hover:shadow-xl hover:-translate-y-1'}`}
+        onClick={() => setExpandedReceiptId(isExpanded ? null : receipt.id)} // Toggle expanded state on click
+      >
+      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+          <div className="flex items-baseline space-x-2">
+            <CardTitle className="text-xl font-bold leading-none">{receipt.merchant}</CardTitle>
+            {!isExpanded && (
+              <span className="text-sm text-gray-400 font-medium">
+                {formatDateSafely(receipt.transactionDate, 'DD MMM')}
+              </span>
+            )}
+          </div>
+        <div className="flex items-center space-x-2">
+            {!isExpanded && (
+              <span className="text-lg font-semibold text-gray-300">
+                {parseFloat(receipt.total).toFixed(2)} {receipt.currency}
+                {receipt.currency !== (settings?.baseCurrency || 'EUR') && exchangeRates && (
+                  <span className="ml-2 text-sm text-gray-400">
+                    ({convertToBaseCurrency(receipt.total, receipt.currency, settings?.baseCurrency || 'EUR', exchangeRates).toFixed(2)} {settings?.baseCurrency || 'EUR'})
+                  </span>
+                )}
+              </span>
+            )}
+          <Button
+              onClick={(e) => {
+                e.stopPropagation(); // Prevent card from collapsing when edit button is clicked
+                handleEditClick(receipt);
+              }}
+            variant="ghost"
+            size="icon"
+            className="text-blue-400 hover:bg-slate-600/50 hover:text-blue-300"
+          >
+            <Edit className="h-4 w-4" />
+          </Button>
+          <Button
+              onClick={(e) => {
+                e.stopPropagation(); // Prevent card from collapsing when delete button is clicked
+                handleDeleteReceipt(receipt.id);
+              }}
+            variant="ghost"
+            size="icon"
+            className="text-red-400 hover:bg-slate-600/50 hover:text-red-300"
+          >
+            <Trash2 className="h-4 w-4" />
+          </Button>
+          </div>
+      </CardHeader>
+        {isExpanded && (
+      <CardContent>
+            <div className="grid grid-cols-2 gap-4 mb-4">
+          <div>
+            <p className="text-sm text-gray-400">Date</p>
+                <p className="text-lg">{formatDateSafely(receipt.transactionDate, 'DD MMM YYYY')}</p>
+        </div>
+          <div>
+            <p className="text-sm text-gray-400">Category</p>
+            <p className="text-lg">{receipt.category || 'Uncategorized'}</p>
+          </div>
+          <div>
+            <p className="text-sm text-gray-400">Payment Method</p>
+            <p className="text-lg">{receipt.paymentMethod || 'Not specified'}</p>
+          </div>
+        </div>
+        {receipt.items && receipt.items.length > 0 && (
+          <div className="mt-4">
+            <p className="text-sm text-gray-400 mb-2">Items</p>
+            <ul className="space-y-1">
+              {receipt.items.map((item, index) => (
+                <li key={index} className="flex justify-between text-sm">
+                  <span>{item.name}</span>
+                  <span>
+                    {parseFloat(item.price).toFixed(2)} {receipt.currency}
+                    {receipt.currency !== (settings?.baseCurrency || 'EUR') && exchangeRates && (
+                      <span className="ml-2 text-xs text-gray-400">
+                        ({convertToBaseCurrency(item.price, receipt.currency, settings?.baseCurrency || 'EUR', exchangeRates).toFixed(2)} {settings?.baseCurrency || 'EUR'})
+                      </span>
+                    )}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </CardContent>
+        )}
+    </Card>
+  );
   };
 
   const startCamera = async () => {
@@ -543,10 +928,27 @@ export default function ReceiptUploader({ className }) {
     }
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        video: { 
+          facingMode: 'user', // Use front camera
+          width: { ideal: 1920 },
+          height: { ideal: 1080 }
+        } 
+      });
       console.log('Camera stream obtained:', stream);
       _videoElement.srcObject = stream;
-      setIsCameraReady(true); // Set to true after stream is successfully assigned
+      _videoElement.onloadedmetadata = () => {
+        console.log('Video metadata loaded, playing video...');
+        _videoElement.play()
+          .then(() => {
+            console.log('Video playback started successfully');
+            setIsCameraReady(true);
+          })
+          .catch(error => {
+            console.error('Error playing video:', error);
+            setIsCameraReady(false);
+          });
+      };
       console.log('Camera stream assigned. Camera is ready.');
     } catch (error) {
       console.error("Error accessing camera:", error);
@@ -557,15 +959,20 @@ export default function ReceiptUploader({ className }) {
         description: "Please grant camera access to use this feature.",
         variant: "destructive",
       });
-      setIsCameraReady(false); // Reset if there's an error
+      setIsCameraReady(false);
     }
   };
 
   const stopCamera = () => {
     if (_videoElement && _videoElement.srcObject) {
-      _videoElement.srcObject.getTracks().forEach(track => track.stop());
+      const tracks = _videoElement.srcObject.getTracks();
+      tracks.forEach(track => {
+        track.stop();
+        track.enabled = false;
+      });
       _videoElement.srcObject = null;
-      console.log('Camera stream stopped.');
+      _videoElement = null;
+      console.log('Camera stream stopped and tracks released.');
     }
     setIsCameraOpen(false);
     setIsCameraReady(false);
@@ -580,6 +987,7 @@ export default function ReceiptUploader({ className }) {
       setPreviewImageSrc(canvasRef.current.toDataURL('image/jpeg'));
       setShowFullScreenPreview(true);
       setIsCameraOpen(false); // Close the camera modal after capturing
+      stopCamera(); // Stop the camera stream
     }
   };
 
@@ -614,510 +1022,30 @@ export default function ReceiptUploader({ className }) {
 
   const handleEditClick = (receipt) => {
     setEditingReceipt(receipt);
-    setEditForm({
-      merchant: receipt.merchant || '',
-      amount: parseFloat(receipt.amount).toFixed(2), // Ensure 2 decimal places
-      date: receipt.date || '',
-      category: receipt.category || '',
-      subtotal: receipt.subtotal ? parseFloat(receipt.subtotal).toFixed(2) : '', // Ensure 2 decimal places
-      payment_method: receipt.payment_method || '',
-      currency: receipt.currency || 'EUR', // Set currency for edit form
-      items: receipt.items?.map(item => ({ name: item.name || '', price: parseFloat(item.price).toFixed(2) })) || [{ name: '', price: '' }] // Ensure items are formatted
-    });
-    setCurrentReceipt(receipt); // Set current receipt for item management
-    setIsEditing(true);
-  };
 
-  // Generic handler for edit form changes, supports nested item changes
-  const handleEditChange = (e, itemIndex = null, fieldName = null) => {
-    const { name, value } = e.target;
-
-    setEditForm(prev => {
-      let updatedForm = { ...prev };
-
-      if (itemIndex !== null && fieldName) {
-        // Handle item changes
-        const updatedItems = [...(prev.items || [])];
-        updatedItems[itemIndex] = {
-          ...updatedItems[itemIndex],
-          [fieldName]: (fieldName === 'price') ? (value === '' ? '' : parseFloat(value).toFixed(2)) : value
-        };
-        updatedForm.items = updatedItems;
-      } else {
-        // Handle top-level form changes
-      if (name === "amount" || name === "subtotal") {
-          // Allow empty string or numbers with up to 2 decimal places
-        if (value === '' || /^-?[0-9]*\.?[0-9]{0,2}$/.test(value)) {
-            updatedForm[name] = value;
-          }
-        } else {
-          updatedForm[name] = value;
-        }
-      }
-      return updatedForm;
-    });
-
-    // Also update currentReceipt to reflect changes live in the modal
-    setCurrentReceipt(prev => {
-      let updatedReceipt = { ...prev };
-      if (itemIndex !== null && fieldName) {
-        const updatedItems = [...(prev.items || [])];
-        updatedItems[itemIndex] = {
-          ...updatedItems[itemIndex],
-          [fieldName]: (fieldName === 'price') ? (value === '' ? '' : parseFloat(value).toFixed(2)) : value
-        };
-        updatedReceipt.items = updatedItems;
-      } else {
-        updatedReceipt[name] = (name === "amount" || name === "subtotal") ? (value === '' ? '' : parseFloat(value)) : value;
-      }
-      return updatedReceipt;
-    });
-  };
-
-  const handleEditSave = async (event) => {
-    event.preventDefault(); // Prevent default form submission
-
-    if (!user) {
-      toast({
-        title: "Authentication Required",
-        description: "Please sign in to save changes.",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    if (!editingReceipt) {
-      toast({
-        title: "Error",
-        description: "No receipt selected for editing.",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    // Validate essential fields for edit form
-    if (!editForm.merchant || !editForm.date || !editForm.amount) {
-      toast({
-        title: "Missing Information",
-        description: "Please fill in all required fields: Merchant, Date, and Total Amount.",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    // Validate items in edit form
-    const hasIncompleteItem = editForm.items.some(item => (item.name && !item.price) || (!item.name && item.price));
-    if (hasIncompleteItem) {
-      toast({
-        title: "Incomplete Item",
-        description: "Please ensure all items have both a name and a price, or remove incomplete items.",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    setIsBusy(true);
-
-    try {
-      const parsedAmount = parseFloat(editForm.amount);
-      const parsedSubtotal = parseFloat(editForm.subtotal);
-
-      if (isNaN(parsedAmount) || parsedAmount <= 0) {
-        toast({
-          title: "Invalid Total Amount",
-          description: "Please enter a valid positive number for the total amount.",
-          variant: "destructive",
-        });
-        return;
-      }
-      if (editForm.subtotal && (isNaN(parsedSubtotal) || parsedSubtotal < 0)) {
-        toast({
-          title: "Invalid Subtotal",
-          description: "Please enter a valid non-negative number for the subtotal.",
-          variant: "destructive",
-        });
-        return;
-      }
-
-      // Calculate tax if not provided
-      let taxAmount = parseFloat(editForm.tax);
-      if (isNaN(taxAmount) || editForm.tax === '') {
-        taxAmount = (parsedAmount - (parsedSubtotal || parsedAmount)).toFixed(2); // If subtotal exists, tax is total - subtotal, else 0
-      } else {
-        taxAmount = taxAmount.toFixed(2);
-      }
-
-      const updatedReceiptData = {
-        user_id: user.uid,
-        merchant: editForm.merchant,
-        amount: parsedAmount.toFixed(2), // Store as string with 2 decimal places
-        subtotal: parsedSubtotal ? parsedSubtotal.toFixed(2) : undefined, // Store as string with 2 decimal places
-        tax: parseFloat(taxAmount).toFixed(2), // Ensure tax is also 2 decimal places
-        date: editForm.date,
-        category: editForm.category,
-        payment_method: editForm.payment_method,
-        currency: editForm.currency || editingReceipt.currency || settings.baseCurrency,
-        items: editForm.items.map(item => ({
-          name: item.name,
-          price: parseFloat(item.price).toFixed(2) // Ensure item prices are 2 decimal places
-        })),
-        updated_at: serverTimestamp()
-      };
-
-      await updateDoc(doc(db, "receipts", editingReceipt.id), updatedReceiptData);
-      toast({
-        title: "Receipt Updated! 🚀",
-        description: "Your receipt has been successfully updated.",
-      });
-
-      setEditingReceipt(null);
-      setIsEditing(false);
-      setCurrentStep('upload_options'); // Go back to dashboard view
-      fetchReceipts(); // Refresh the list
-    } catch (error) {
-      console.error("Error updating receipt:", error);
-      toast({
-        title: "Error Updating Receipt 😥",
-        description: `There was an issue updating your receipt: ${error.message}`,
-        variant: "destructive",
-      });
-    } finally {
-      setIsBusy(false);
-    }
-  };
-
-  const handleEditCancel = () => {
-    setEditingReceipt(null);
-    setIsEditing(false);
-    setEditForm({
-      merchant: '',
-      amount: '',
-      date: '',
-      category: '',
-      subtotal: '',
-      payment_method: '',
-      items: []
-    });
-    setCurrentNewItem({ name: '', price: '' });
-    setCurrentEditingItemIndex(null);
-  };
-
-  // Add Item to main form (manual entry)
-  const handleAddItem = () => {
-    // Only validate if we're explicitly adding an item (not from onBlur)
-    if (!newItem.name.trim() && !newItem.price.trim()) {
-      return; // If both are empty, just return silently
-    }
-    if (!newItem.name.trim() || !newItem.price.trim()) {
-      toast({
-        title: "Incomplete Item",
-        description: "Please provide both item name and price.",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    // Parse price before validation
-    const priceNum = parseFloat(newItem.price);
-    if (isNaN(priceNum)) {
-      toast({
-        title: "Invalid Price",
-        description: "Item price must be a valid number.",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    // Add new item with formatted price to formData.items
-    setFormData(prev => ({
-      ...prev,
-      items: [...(prev.items || []), {
-        name: newItem.name.trim(),
-        price: priceNum.toFixed(2)
-      }]
-    }));
-    setNewItem({ name: '', price: '' }); // Clear input fields
-  };
-
-  // Edit Item in main form (manual entry)
-  const handleEditItem = (index) => {
-    setNewItem(items[index]);
-    setEditingItemIndex(index);
-  };
-
-  // Remove Item from main form (manual entry)
-  const handleRemoveItem = (index) => {
-    setItems(prev => prev.filter((_, i) => i !== index));
-  };
-
-  // Handle changes for items in the main form (used for formData.items)
-  const handleItemChange = (e, index, field = 'name') => {
-    const { value } = e.target;
-    setFormData(prev => {
-      const updatedItems = [...(prev.items || [])];
-      updatedItems[index] = {
-        ...updatedItems[index],
-        [field]: (field === 'price') ? (value === '' ? '' : parseFloat(value).toFixed(2)) : value
-      };
-      return { ...prev, items: updatedItems };
-    });
-  };
-
-  // Add Item to edit form (for currentReceipt items)
-  const handleEditItemAdd = () => {
-    if (!currentNewItem.name.trim() || !currentNewItem.price.trim()) {
-      toast({
-        title: "Incomplete Item",
-        description: "Please provide both item name and price for the new item.",
-        variant: "destructive",
-      });
-      return;
-    }
-    const priceNum = parseFloat(currentNewItem.price);
-    if (isNaN(priceNum)) {
-      toast({
-        title: "Invalid Price",
-        description: "New item price must be a valid number.",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    setEditForm(prev => ({
-      ...prev,
-      items: [...(prev.items || []), { name: currentNewItem.name.trim(), price: priceNum.toFixed(2) }]
-    }));
-    // Also update currentReceipt to ensure consistency
-    setCurrentReceipt(prev => ({
-      ...prev,
-      items: [...(prev.items || []), { name: currentNewItem.name.trim(), price: priceNum.toFixed(2) }]
-    }));
-    setCurrentNewItem({ name: '', price: '' });
-  };
-
-  // Edit Item in edit form
-  const handleEditItemEdit = (index) => {
-    setCurrentNewItem(currentReceipt.items[index]);
-    setCurrentEditingItemIndex(index);
-  };
-
-  // Save edited item in edit form
-  const handleEditItemSave = () => {
-    if (!currentNewItem.name.trim() || !currentNewItem.price.trim()) {
-      toast({
-        title: "Incomplete Item",
-        description: "Please provide both item name and price for the edited item.",
-        variant: "destructive",
-      });
-      return;
-    }
-    const priceNum = parseFloat(currentNewItem.price);
-    if (isNaN(priceNum)) {
-      toast({
-        title: "Invalid Price",
-        description: "Edited item price must be a valid number.",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    setEditForm(prev => {
-      const updatedItems = [...(prev.items || [])];
-      updatedItems[currentEditingItemIndex] = { name: currentNewItem.name.trim(), price: priceNum.toFixed(2) };
-      return { ...prev, items: updatedItems };
-    });
-    setCurrentReceipt(prev => {
-      const updatedItems = [...(prev.items || [])];
-      updatedItems[currentEditingItemIndex] = { name: currentNewItem.name.trim(), price: priceNum.toFixed(2) };
-      return { ...prev, items: updatedItems };
-    });
-    setCurrentNewItem({ name: '', price: '' });
-    setCurrentEditingItemIndex(null);
-  };
-
-  // Cancel item editing in edit form
-  const handleEditItemCancel = () => {
-    setCurrentNewItem({ name: '', price: '' });
-    setCurrentEditingItemIndex(null);
-  };
-
-  // Remove Item from edit form
-  const handleRemoveItemEdit = (index) => {
-    setEditForm(prev => ({
-      ...prev,
-      items: (prev.items || []).filter((_, i) => i !== index)
-    }));
-    setCurrentReceipt(prev => ({
-      ...prev,
-      items: (prev.items || []).filter((_, i) => i !== index)
-    }));
-  };
-
-  // Helper for adding new item fields in the Manual Entry form dynamically
-  const handleAddItemField = (insertIndex) => {
-    setFormData(prevData => {
-      const newItems = [...(prevData.items || [])];
-      newItems.splice(insertIndex, 0, { name: '', price: '' });
-      return { ...prevData, items: newItems };
-    });
-  };
-
-  // Helper for removing item fields in the Manual Entry form dynamically
-  const handleRemoveItemField = (removeIndex) => {
-    setFormData(prevData => {
-      if (prevData.items.length === 1 && !prevData.items[0].name && !prevData.items[0].price) {
-        return prevData; // Prevent removing the last empty item if it's the only one
-      }
-      if (prevData.items.length > 1) {
-        const newItems = prevData.items.filter((_, i) => i !== removeIndex);
-        return { ...prevData, items: newItems };
-      }
-      return prevData; // Do nothing if trying to remove the last item
-    });
-  };
-
-  // Helper for adding new item fields in the Edit Receipt form dynamically
-  const handleEditItemAddField = (insertIndex) => {
-    setEditForm(prevData => {
-      const newItems = [...(prevData.items || [])];
-      newItems.splice(insertIndex, 0, { name: '', price: '' });
-      return { ...prevData, items: newItems };
-    });
-    setCurrentReceipt(prev => {
-      const newItems = [...(prev.items || [])];
-      newItems.splice(insertIndex, 0, { name: '', price: '' });
-      return { ...prev, items: newItems };
-    });
-  };
-
-  // Helper for removing item fields in the Edit Receipt form dynamically
-  const handleRemoveItemEditField = (removeIndex) => {
-    setEditForm(prevData => {
-      if (prevData.items.length === 1 && !prevData.items[0].name && !prevData.items[0].price) {
-        return prevData;
-      }
-      if (prevData.items.length > 1) {
-        const newItems = prevData.items.filter((_, i) => i !== removeIndex);
-        return { ...prevData, items: newItems };
-      }
-      return prevData;
-    });
-    setCurrentReceipt(prev => {
-      if (prev.items.length === 1 && !prev.items[0].name && !prev.items[0].price) {
-        return prev;
-      }
-      if (prev.items.length > 1) {
-        const newItems = prev.items.filter((_, i) => i !== removeIndex);
-        return { ...prev, items: newItems };
-      }
-      return prev;
-    });
-  };
-
-  // Update the receipt card rendering
-  const renderReceiptCard = (receipt) => (
-    <Card key={receipt.id} className="bg-slate-700/80 p-5 rounded-xl shadow-lg text-white border border-gray-700 hover:shadow-xl transition-all duration-300 ease-in-out transform hover:-translate-y-1">
-      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-        <CardTitle className="text-xl font-bold">{receipt.merchant}</CardTitle>
-        <div className="flex items-center space-x-2">
-          <Button
-            onClick={() => handleEditClick(receipt)}
-            variant="ghost"
-            size="icon"
-            className="text-blue-400 hover:bg-slate-600/50 hover:text-blue-300"
-          >
-            <Edit className="h-4 w-4" />
-          </Button>
-          <Button
-            onClick={() => handleDeleteReceipt(receipt.id)}
-            variant="ghost"
-            size="icon"
-            className="text-red-400 hover:bg-slate-600/50 hover:text-red-300"
-          >
-            <Trash2 className="h-4 w-4" />
-          </Button>
-          </div>
-      </CardHeader>
-      <CardContent>
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <p className="text-sm text-gray-400">Date</p>
-            <p className="text-lg">{formatDateSafely(receipt.transactionDate)}</p>
-          </div>
-          <div>
-            <p className="text-sm text-gray-400">Amount</p>
-            <p className="text-lg font-semibold">
-              {parseFloat(receipt.total).toFixed(2)} {receipt.currency}
-              {receipt.currency !== (settings?.baseCurrency || 'EUR') && exchangeRates && (
-                <span className="ml-2 text-sm text-gray-400">
-                  ({convertToBaseCurrency(receipt.total, receipt.currency, settings?.baseCurrency || 'EUR', exchangeRates).toFixed(2)} {settings?.baseCurrency || 'EUR'})
-                </span>
-              )}
-          </p>
-        </div>
-          <div>
-            <p className="text-sm text-gray-400">Category</p>
-            <p className="text-lg">{receipt.category || 'Uncategorized'}</p>
-          </div>
-          <div>
-            <p className="text-sm text-gray-400">Payment Method</p>
-            <p className="text-lg">{receipt.paymentMethod || 'Not specified'}</p>
-          </div>
-        </div>
-        {receipt.items && receipt.items.length > 0 && (
-          <div className="mt-4">
-            <p className="text-sm text-gray-400 mb-2">Items</p>
-            <ul className="space-y-1">
-              {receipt.items.map((item, index) => (
-                <li key={index} className="flex justify-between text-sm">
-                  <span>{item.name}</span>
-                  <span>
-                    {parseFloat(item.price).toFixed(2)} {receipt.currency}
-                    {receipt.currency !== (settings?.baseCurrency || 'EUR') && exchangeRates && (
-                      <span className="ml-2 text-xs text-gray-400">
-                        ({convertToBaseCurrency(item.price, receipt.currency, settings?.baseCurrency || 'EUR', exchangeRates).toFixed(2)} {settings?.baseCurrency || 'EUR'})
-                      </span>
-                    )}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  );
-
-  const [scrollProgress, setScrollProgress] = useState(0);
-
-  useEffect(() => {
-    const handleScroll = () => {
-      const scrollPosition = window.scrollY;
-      const windowHeight = window.innerHeight;
-      const scrollStart = windowHeight * 0.2; // Match header animation start
-      const scrollEnd = windowHeight * 0.5; // Match header animation end
-      
-      if (scrollPosition > scrollStart) {
-        const progress = Math.min(1, (scrollPosition - scrollStart) / (scrollEnd - scrollStart));
-        setScrollProgress(progress);
-      } else {
-        setScrollProgress(0);
-      }
+    // Safely parse numbers for initial editForm state
+    const safeParseFloat = (value) => {
+      const parsed = parseFloat(value);
+      return isNaN(parsed) ? '' : parsed.toFixed(2);
     };
 
-    window.addEventListener('scroll', handleScroll);
-    return () => window.removeEventListener('scroll', handleScroll);
-  }, []);
-
-  // Use effect to manage camera modal open/close state
-  useEffect(() => {
-    console.log('useEffect for camera modal open/close triggered. isCameraOpen:', isCameraOpen);
-    // The startCamera is now handled by the videoRef callback when the element mounts
-    // stopCamera is called here when modal closes
-    if (!isCameraOpen) {
-      stopCamera();
-    }
-  }, [isCameraOpen]);
+    setEditForm({
+      merchant: receipt.merchant || '',
+      amount: safeParseFloat(receipt.total), // Use total, not amount, for consistency
+      date: receipt.transactionDate || '', // Use transactionDate, not date
+      category: receipt.category || '',
+      subtotal: receipt.subtotal ? safeParseFloat(receipt.subtotal) : '', // Ensure 2 decimal places, or empty
+      payment_method: receipt.paymentMethod || '', // Use paymentMethod, not payment_method
+      currency: receipt.currency || 'EUR',
+      items: receipt.items?.map(item => ({
+        name: item.name || '',
+        price: safeParseFloat(item.price)
+      })) || [] // Ensure items are formatted safely
+    });
+    setCurrentReceipt(receipt);
+    setIsEditing(true);
+    setCurrentStep('receipt_form'); // Open the receipt form modal for editing
+  };
 
   const processOCR = async (file) => {
     try {
@@ -1203,7 +1131,10 @@ Note: For currency, return the standard 3-letter currency code (e.g., EUR, USD, 
       console.log("OCR Raw Response:\n", replyText);
 
       const jsonMatch = replyText.match(/```json\s*({[\s\S]*?})\s*```/i);
-      if (!jsonMatch) throw new Error("No JSON found in the response");
+      if (!jsonMatch || !jsonMatch[1]) {
+        console.error("OCR parsing error: No valid JSON block found in the response.", replyText);
+        throw new Error("No valid JSON block found in the OCR response.");
+      }
 
       const parsedJSON = JSON.parse(jsonMatch[1]);
 
@@ -1440,7 +1371,7 @@ Note: For currency, return the standard 3-letter currency code (e.g., EUR, USD, 
               </DialogDescription>
             </DialogHeader>
             <ScrollArea className="h-[calc(100vh-180px)] pr-4">
-              <form onSubmit={handleSaveReceipt}>
+              <form onSubmit={handleSaveReceiptSubmit}>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
                   <div className="space-y-2">
                     <Label htmlFor="date">Date</Label>
@@ -1448,8 +1379,8 @@ Note: For currency, return the standard 3-letter currency code (e.g., EUR, USD, 
                       id="date"
                       name="date"
                       type="date"
-                      value={formData.date}
-                      onChange={handleChange}
+                      value={activeFormData.date}
+                      onChange={handleFormInputChange}
                       className="bg-slate-700/70 border-gray-700/50 text-white focus:border-blue-400"
                     />
                     {formErrors.date && <p className="text-red-400 text-sm">{formErrors.date}</p>}
@@ -1460,8 +1391,8 @@ Note: For currency, return the standard 3-letter currency code (e.g., EUR, USD, 
                       id="merchant"
                       name="merchant"
                       ref={merchantInputRef}
-                      value={formData.merchant}
-                      onChange={handleChange}
+                      value={activeFormData.merchant}
+                      onChange={handleFormInputChange}
                       className="bg-slate-700/70 border-gray-700/50 text-white focus:border-blue-400"
                       placeholder="Enter merchant name"
                     />
@@ -1475,11 +1406,11 @@ Note: For currency, return the standard 3-letter currency code (e.g., EUR, USD, 
                       type="number"
                         step="0.01"
                       placeholder="0.00"
-                        value={formData.total}
-                        onChange={(e) => setFormData(prev => ({ ...prev, total: parseFloat(e.target.value).toFixed(2) }))}
+                        value={activeFormData.total}
+                        onChange={handleFormInputChange}
                         className="w-full bg-slate-700/70 border-gray-700/50 text-white"
                     />
-                      <span className="ml-2 text-gray-400 text-sm">{SUPPORTED_CURRENCIES.find(c => c.code === formData.currency)?.symbol || ''}</span>
+                      <span className="ml-2 text-gray-400 text-sm">{SUPPORTED_CURRENCIES.find(c => c.code === activeFormData.currency)?.symbol || ''}</span>
                     </div>
                   </div>
                   <div className="space-y-2">
@@ -1490,18 +1421,18 @@ Note: For currency, return the standard 3-letter currency code (e.g., EUR, USD, 
                         type="number"
                         step="0.01"
                         placeholder="0.00"
-                        value={formData.subtotal}
-                        onChange={(e) => setFormData(prev => ({ ...prev, subtotal: parseFloat(e.target.value).toFixed(2) }))}
+                        value={activeFormData.subtotal}
+                        onChange={handleFormInputChange}
                         className="w-full bg-slate-700/70 border-gray-700/50 text-white"
                       />
-                      <span className="ml-2 text-gray-400 text-sm">{SUPPORTED_CURRENCIES.find(c => c.code === formData.currency)?.symbol || ''}</span>
+                      <span className="ml-2 text-gray-400 text-sm">{SUPPORTED_CURRENCIES.find(c => c.code === activeFormData.currency)?.symbol || ''}</span>
                     </div>
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="category">Category</Label>
                     <Select
-                      value={formData.category}
-                      onValueChange={(value) => setFormData(prev => ({ ...prev, category: value }))}
+                      value={activeFormData.category}
+                      onValueChange={(value) => handleFormInputChange({ target: { name: 'category', value: value } })}
                       className="w-full bg-slate-700/70 border-gray-700/50 text-white"
                     >
                       <SelectTrigger className="w-full bg-slate-700/70 border-gray-700/50 text-white">
@@ -1521,16 +1452,16 @@ Note: For currency, return the standard 3-letter currency code (e.g., EUR, USD, 
                     <Input
                       id="paymentMethod"
                       name="paymentMethod"
-                      value={formData.paymentMethod}
-                      onChange={(e) => setFormData(prev => ({ ...prev, paymentMethod: e.target.value }))}
+                      value={activeFormData.paymentMethod}
+                      onChange={handleFormInputChange}
                       className="bg-slate-700/70 border-gray-700/50 text-white focus:border-blue-400"
                     />
                   </div>
                   <div className="space-y-2 col-span-1">
                     <Label htmlFor="currency">Currency</Label>
                     <Select
-                      value={formData.currency}
-                      onValueChange={(value) => setFormData(prev => ({ ...prev, currency: value }))}
+                      value={activeFormData.currency}
+                      onValueChange={(value) => handleFormInputChange({ target: { name: 'currency', value: value } })}
                       className="w-full bg-slate-700/70 border-gray-700/50 text-white"
                     >
                       <SelectTrigger className="w-full bg-slate-700/70 border-gray-700/50 text-white">
@@ -1550,13 +1481,13 @@ Note: For currency, return the standard 3-letter currency code (e.g., EUR, USD, 
                 {/* Items Section */}
                 <div className="mt-6 space-y-4">
                   <h3 className="text-lg font-semibold text-gray-200">Items</h3>
-                  {formData.items.map((item, index) => (
+                  {(activeFormData.items || []).map((item, index) => (
                     <div key={index} className="flex items-center space-x-2">
                               <Input
                         id={`item-name-${index}`}
                                 placeholder="Item Name"
                         value={item.name || ''}
-                        onChange={(e) => handleItemChange(index, 'name', e.target.value)}
+                        onChange={(e) => handleItemInputChange(e, index, 'name')}
                         className="flex-grow bg-slate-700/70 border-gray-700/50 text-white focus:border-blue-400 focus:ring-blue-400"
                               />
                               <Input
@@ -1564,19 +1495,31 @@ Note: For currency, return the standard 3-letter currency code (e.g., EUR, USD, 
                         type="text"
                         placeholder="0.00"
                         value={item.price}
-                        onChange={(e) => handleItemChange(index, 'price', e.target.value)}
+                        onChange={(e) => handleItemInputChange(e, index, 'price')}
                         onBlur={(e) => {
                           const value = e.target.value;
                           const parsed = parseFloat(value.replace(',', '.')).toFixed(2);
-                          handleItemChange(index, 'price', isNaN(parsed) ? '' : parsed);
+                          handleItemInputChange({ target: { value: isNaN(parsed) ? '' : parsed } }, index, 'price');
                         }}
                         className="w-28 bg-slate-700/70 border-gray-700/50 text-white focus:border-blue-400 focus:ring-blue-400"
                       />
-                      <span className="text-gray-400">{formData.currency}</span>
-                      {formData.items.length > 1 && (
+                      <span className="text-gray-400">{activeFormData.currency}</span>
+                      {(activeFormData.items || []).length > 0 && ( 
                         <Button
                           type="button"
-                          onClick={() => handleRemoveItemField(index)}
+                          onClick={() => {
+                            const targetStateSetter = editingReceipt ? setEditForm : setFormData;
+                            targetStateSetter(prev => ({
+                              ...prev,
+                              items: (prev.items || []).filter((_, i) => i !== index)
+                            }));
+                            if (editingReceipt) {
+                              setCurrentReceipt(prev => ({
+                                ...prev,
+                                items: (prev.items || []).filter((_, i) => i !== index)
+                              }));
+                            }
+                          }}
                           variant="ghost"
                           size="icon"
                           className="text-red-500 hover:text-red-400"
@@ -1587,7 +1530,47 @@ Note: For currency, return the standard 3-letter currency code (e.g., EUR, USD, 
                         </div>
                   ))}
 
-                  {/* Dynamic Empty Item Field / Add New Item Button */}
+                  {/* Add New Item fields (conditional based on editing vs. new) */}
+                  {editingReceipt ? (
+                    <div className="flex items-end gap-2">
+                      <div className="flex-grow space-y-2">
+                        <Label htmlFor="edit-new-item-name">New Item Name</Label>
+                        <Input
+                          id="edit-new-item-name"
+                          type="text"
+                          placeholder="Add new item name"
+                          value={currentNewItem.name}
+                          onChange={(e) => setCurrentNewItem({ ...currentNewItem, name: e.target.value })}
+                          className="w-full bg-slate-700/70 border-gray-700/50 text-white"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="edit-new-item-price">Price</Label>
+                        <div className="flex items-center">
+                          <Input
+                            id="edit-new-item-price"
+                            type="number"
+                            step="0.01"
+                            placeholder="0.00"
+                            value={currentNewItem.price}
+                            onChange={(e) => setCurrentNewItem(prev => ({ ...prev, price: e.target.value }))}
+                            className="w-28 bg-slate-700/70 border-gray-700/50 text-white"
+                          />
+                          <span className="text-gray-400 text-sm ml-2">{activeFormData.currency}</span>
+                        </div>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        onClick={handleEditItemAdd} 
+                        disabled={!currentNewItem.name.trim() && !currentNewItem.price.trim()}
+                        className="text-blue-400 hover:bg-slate-600/50 hover:text-blue-300"
+                      >
+                        <PlusCircle className="h-5 w-5" />
+                      </Button>
+                    </div>
+                  ) : (
                   <div className="flex items-end gap-2">
                     <div className="flex-grow space-y-2">
                       <Label htmlFor="new-item-name">New Item Name</Label>
@@ -1612,20 +1595,21 @@ Note: For currency, return the standard 3-letter currency code (e.g., EUR, USD, 
                           onChange={(e) => setNewItem(prev => ({ ...prev, price: e.target.value }))}
                           className="w-28 bg-slate-700/70 border-gray-700/50 text-white"
                         />
-                        <span className="text-gray-400 text-sm ml-2">{SUPPORTED_CURRENCIES.find(c => c.code === formData.currency)?.symbol || ''}</span>
+                          <span className="text-gray-400 text-sm ml-2">{activeFormData.currency}</span>
                       </div>
                   </div>
                   <Button
                       type="button"
                       variant="ghost"
                       size="icon"
-                      onClick={() => handleAddItem()}
+                        onClick={handleAddItem} 
                       disabled={!newItem.name.trim() && !newItem.price.trim()}
                       className="text-blue-400 hover:bg-slate-600/50 hover:text-blue-300"
                   >
                       <PlusCircle className="h-5 w-5" />
                   </Button>
                 </div>
+                  )}
           </div>
 
                 <DialogFooter className="flex justify-end p-4 bg-slate-800/80 border-t border-gray-700/50 rounded-b-xl">
@@ -1635,6 +1619,8 @@ Note: For currency, return the standard 3-letter currency code (e.g., EUR, USD, 
                     onClick={() => {
                       setCurrentStep('upload_options');
                       setEditingReceipt(null);
+                      setIsEditing(false); // Ensure isEditing is reset when closing without saving
+                      resetFormData(); // Reset formData to default for new entries
                     }} 
                     className="bg-slate-700 hover:bg-slate-600 text-white"
                   >
@@ -1644,13 +1630,17 @@ Note: For currency, return the standard 3-letter currency code (e.g., EUR, USD, 
                     type="submit" 
                     disabled={isBusy}
                     onClick={(e) => {
-                      e.preventDefault(); // Prevent default form submission that causes page reload
-                      handleSaveReceipt();
+                      e.preventDefault();
+                      if (editingReceipt) {
+                        handleEditSaveSubmit(e); // Call handleEditSaveSubmit for existing receipts
+                      } else {
+                        handleSaveReceiptSubmit(); // Call handleSaveReceiptSubmit for new receipts
+                      }
                     }}
                     className="bg-blue-600 hover:bg-blue-700 text-white transition-all duration-300 ease-in-out transform hover:scale-105 shadow-lg"
                   >
                     {isBusy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
-                    {isBusy ? 'Saving...' : 'Save Receipt'}
+                    {isBusy ? 'Saving...' : (editingReceipt ? 'Update Receipt' : 'Save Receipt')}
                   </Button>
                 </DialogFooter>
               </form>
@@ -1681,7 +1671,12 @@ Note: For currency, return the standard 3-letter currency code (e.g., EUR, USD, 
         )}
 
       {/* Camera Modal */}
-      <Dialog open={isCameraOpen} onOpenChange={setIsCameraOpen}>
+      <Dialog open={isCameraOpen} onOpenChange={(open) => {
+        if (!open) {
+          stopCamera(); // Ensure camera is stopped when modal is closed
+        }
+        setIsCameraOpen(open);
+      }}>
         <DialogContent className="sm:max-w-[600px] bg-slate-800 text-white border-gray-700 p-6 rounded-lg shadow-xl animate-fade-in flex flex-col items-center">
           <DialogHeader className="mb-4">
             <DialogTitle className="text-2xl font-bold text-gray-100">Take Photo</DialogTitle>
