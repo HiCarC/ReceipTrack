@@ -118,7 +118,20 @@ export default function ReceiptUploader({ className }) {
   const [editingItemIndex, setEditingItemIndex] = useState(null);
   const [isCameraOpen, setIsCameraOpen] = useState(false);
   const [isCameraReady, setIsCameraReady] = useState(false);
-  const videoRef = useRef(null);
+  let _videoElement = null; // Mutable variable to hold the video DOM element
+  const videoRef = (node) => {
+    if (node) {
+      _videoElement = node;
+      // Call startCamera directly here if modal is already open
+      if (isCameraOpen) {
+        console.log('Video element assigned to ref, and camera modal is open. Calling startCamera.');
+        startCamera();
+      }
+    } else {
+      _videoElement = null;
+      console.log('Video element detached from ref.');
+    }
+  };
   const canvasRef = useRef(null);
   const [showFullScreenPreview, setShowFullScreenPreview] = useState(false);
   const [previewImageSrc, setPreviewImageSrc] = useState(null);
@@ -133,15 +146,15 @@ export default function ReceiptUploader({ className }) {
 
   // State for form data
   const [formData, setFormData] = useState({
-    date: '',
+    date: new Date().toISOString().split('T')[0], // Set today's date as default
     merchant: '',
     total: '',
     tax: '',
     subtotal: '',
     paymentMethod: '',
-    currency: 'EUR', // Default currency for new receipts
+    currency: 'EUR',
     items: [],
-    category: '' // Initialize category to an empty string
+    category: ''
   });
 
   // State for UI
@@ -516,181 +529,87 @@ export default function ReceiptUploader({ className }) {
   };
 
   const startCamera = async () => {
+    console.log('startCamera called');
+    console.log('video element in startCamera: ', _videoElement);
+    if (!_videoElement) {
+      console.error('Attempted to start camera but _videoElement is null.');
+      toast({
+        title: "Camera Error",
+        description: "Video element not available. Please try again.",
+        variant: "destructive",
+      });
+      setIsCameraReady(false);
+      return;
+    }
+
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-        videoRef.current.srcObject = stream;
-          setIsCameraReady(true);
+      console.log('Camera stream obtained:', stream);
+      _videoElement.srcObject = stream;
+      setIsCameraReady(true); // Set to true after stream is successfully assigned
+      console.log('Camera stream assigned. Camera is ready.');
     } catch (error) {
       console.error("Error accessing camera:", error);
+      console.error("Error name:", error.name);
+      console.error("Error message:", error.message);
       toast({
         title: "Camera Access Denied",
         description: "Please grant camera access to use this feature.",
         variant: "destructive",
       });
-      setIsCameraReady(false);
+      setIsCameraReady(false); // Reset if there's an error
     }
   };
 
   const stopCamera = () => {
-    if (videoRef.current && videoRef.current.srcObject) {
-      videoRef.current.srcObject.getTracks().forEach(track => track.stop());
-      videoRef.current.srcObject = null;
+    if (_videoElement && _videoElement.srcObject) {
+      _videoElement.srcObject.getTracks().forEach(track => track.stop());
+      _videoElement.srcObject = null;
+      console.log('Camera stream stopped.');
     }
     setIsCameraOpen(false);
     setIsCameraReady(false);
   };
 
   const capturePhoto = () => {
-    if (videoRef.current && canvasRef.current) {
+    if (_videoElement && canvasRef.current) {
       const context = canvasRef.current.getContext('2d');
-      canvasRef.current.width = videoRef.current.videoWidth;
-      canvasRef.current.height = videoRef.current.videoHeight;
-      context.drawImage(videoRef.current, 0, 0, canvasRef.current.width, canvasRef.current.height);
+      canvasRef.current.width = _videoElement.videoWidth;
+      canvasRef.current.height = _videoElement.videoHeight;
+      context.drawImage(_videoElement, 0, 0, canvasRef.current.width, canvasRef.current.height);
       setPreviewImageSrc(canvasRef.current.toDataURL('image/jpeg'));
       setShowFullScreenPreview(true);
-    }
-  };
-
-  const handleUseImage = async () => {
-    if (previewImageSrc) {
-      setIsLoading(true);
-      setCurrentFunnyMessage(getRandomFunnyMessage());
-      setShowFullScreenPreview(false);
-      stopCamera(); // Stop camera after capturing
-      const blob = await fetch(previewImageSrc).then(res => res.blob());
-      processOCR(blob);
-    }
-  };
-
-  const toBase64 = (file) =>
-    new Promise((resolve, reject) => {
-          const reader = new FileReader();
-      reader.readAsDataURL(file);
-      reader.onload = () => resolve(reader.result);
-      reader.onerror = reject;
-        });
-
-  const processOCR = async (file) => {
-    try {
-      setIsOcrProcessing(true);
-      setOcrError(null);
-      const base64 = await toBase64(file);
-
-      const response = await fetch("https://api.openai.com/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${import.meta.env.VITE_OPENAI_API_KEY}`
-        },
-        body: JSON.stringify({
-          model: "gpt-4o",
-          messages: [
-            {
-              role: "user",
-              content: [
-                {
-                  type: "text",
-                  text: `Analyze this receipt image and extract the following information in JSON format:
-1. Store/Merchant name
-2. Total amount
-3. Date
-4. Category (choose from: Groceries, Dining, Transportation, Shopping, Bills, Entertainment, Health, Other)
-5. Payment Method (e.g., Cash, Credit Card, Debit Card, Mobile Payment)
-6. Items (list of items with their prices)
-
-Consider these guidelines for categorization:
-- Groceries: Supermarkets, food stores, grocery items
-- Dining: Restaurants, cafes, fast food, takeout
-- Transportation: Gas stations, public transport, taxis, car services
-- Shopping: Retail stores, clothing, electronics, general merchandise
-- Bills: Utilities, services, subscriptions
-- Entertainment: Movies, events, leisure activities
-- Health: Medical, pharmacy, wellness
-- Other: Any items that don't fit the above categories
-
-For payment method, look for:
-- Credit/Debit card logos or names
-- Cash indicators
-- Mobile payment symbols (Apple Pay, Google Pay, etc.)
-- Contactless payment indicators
-
-Reply with a JSON object enclosed in triple backticks like this:
-\`\`\`json
-{
-  "store": "Store Name",
-  "amount": "23.50",
-  "date": "13/06/2025",
-  "category": "Category Name",
-  "payment_method": "Payment Method",
-  "items": [
-    {"name": "Item 1", "price": "10.00"},
-    {"name": "Item 2", "price": "13.50"}
-  ]
-}
-\`\`\``
-                },
-                { type: "image_url", image_url: { url: base64 } }
-              ]
-            }
-          ],
-          max_tokens: 500
-        })
-      });
-
-      const data = await response.json();
-      const replyText = data?.choices?.[0]?.message?.content || '';
-      console.log("OCR Raw Response:\n", replyText);
-
-      const jsonMatch = replyText.match(/```json\s*({[\s\S]*?})\s*```/i);
-      if (!jsonMatch) throw new Error("No JSON found in the response");
-
-      const parsedJSON = JSON.parse(jsonMatch[1]);
-
-      // Update form data with the extracted information
-      setFormData(prev => ({
-        ...prev,
-        merchant: parsedJSON.store || '',
-        total: parsedJSON.amount ? parsedJSON.amount.replace(/[^\d.,]/g, '').replace(',', '.') : '',
-        date: parsedJSON.date ? normalizeDate(parsedJSON.date) : '',
-        category: parsedJSON.category || '',
-        paymentMethod: parsedJSON.payment_method || '',
-        items: parsedJSON.items?.map(item => ({
-          name: item.name || '',
-          price: item.price ? item.price.replace(/[^\d.,]/g, '').replace(',', '.') : ''
-        })) || []
-      }));
-
-      setCurrentStep('receipt_form');
-    } catch (error) {
-      console.error('OCR error:', error);
-      setOcrError('Failed to process receipt. Please try again or enter manually.');
-      toast({
-        title: "OCR Processing Error",
-        description: "Failed to process the receipt. Please try again or enter the details manually.",
-        variant: "destructive",
-      });
-    } finally {
-      setIsOcrProcessing(false);
-      setIsLoading(false);
+      setIsCameraOpen(false); // Close the camera modal after capturing
     }
   };
 
   const handleConfirmPreview = () => {
-    if (file) {
+    if (previewImageSrc) {
       setIsLoading(true);
       setCurrentFunnyMessage(getRandomFunnyMessage());
       setShowFullScreenPreview(false);
-      // Add a small delay to ensure the loading state is visible
-      setTimeout(() => {
-        processOCR(file);
-      }, 100);
+      // Convert base64 to blob and process it
+      fetch(previewImageSrc)
+        .then(res => res.blob())
+        .then(blob => {
+          processOCR(blob);
+        })
+        .catch(error => {
+          console.error('Error processing captured image:', error);
+          toast({
+            title: "Error Processing Image",
+            description: "There was an issue processing your captured image. Please try again.",
+            variant: "destructive",
+          });
+          setIsLoading(false);
+        });
     }
   };
 
   const handleRetakePreview = () => {
     setShowFullScreenPreview(false);
     setPreviewImageSrc(null);
-    startCamera(); // Restart camera for a new photo
+    setIsCameraOpen(true); // Reopen camera for retake
   };
 
   const handleEditClick = (receipt) => {
@@ -1190,6 +1109,150 @@ Reply with a JSON object enclosed in triple backticks like this:
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
 
+  // Use effect to manage camera modal open/close state
+  useEffect(() => {
+    console.log('useEffect for camera modal open/close triggered. isCameraOpen:', isCameraOpen);
+    // The startCamera is now handled by the videoRef callback when the element mounts
+    // stopCamera is called here when modal closes
+    if (!isCameraOpen) {
+      stopCamera();
+    }
+  }, [isCameraOpen]);
+
+  const processOCR = async (file) => {
+    try {
+      setIsOcrProcessing(true);
+      setOcrError(null);
+      const base64 = await toBase64(file);
+
+      const response = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${import.meta.env.VITE_OPENAI_API_KEY}`
+        },
+        body: JSON.stringify({
+          model: "gpt-4o",
+          messages: [
+            {
+              role: "user",
+              content: [
+                {
+                  type: "text",
+                  text: `Analyze this receipt image and extract the following information in JSON format:
+1. Store/Merchant name
+2. Total amount
+3. Date
+4. Category (choose from: Groceries, Dining, Transportation, Shopping, Bills, Entertainment, Health, Other)
+5. Payment Method (e.g., Cash, Credit Card, Debit Card, Mobile Payment)
+6. Items (list of items with their prices)
+
+Consider these guidelines for categorization:
+- Groceries: Supermarkets, food stores, grocery items
+- Dining: Restaurants, cafes, fast food, takeout
+- Transportation: Gas stations, public transport, taxis, car services
+- Shopping: Retail stores, clothing, electronics, general merchandise
+- Bills: Utilities, services, subscriptions
+- Entertainment: Movies, events, leisure activities
+- Health: Medical, pharmacy, wellness
+- Other: Any items that don't fit the above categories
+
+For payment method, look for:
+- Credit/Debit card logos or names
+- Cash indicators
+- Mobile payment symbols (Apple Pay, Google Pay, etc.)
+- Contactless payment indicators
+
+Reply with a JSON object enclosed in triple backticks like this:
+\`\`\`json
+{
+  "store": "Store Name",
+  "amount": "23.50",
+  "date": "13/06/2025",
+  "category": "Category Name",
+  "payment_method": "Payment Method",
+  "items": [
+    {"name": "Item 1", "price": "10.00"},
+    {"name": "Item 2", "price": "13.50"}
+  ]
+}
+\`\`\``
+                },
+                { type: "image_url", image_url: { url: base64 } }
+              ]
+            }
+          ],
+          max_tokens: 500
+        })
+      });
+
+      const data = await response.json();
+      const replyText = data?.choices?.[0]?.message?.content || '';
+      console.log("OCR Raw Response:\n", replyText);
+
+      const jsonMatch = replyText.match(/```json\s*({[\s\S]*?})\s*```/i);
+      if (!jsonMatch) throw new Error("No JSON found in the response");
+
+      const parsedJSON = JSON.parse(jsonMatch[1]);
+
+      // Update form data with the extracted information
+      setFormData(prev => ({
+        ...prev,
+        merchant: parsedJSON.store || '',
+        total: parsedJSON.amount ? parsedJSON.amount.replace(/[^\d.,]/g, '').replace(',', '.') : '',
+        date: parsedJSON.date ? normalizeDate(parsedJSON.date) : '',
+        category: parsedJSON.category || '',
+        paymentMethod: parsedJSON.payment_method || '',
+        items: parsedJSON.items?.map(item => ({
+          name: item.name || '',
+          price: item.price ? item.price.replace(/[^\d.,]/g, '').replace(',', '.') : ''
+        })) || []
+      }));
+
+      setCurrentStep('receipt_form');
+    } catch (error) {
+      console.error('OCR error:', error);
+      setOcrError('Failed to process receipt. Please try again or enter manually.');
+      toast({
+        title: "OCR Processing Error",
+        description: "Failed to process the receipt. Please try again or enter the details manually.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsOcrProcessing(false);
+      setIsLoading(false);
+    }
+  };
+
+  const toBase64 = (file) =>
+    new Promise((resolve, reject) => {
+          const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = reject;
+        });
+
+  // Add a function to reset form data with today's date
+  const resetFormData = () => {
+    setFormData({
+      date: new Date().toISOString().split('T')[0],
+      merchant: '',
+      total: '',
+      tax: '',
+      subtotal: '',
+      paymentMethod: '',
+      currency: 'EUR',
+      items: [],
+      category: ''
+    });
+  };
+
+  // Update the manual entry button click handler
+  const handleManualEntry = () => {
+    resetFormData();
+    setCurrentStep('manual_entry');
+  };
+
   return (
     <div className={`relative flex flex-col items-center w-full ${className}`}>
       {/* Loading Overlay */}
@@ -1261,7 +1324,6 @@ Reply with a JSON object enclosed in triple backticks like this:
               <Button
                 onClick={() => {
                   setIsCameraOpen(true);
-                  startCamera();
                 }}
                 className="w-full bg-blue-700 text-white font-semibold py-3 rounded-xl hover:bg-blue-800 transition-all duration-300 ease-in-out transform hover:scale-105 flex items-center justify-center gap-2 shadow-lg"
               >
@@ -1269,9 +1331,7 @@ Reply with a JSON object enclosed in triple backticks like this:
                 Take Photo
               </Button>
               <Button
-                onClick={() => {
-                  setCurrentStep('manual_entry');
-                }}
+                onClick={handleManualEntry}
                 className="w-full bg-blue-700 text-white font-semibold py-3 rounded-xl hover:bg-blue-800 transition-all duration-300 ease-in-out transform hover:scale-105 flex items-center justify-center gap-2 shadow-lg"
               >
                 <List className="h-5 w-5" />
@@ -1608,19 +1668,24 @@ Reply with a JSON object enclosed in triple backticks like this:
             </DialogDescription>
           </DialogHeader>
           <div className="relative w-full max-w-[560px] h-[420px] bg-gray-900 rounded-lg overflow-hidden flex items-center justify-center">
-            {isCameraReady ? (
-              <video ref={videoRef} autoPlay playsInline className="w-full h-full object-cover"></video>
-            ) : (
-              <p className="text-gray-400">Camera not ready or access denied.</p>
+            <video ref={videoRef} autoPlay playsInline className="w-full h-full object-cover"></video>
+            {!isCameraReady && (
+              <p className="absolute text-gray-400">Camera not ready or access denied.</p>
             )}
+            {/* Funny Guide Frame for Receipt positioning */}
+            <div className="absolute inset-0 flex items-center justify-center p-8 pointer-events-none">
+              <div className="w-full h-full border-2 border-dashed border-blue-400 rounded-lg opacity-70 flex items-center justify-center text-blue-300 text-sm font-semibold text-center leading-tight">
+                Position your<br/>receipt here!<br/>(Scan me!) 📸
+              </div>
+            </div>
             <canvas ref={canvasRef} className="hidden"></canvas>
             </div>
           <div className="mt-4 flex space-x-4">
-            <Button onClick={capturePhoto} disabled={!isCameraReady} className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded">
-              <Camera className="h-5 w-5 mr-2" /> Capture Photo
-            </Button>
-            <Button onClick={stopCamera} variant="outline" className="text-gray-200 border-gray-600 hover:bg-gray-700 hover:text-white font-bold py-2 px-4 rounded">
+            <Button onClick={stopCamera} className="bg-red-700 hover:bg-red-800 text-white font-bold py-2 px-4 rounded">
               <X className="h-5 w-5 mr-2" /> Close Camera
+            </Button>
+            <Button onClick={capturePhoto} disabled={!isCameraReady} className="bg-green-700 hover:bg-green-800 text-white font-bold py-2 px-4 rounded">
+              <Camera className="h-5 w-5 mr-2" /> Capture Photo
             </Button>
           </div>
         </DialogContent>
