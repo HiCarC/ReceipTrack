@@ -1145,7 +1145,8 @@ export default function ReceiptUploader({ className }) {
 3. Date
 4. Category (choose from: Groceries, Dining, Transportation, Shopping, Bills, Entertainment, Health, Other)
 5. Payment Method (e.g., Cash, Credit Card, Debit Card, Mobile Payment)
-6. Items (list of items with their prices)
+6. Currency (detect from the receipt, looking for currency symbols or codes like €, $, £, ¥, etc.)
+7. Items (list of items with their prices)
 
 Consider these guidelines for categorization:
 - Groceries: Supermarkets, food stores, grocery items
@@ -1156,6 +1157,14 @@ Consider these guidelines for categorization:
 - Entertainment: Movies, events, leisure activities
 - Health: Medical, pharmacy, wellness
 - Other: Any items that don't fit the above categories
+
+For currency detection, look for:
+- Currency symbols (€, $, £, ¥, etc.)
+- Currency codes (EUR, USD, GBP, JPY, etc.)
+- Regional formats (e.g., €1.234,56 for European format, $1,234.56 for US format)
+- Currency indicators in the header or footer of the receipt
+- Currency mentioned in the payment section
+- Currency symbols next to prices
 
 For payment method, look for:
 - Credit/Debit card logos or names
@@ -1171,12 +1180,15 @@ Reply with a JSON object enclosed in triple backticks like this:
   "date": "13/06/2025",
   "category": "Category Name",
   "payment_method": "Payment Method",
+  "currency": "EUR",
   "items": [
     {"name": "Item 1", "price": "10.00"},
     {"name": "Item 2", "price": "13.50"}
   ]
 }
-\`\`\``
+\`\`\`
+
+Note: For currency, return the standard 3-letter currency code (e.g., EUR, USD, GBP, JPY) based on the detected currency.`
                 },
                 { type: "image_url", image_url: { url: base64 } }
               ]
@@ -1203,6 +1215,7 @@ Reply with a JSON object enclosed in triple backticks like this:
         date: parsedJSON.date ? normalizeDate(parsedJSON.date) : '',
         category: parsedJSON.category || '',
         paymentMethod: parsedJSON.payment_method || '',
+        currency: parsedJSON.currency || 'EUR', // Use detected currency or default to EUR
         items: parsedJSON.items?.map(item => ({
           name: item.name || '',
           price: item.price ? item.price.replace(/[^\d.,]/g, '').replace(',', '.') : ''
@@ -1247,10 +1260,17 @@ Reply with a JSON object enclosed in triple backticks like this:
     });
   };
 
-  // Update the manual entry button click handler
+  // Add a ref for the merchant input
+  const merchantInputRef = useRef(null);
+
+  // Update the handleManualEntry function to focus on merchant field
   const handleManualEntry = () => {
     resetFormData();
     setCurrentStep('manual_entry');
+    // Use setTimeout to ensure the modal is open before focusing
+    setTimeout(() => {
+      merchantInputRef.current?.focus();
+    }, 100);
   };
 
   return (
@@ -1439,9 +1459,11 @@ Reply with a JSON object enclosed in triple backticks like this:
                     <Input
                       id="merchant"
                       name="merchant"
+                      ref={merchantInputRef}
                       value={formData.merchant}
                       onChange={handleChange}
                       className="bg-slate-700/70 border-gray-700/50 text-white focus:border-blue-400"
+                      placeholder="Enter merchant name"
                     />
                     {formErrors.merchant && <p className="text-red-400 text-sm">{formErrors.merchant}</p>}
                   </div>
