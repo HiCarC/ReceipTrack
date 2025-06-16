@@ -59,6 +59,30 @@ const CURRENCY_RATES = {
   PLN: 4.32
 };
 
+// Helper function to normalize date format
+const normalizeDate = (input) => {
+  if (!input) return '';
+  
+  // If input is already in YYYY-MM-DD format, return as is
+  if (/^\d{4}-\d{2}-\d{2}$/.test(input)) {
+    return input;
+  }
+  
+  try {
+    // Try to parse the date
+    const date = new Date(input);
+    if (isNaN(date.getTime())) {
+      return '';
+    }
+    
+    // Format as YYYY-MM-DD
+    return date.toISOString().split('T')[0];
+  } catch (error) {
+    console.error('Date normalization error:', error);
+    return '';
+  }
+};
+
 export default function ReceiptUploader({ className }) {
   const { toast } = useToast();
   const authContext = useAuth();
@@ -130,15 +154,26 @@ export default function ReceiptUploader({ className }) {
 
   // Array of funny loading messages
   const funnyMessages = [
-    "Teaching receipts to read...",
-    "Counting pixels and dollars...",
-    "Wrangling numbers into submission...",
-    "Decoding receipt hieroglyphics...",
-    "Making receipts talk...",
-    "Converting paper to pixels...",
-    "Teaching AI to read receipts...",
-    "Calculating the meaning of life, the universe, and your receipt...",
-    "Hold tight, magic is happening!"
+    "Teaching receipts to read... 📚",
+    "Counting pixels and dollars... 💰",
+    "Wrangling numbers into submission... 🤠",
+    "Decoding receipt hieroglyphics... 🔍",
+    "Making receipts talk... 🗣️",
+    "Converting paper to pixels... 📄➡️💻",
+    "Teaching AI to read receipts... 🤖",
+    "Calculating the meaning of life, the universe, and your receipt... 🌌",
+    "Hold tight, magic is happening! ✨",
+    "Scanning for hidden discounts... 🔎",
+    "Teaching receipts to dance... 💃",
+    "Brewing coffee for the receipt scanner... ☕",
+    "Polishing the pixels... ✨",
+    "Feeding the receipt scanner... 🍕",
+    "Teaching receipts to do yoga... 🧘‍♂️",
+    "Counting all the zeros... 0️⃣",
+    "Making the receipt scanner happy... 😊",
+    "Teaching receipts to sing... 🎵",
+    "Polishing the digital lens... 🔍",
+    "Feeding the AI some numbers... 🤖"
   ];
 
   const getRandomFunnyMessage = () => {
@@ -454,7 +489,7 @@ export default function ReceiptUploader({ className }) {
         // Allow empty string or numbers with up to 2 decimal places
       if (value === '' || /^-?[0-9]*\.?[0-9]{0,2}$/.test(value)) {
           updatedData[name] = value;
-        }
+      }
       } else {
         updatedData[name] = value;
       }
@@ -466,9 +501,13 @@ export default function ReceiptUploader({ className }) {
     const selectedFile = e.target.files[0];
     if (selectedFile) {
       setFile(selectedFile);
-      setIsLoading(true);
-      setCurrentFunnyMessage(getRandomFunnyMessage());
-      processOCR(selectedFile);
+      // Create a preview URL for the selected file
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        setPreviewImageSrc(event.target.result);
+        setShowFullScreenPreview(true);
+      };
+      reader.readAsDataURL(selectedFile);
     }
   };
 
@@ -525,11 +564,12 @@ export default function ReceiptUploader({ className }) {
       reader.readAsDataURL(file);
       reader.onload = () => resolve(reader.result);
       reader.onerror = reject;
-    });
+        });
 
   const processOCR = async (file) => {
     try {
       setIsOcrProcessing(true);
+      setOcrError(null);
       const base64 = await toBase64(file);
 
       const response = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -546,82 +586,83 @@ export default function ReceiptUploader({ className }) {
               content: [
                 {
                   type: "text",
-                  text: "You are a receipt OCR expert. Extract the following information from this receipt image: store name, total amount, date, and any line items with their prices. Format the response as a JSON object with these fields: store, amount, date, items (array of {name, price}). Only reply with the JSON object enclosed in triple backticks." 
+                  text: `Analyze this receipt image and extract the following information in JSON format:
+1. Store/Merchant name
+2. Total amount
+3. Date
+4. Category (choose from: Groceries, Dining, Transportation, Shopping, Bills, Entertainment, Health, Other)
+5. Payment Method (e.g., Cash, Credit Card, Debit Card, Mobile Payment)
+6. Items (list of items with their prices)
+
+Consider these guidelines for categorization:
+- Groceries: Supermarkets, food stores, grocery items
+- Dining: Restaurants, cafes, fast food, takeout
+- Transportation: Gas stations, public transport, taxis, car services
+- Shopping: Retail stores, clothing, electronics, general merchandise
+- Bills: Utilities, services, subscriptions
+- Entertainment: Movies, events, leisure activities
+- Health: Medical, pharmacy, wellness
+- Other: Any items that don't fit the above categories
+
+For payment method, look for:
+- Credit/Debit card logos or names
+- Cash indicators
+- Mobile payment symbols (Apple Pay, Google Pay, etc.)
+- Contactless payment indicators
+
+Reply with a JSON object enclosed in triple backticks like this:
+\`\`\`json
+{
+  "store": "Store Name",
+  "amount": "23.50",
+  "date": "13/06/2025",
+  "category": "Category Name",
+  "payment_method": "Payment Method",
+  "items": [
+    {"name": "Item 1", "price": "10.00"},
+    {"name": "Item 2", "price": "13.50"}
+  ]
+}
+\`\`\``
                 },
-                {
-                  type: "image_url",
-                  image_url: {
-                    url: base64,
-                    detail: "high"
-                  }
-                }
+                { type: "image_url", image_url: { url: base64 } }
               ]
             }
           ],
-          max_tokens: 1000,
-          temperature: 0.1
+          max_tokens: 500
         })
       });
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        console.error('OCR API Error:', errorData);
-        throw new Error(errorData.error?.message || 'Failed to process receipt via OCR API.');
-      }
+      const data = await response.json();
+      const replyText = data?.choices?.[0]?.message?.content || '';
+      console.log("OCR Raw Response:\n", replyText);
 
-      const result = await response.json();
-      console.log('OCR Raw Result:', result);
+      const jsonMatch = replyText.match(/```json\s*({[\s\S]*?})\s*```/i);
+      if (!jsonMatch) throw new Error("No JSON found in the response");
 
-      const content = result.choices[0].message.content;
-      const jsonMatch = content.match(/```json\s*({[\s\S]*?})\s*```/);
-      
-      if (!jsonMatch) {
-        throw new Error('No valid JSON found in OCR response');
-      }
+      const parsedJSON = JSON.parse(jsonMatch[1]);
 
-      const parsedData = JSON.parse(jsonMatch[1]);
-      console.log('Parsed OCR Data:', parsedData);
-
-      // Sanitize and parse data from OCR result
-      const merchantName = parsedData.store || '';
-      const totalAmount = parseFloat(parsedData.amount || '0').toFixed(2);
-      const subtotalAmount = parseFloat(parsedData.subtotal || totalAmount).toFixed(2);
-      const transactionDate = parsedData.date ? new Date(parsedData.date).toISOString().split('T')[0] : '';
-      const detectedCurrency = parsedData.currency || 'EUR'; // Default to EUR if not detected
-
-      // Debugging: Log parsed values
-      console.log('Parsed Merchant:', merchantName);
-      console.log('Parsed Total Amount:', totalAmount);
-      console.log('Parsed Subtotal Amount:', subtotalAmount);
-      console.log('Parsed Date:', transactionDate);
-      console.log('Parsed Currency:', detectedCurrency);
-
-      const itemsFromOcr = (parsedData.items || []).map(item => ({
-        name: item.name || '',
-        price: parseFloat(item.price || '0').toFixed(2)
+      // Update form data with the extracted information
+      setFormData(prev => ({
+        ...prev,
+        merchant: parsedJSON.store || '',
+        total: parsedJSON.amount ? parsedJSON.amount.replace(/[^\d.,]/g, '').replace(',', '.') : '',
+        date: parsedJSON.date ? normalizeDate(parsedJSON.date) : '',
+        category: parsedJSON.category || '',
+        paymentMethod: parsedJSON.payment_method || '',
+        items: parsedJSON.items?.map(item => ({
+          name: item.name || '',
+          price: item.price ? item.price.replace(/[^\d.,]/g, '').replace(',', '.') : ''
+        })) || []
       }));
 
-      // Debugging: Log parsed items
-      console.log('Parsed Items:', itemsFromOcr);
-
-      setFormData({
-        date: transactionDate,
-        merchant: merchantName,
-        total: totalAmount,
-        tax: '', // Let tax be calculated on save if not present in OCR
-        subtotal: subtotalAmount,
-        paymentMethod: '', // OCR usually doesn't provide this clearly
-        currency: detectedCurrency, // Set currency from OCR
-        items: itemsFromOcr.length > 0 ? itemsFromOcr : [{ name: '', price: '' }], // Ensure at least one empty item for manual entry
-        category: '' // Initialize category to an empty string
-      });
-      setCurrentStep('receipt_form'); // Go to receipt form to review/edit
+      setCurrentStep('receipt_form');
     } catch (error) {
-      console.error("Error processing OCR:", error);
-      setOcrError(`Failed to process receipt: ${error.message}. Please try manual entry.`);
+      console.error('OCR error:', error);
+      setOcrError('Failed to process receipt. Please try again or enter manually.');
       toast({
-        title: "OCR Failed 😥",
-        description: `Error: ${error.message}. Please try manual entry.`,
+        title: "OCR Processing Error",
+        description: "Failed to process the receipt. Please try again or enter the details manually.",
         variant: "destructive",
       });
     } finally {
@@ -631,7 +672,15 @@ export default function ReceiptUploader({ className }) {
   };
 
   const handleConfirmPreview = () => {
-    handleUseImage();
+    if (file) {
+      setIsLoading(true);
+      setCurrentFunnyMessage(getRandomFunnyMessage());
+      setShowFullScreenPreview(false);
+      // Add a small delay to ensure the loading state is visible
+      setTimeout(() => {
+        processOCR(file);
+      }, 100);
+    }
   };
 
   const handleRetakePreview = () => {
@@ -1139,6 +1188,37 @@ export default function ReceiptUploader({ className }) {
 
   return (
     <div className={`relative flex flex-col items-center w-full ${className}`}>
+      {/* Loading Overlay */}
+      {isLoading && (
+        <div className="fixed inset-0 z-[9999] bg-black/80 backdrop-blur-sm flex flex-col items-center justify-center">
+          <div className="bg-slate-800 p-8 rounded-xl shadow-2xl border border-blue-400/20 max-w-md w-full mx-4 text-center">
+            {/* Receipt Animation */}
+            <div className="relative h-20 mb-6 flex items-center justify-center">
+              <div className="absolute w-24 h-32 bg-white rounded-lg shadow-lg transform -rotate-6 animate-bounce-slow">
+                <div className="p-2">
+                  <div className="h-2 bg-gray-200 rounded w-3/4 mb-1 animate-pulse"></div>
+                  <div className="h-2 bg-gray-200 rounded w-1/2 mb-1 animate-pulse"></div>
+                  <div className="h-2 bg-gray-200 rounded w-2/3 mb-1 animate-pulse"></div>
+                  <div className="h-2 bg-gray-200 rounded w-1/3 mb-1 animate-pulse"></div>
+                  <div className="h-2 bg-gray-200 rounded w-1/2 mb-1 animate-pulse"></div>
+                </div>
+              </div>
+              <div className="absolute w-24 h-32 bg-white rounded-lg shadow-lg transform rotate-6 animate-bounce-slow-delayed">
+                <div className="p-2">
+                  <div className="h-2 bg-gray-200 rounded w-3/4 mb-1 animate-pulse"></div>
+                  <div className="h-2 bg-gray-200 rounded w-1/2 mb-1 animate-pulse"></div>
+                  <div className="h-2 bg-gray-200 rounded w-2/3 mb-1 animate-pulse"></div>
+                  <div className="h-2 bg-gray-200 rounded w-1/3 mb-1 animate-pulse"></div>
+                  <div className="h-2 bg-gray-200 rounded w-1/2 mb-1 animate-pulse"></div>
+                </div>
+              </div>
+            </div>
+            <p className="text-xl text-white font-medium mb-2">Processing your receipt...</p>
+            <p className="text-lg text-blue-300 animate-pulse">{currentFunnyMessage}</p>
+          </div>
+          </div>
+        )}
+
       {/* Main Content Area */}
       <div className="flex-grow flex flex-col items-center justify-start px-4 sm:px-6 lg:px-8 mt-8 mb-12">
         {/* Dashboard Header */}
@@ -1158,7 +1238,6 @@ export default function ReceiptUploader({ className }) {
               <CardTitle className="text-2xl font-bold text-blue-100">Choose Upload Method</CardTitle>
             </CardHeader>
             <CardContent className="w-full flex flex-col items-center justify-center gap-4 p-0">
-              {file && <p className="text-sm text-gray-400 mb-2">File: {file.name}</p>}
                   <input
                     type="file"
                 id="fileInput"
@@ -1454,7 +1533,7 @@ export default function ReceiptUploader({ className }) {
                       onClick={() => handleAddItem()}
                       disabled={!newItem.name.trim() && !newItem.price.trim()}
                       className="text-blue-400 hover:bg-slate-600/50 hover:text-blue-300"
-                    >
+                  >
                       <PlusCircle className="h-5 w-5" />
                   </Button>
                 </div>
@@ -1499,7 +1578,7 @@ export default function ReceiptUploader({ className }) {
                 <Button
               onClick={handleRetakePreview}
               className="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded"
-            >
+                >
               Retake
                 </Button>
                 <Button

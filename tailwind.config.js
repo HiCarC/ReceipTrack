@@ -1,19 +1,34 @@
 /** @type {import('tailwindcss').Config} */
-export default {
+module.exports = {
+  darkMode: ["class"],
   content: [
-    "./index.html",
-    "./src/**/*.{js,ts,jsx,tsx}",
+    './pages/**/*.{js,jsx}',
+    './components/**/*.{js,jsx}',
+    './app/**/*.{js,jsx}',
+    './src/**/*.{js,jsx}',
   ],
   theme: {
+    container: {
+      center: true,
+      padding: "2rem",
+      screens: {
+        "2xl": "1400px",
+      },
+    },
     extend: {
       keyframes: {
-        'very-slow-pulse': {
-          '0%, 100%': { opacity: '1' },
-          '50%': { opacity: '0' }, // Fade to completely transparent
+        "bounce-slow": {
+          "0%, 100%": { transform: "translateY(0) rotate(-6deg)" },
+          "50%": { transform: "translateY(-20px) rotate(-6deg)" },
+        },
+        "bounce-slow-delayed": {
+          "0%, 100%": { transform: "translateY(0) rotate(6deg)" },
+          "50%": { transform: "translateY(-20px) rotate(6deg)" },
         },
       },
       animation: {
-        'very-slow-pulse': 'very-slow-pulse 10s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+        "bounce-slow": "bounce-slow 2s ease-in-out infinite",
+        "bounce-slow-delayed": "bounce-slow-delayed 2s ease-in-out infinite 1s",
       },
       colors: {
         border: "hsl(var(--border))",
@@ -57,5 +72,5 @@ export default {
       },
     },
   },
-  plugins: [],
+  plugins: [require("tailwindcss-animate")],
 } 
