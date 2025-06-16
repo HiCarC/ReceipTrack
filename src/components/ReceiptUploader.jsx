@@ -441,6 +441,8 @@ export default function ReceiptUploader({ className }) {
       setNewItem({ name: '', price: '' });
       setEditingReceipt(null);
       setIsEditing(false);
+      setFile(null); // Clear the selected file after saving
+      setPreviewImageSrc(null); // Clear the preview image after saving
       setCurrentStep('upload_options');
       fetchReceipts();
     } catch (error) {
@@ -508,6 +510,8 @@ export default function ReceiptUploader({ className }) {
         setShowFullScreenPreview(true);
       };
       reader.readAsDataURL(selectedFile);
+      // Clear the input value to allow re-uploading the same file
+      e.target.value = null; 
     }
   };
 
@@ -1238,6 +1242,7 @@ Reply with a JSON object enclosed in triple backticks like this:
               <CardTitle className="text-2xl font-bold text-blue-100">Choose Upload Method</CardTitle>
             </CardHeader>
             <CardContent className="w-full flex flex-col items-center justify-center gap-4 p-0">
+              {file && <p className="text-sm text-gray-400 mb-2">File: {file.name}</p>}
                   <input
                     type="file"
                 id="fileInput"
@@ -1343,6 +1348,8 @@ Reply with a JSON object enclosed in triple backticks like this:
             setEditingReceipt(null); // Clear editing state if user closes modal
             setFormData({ date: '', merchant: '', total: '', tax: '', subtotal: '', paymentMethod: '', currency: 'EUR', items: [], category: '' });
             setNewItem({ name: '', price: '' });
+            setFile(null); // Clear the selected file
+            setPreviewImageSrc(null); // Clear the preview image
           }
         }}>
           <DialogContent className="sm:max-w-[800px] bg-slate-800 text-white border-gray-700 p-6 rounded-lg shadow-xl animate-fade-in">
