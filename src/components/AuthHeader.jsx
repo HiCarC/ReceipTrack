@@ -281,61 +281,6 @@ export default function AuthHeader() {
     return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
   };
 
-  // Handle name change
-  const handleNameChange = async () => {
-    setIsSavingName(true);
-    setNameError("");
-    setNameSuccessMessage("");
-    try {
-      await updateDisplayName(newName);
-      setNameSuccessMessage("Saved! ✨");
-      toast({
-        title: "Name Updated!",
-        description: "Your name has been saved! ✨",
-        variant: "success",
-        duration: 2000,
-        style: { background: 'linear-gradient(90deg, #38ef7d 0%, #11998e 100%)', color: '#fff', fontWeight: 'bold', fontSize: '1.1rem', boxShadow: '0 4px 24px 0 rgba(56,239,125,0.15)' }
-      });
-    } catch (error) {
-      console.error("Error updating name:", error);
-      setNameError("Failed to update name: " + error.message);
-      toast({
-        title: "Error updating name",
-        description: error.message || "Failed to update name. Please try again.",
-        variant: "destructive",
-      });
-    } finally {
-      setIsSavingName(false);
-      // Clear success message after 3 seconds
-      setTimeout(() => setNameSuccessMessage(''), 3000);
-    }
-  };
-
-  // Handle email change
-  const handleEmailChange = async () => {
-    setIsSavingEmail(true);
-    setEmailError("");
-    setEmailSuccessMessage("");
-    try {
-      if (user) {
-        // Trigger re-authentication if it's needed
-        setShowReauthPrompt(true);
-      } else {
-        setEmailError("No user logged in.");
-      }
-    } catch (error) {
-      console.error("Error setting up email change:", error);
-      setEmailError("Failed to initiate email change: " + error.message);
-      toast({
-        title: "Error initiating email change",
-        description: error.message || "Failed to initiate email change. Please try again.",
-        variant: "destructive",
-      });
-    } finally {
-      setIsSavingEmail(false);
-    }
-  };
-
   const handleReauthenticate = async () => {
     setIsReauthenticating(true);
     setReauthError("");
@@ -367,17 +312,6 @@ export default function AuthHeader() {
     } finally {
       setIsReauthenticating(false);
     }
-  };
-
-  const handleCancelEdit = (setEditing) => {
-    setEditing(false);
-    setNameError("");
-    setEmailError("");
-    setNameSuccessMessage("");
-    setEmailSuccessMessage("");
-    setShowReauthPrompt(false);
-    setCurrentPassword("");
-    setReauthError("");
   };
 
   const handleSignOut = async () => {
@@ -462,7 +396,17 @@ export default function AuthHeader() {
                   onClick={() => setShowProfile(!showProfile)}
                   className="flex items-center space-x-2 p-2 rounded-lg hover:bg-gray-100 transition-colors text-white"
                 >
-                  <UserCircle className="h-6 w-6" />
+                  <span className="inline-flex items-center justify-center h-8 w-8 rounded-full bg-gradient-to-br from-blue-100 to-blue-200 shadow border-2 border-white text-2xl">
+                    {user?.photoURL ? (
+                      user.photoURL.length === 2 ? (
+                        <span role="img" aria-label="avatar">{user.photoURL}</span>
+                      ) : (
+                        <img src={user.photoURL} alt="avatar" className="h-8 w-8 rounded-full object-cover" />
+                      )
+                    ) : (
+                      <span role="img" aria-label="avatar">🦄</span>
+                    )}
+                  </span>
                   <span className="text-sm font-medium">{user?.displayName || 'User'}</span>
                 </button>
                 {showProfile && (
@@ -494,9 +438,20 @@ export default function AuthHeader() {
 
       {/* Profile Dropdown */}
       {showProfile && createPortal(
-        <div id="profile-dropdown" className="fixed inset-0 z-[9999] flex items-start justify-end pt-20 pr-8">
+        <div id="profile-dropdown" className="fixed inset-0 z-[9999] flex items-start justify-end pt-20 pr-8 md:pt-20 md:pr-8">
           <div className="absolute inset-0 bg-black/10 backdrop-blur-sm" onClick={() => setShowProfile(false)}></div>
-          <div className="relative bg-white rounded-xl shadow-2xl p-6 flex flex-col gap-4 animate-fade-in-up min-w-[320px] max-w-xs border border-blue-100" style={{zIndex: 10000}}>
+          {/* Mobile: bottom sheet, Desktop: original */}
+          <div
+            className={
+              `relative bg-white rounded-xl shadow-2xl p-6 flex flex-col gap-4 animate-fade-in-up border border-blue-100 ` +
+              `min-w-[320px] max-w-xs md:bottom-auto md:right-0 md:rounded-xl md:max-w-xs md:min-w-[320px] ` +
+              `fixed bottom-0 left-0 right-0 w-full max-w-full rounded-t-2xl md:static md:w-auto md:rounded-xl`
+            }
+            style={{
+              zIndex: 10000,
+              ...(window.innerWidth < 768 ? { boxShadow: '0 -8px 32px 0 rgba(56,239,125,0.10)' } : {})
+            }}
+          >
             {/* Profile Info */}
             <div className="flex items-center gap-4 border-b pb-4 border-gray-200">
               <span className="inline-flex items-center justify-center h-12 w-12 rounded-full bg-gradient-to-br from-blue-100 to-blue-200 shadow-md border-2 border-white text-3xl">
@@ -514,111 +469,6 @@ export default function AuthHeader() {
                 <p className="font-semibold text-lg text-blue-900">{user?.displayName || "User"}</p>
                 <p className="text-sm text-gray-500">{user?.email || "N/A"}</p>
               </div>
-            </div>
-
-            {/* Name Edit */}
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <p className="text-sm font-medium text-gray-700">Name</p>
-                {editingName ? (
-                  <div className="flex gap-2 items-center">
-                    <Button variant="ghost" size="sm" onClick={() => handleCancelEdit(setEditingName)} disabled={isSavingName}>Cancel</Button>
-                    <Button size="sm" onClick={handleNameChange} disabled={isSavingName}>
-                      {isSavingName ? 'Saving...' : 'Save'}
-                    </Button>
-                  </div>
-                ) : (
-                  <Button variant="ghost" size="sm" onClick={() => setEditingName(true)} className="text-blue-600 hover:underline">Edit</Button>
-                )}
-              </div>
-              {editingName ? (
-                <div className="relative">
-                  <Input
-                    type="text"
-                    value={newName}
-                    onChange={(e) => setNewName(e.target.value)}
-                    className="w-full"
-                    placeholder="Your name"
-                    disabled={isSavingName}
-                  />
-                  {(nameError || nameSuccessMessage) && (
-                    <p className={`text-xs mt-1 absolute -bottom-4 left-0 animate-fade-in ${nameError ? 'text-red-500' : 'text-green-600'}`}>
-                      {nameError || nameSuccessMessage}
-                    </p>
-                  )}
-                </div>
-              ) : (
-                <p className="text-gray-900 font-semibold">{user?.displayName || "N/A"}</p>
-              )}
-            </div>
-
-            {/* Email Edit */}
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <p className="text-sm font-medium text-gray-700">Email</p>
-                {editingEmail ? (
-                  <div className="flex gap-2 items-center">
-                    <Button variant="ghost" size="sm" onClick={() => handleCancelEdit(setEditingEmail)} disabled={isSavingEmail}>Cancel</Button>
-                    <Button size="sm" onClick={handleEmailChange} disabled={isSavingEmail}>
-                      {isSavingEmail ? 'Saving...' : 'Save'}
-                    </Button>
-                  </div>
-                ) : (
-                  <Button variant="ghost" size="sm" onClick={() => setEditingEmail(true)} className="text-blue-600 hover:underline">Edit</Button>
-                )}
-              </div>
-              {editingEmail ? (
-                <div className="flex flex-col space-y-2">
-                  <label htmlFor="email">Email</label>
-                  <div className="flex space-x-2">
-                    <Input
-                      id="email"
-                      type="email"
-                      value={newEmail}
-                      onChange={(e) => setNewEmail(e.target.value)}
-                      disabled={isSavingEmail}
-                      className="flex-1 border-gray-300 focus:border-blue-500 transition duration-200 ease-in-out"
-                    />
-                    <Button
-                      onClick={handleEmailChange}
-                      disabled={isSavingEmail || newEmail === user?.email || !isValidEmail(newEmail)}
-                      className="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded transition duration-200 ease-in-out"
-                    >
-                      {isSavingEmail ? "Saving..." : "Save"}
-                    </Button>
-                    <Button
-                      variant="outline"
-                      onClick={() => handleCancelEdit(setEditingEmail)}
-                      className="text-gray-600 hover:text-gray-800"
-                    >
-                      Cancel
-                    </Button>
-                  </div>
-                  {emailError && <p className="text-red-500 text-xs mt-1 transition-opacity duration-500 ease-in-out opacity-100">{emailError}</p>}
-                  {emailSuccessMessage && <p className="text-green-500 text-xs mt-1 transition-opacity duration-500 ease-in-out opacity-100">{emailSuccessMessage}</p>}
-                </div>
-              ) : (
-                <p className="text-gray-900 font-semibold">{user?.email || "N/A"}</p>
-              )}
-            </div>
-
-            {/* Avatar Edit */}
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <p className="text-sm font-medium text-gray-700">Avatar</p>
-                <Button variant="ghost" size="sm" onClick={() => setShowAvatarModal(true)} className="text-blue-600 hover:underline">Edit</Button>
-              </div>
-              <span className="inline-flex items-center justify-center h-12 w-12 rounded-full bg-gradient-to-br from-blue-100 to-blue-200 shadow-md border-2 border-white text-3xl">
-                {user?.photoURL ? (
-                  user.photoURL.length === 2 ? (
-                    <span role="img" aria-label="avatar">{user.photoURL}</span>
-                  ) : (
-                    <img src={user.photoURL} alt="avatar" className="h-12 w-12 rounded-full object-cover" />
-                  )
-                ) : (
-                  <span role="img" aria-label="avatar">🦄</span>
-                )}
-              </span>
             </div>
 
             <hr className="my-2 border-gray-200" />
@@ -639,6 +489,23 @@ export default function AuthHeader() {
               Sign Out
             </Button>
           </div>
+          <style>{`
+            @media (max-width: 767px) {
+              #profile-dropdown .w-full, #profile-dropdown .min-w-\[320px\], #profile-dropdown .max-w-xs {
+                min-width: 0 !important;
+                max-width: 100vw !important;
+                width: 100vw !important;
+              }
+              #profile-dropdown .p-6 {
+                padding: 1.5rem !important;
+              }
+              #profile-dropdown button, #profile-dropdown .flex.items-center.gap-4 {
+                font-size: 1.25rem !important;
+                min-height: 56px !important;
+                padding: 1rem 0.5rem !important;
+              }
+            }
+          `}</style>
         </div>,
         document.body
       )}

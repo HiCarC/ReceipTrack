@@ -51,13 +51,39 @@ const EXPORT_FORMATS = [
 ];
 
 export function Settings({ onClose, onCloseDropdown }) {
-  const [settings, setSettings] = useState(loadSettings());
+  const { user, updateUserProfile } = useAuth();
+  const [settings, setSettings] = useState(() => {
+    const loaded = loadSettings();
+    return {
+      ...loaded,
+      name: loaded.name || (user && user.displayName) || '',
+      email: loaded.email || (user && user.email) || '',
+    };
+  });
   const [isDirty, setIsDirty] = useState(false);
   const { toast } = useToast();
   const [currencySearch, setCurrencySearch] = useState("");
   const [showCurrencyDropdown, setShowCurrencyDropdown] = useState(false);
-  const { user, updateUserProfile } = useAuth();
   const [showAvatarModal, setShowAvatarModal] = useState(false);
+  const [nameError, setNameError] = useState("");
+  const [emailError, setEmailError] = useState("");
+  const [saveSuccess, setSaveSuccess] = useState(false);
+
+  // Instant validation
+  useEffect(() => {
+    if (settings.name.trim() === "") {
+      setNameError("Name cannot be empty.");
+    } else {
+      setNameError("");
+    }
+    if (settings.email.trim() === "") {
+      setEmailError("Email cannot be empty.");
+    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(settings.email)) {
+      setEmailError("Please enter a valid email address.");
+    } else {
+      setEmailError("");
+    }
+  }, [settings.name, settings.email]);
 
   const handleChange = (section, key, value) => {
     setSettings(prev => {
@@ -79,6 +105,7 @@ export function Settings({ onClose, onCloseDropdown }) {
   };
 
   const handleSave = async () => {
+    if (nameError || emailError) return;
     console.log("handleSave called. Current settings:", settings);
     console.log("User display name from auth:", user.displayName);
     console.log("User email from auth:", user.email);
@@ -126,6 +153,7 @@ export function Settings({ onClose, onCloseDropdown }) {
 
       // Update local settings (might be redundant if user.reload() fetches updated settings from Firestore)
       updateSettings(settings);
+      window.dispatchEvent(new CustomEvent('settings-updated', { detail: settings }));
       setIsDirty(false);
       if (onClose) onClose();
       if (onCloseDropdown) onCloseDropdown();
@@ -137,6 +165,12 @@ export function Settings({ onClose, onCloseDropdown }) {
         duration: 3000,
         style: { background: 'linear-gradient(90deg, #38ef7d 0%, #11998e 100%)', color: '#fff', fontWeight: 'bold', fontSize: '1.1rem', boxShadow: '0 4px 24px 0 rgba(56,239,125,0.15)' }
       });
+      // Update local user context/profile after saving
+      if (updateUserProfile) {
+        await updateUserProfile({ displayName: settings.name, email: settings.email, baseCurrency: settings.baseCurrency });
+      }
+      setSaveSuccess(true);
+      setTimeout(() => setSaveSuccess(false), 2000);
     } catch (error) {
       console.error('Error saving settings:', error);
       let errorMessage = "There was a problem saving your preferences. Please try again.";
@@ -170,262 +204,277 @@ export function Settings({ onClose, onCloseDropdown }) {
   const selectedCurrency = CURRENCIES.find(c => c.code === settings.baseCurrency) || CURRENCIES[0];
 
   return (
-    <div className="h-full flex flex-col">
+    <div className={"h-full flex flex-col " + (window.innerWidth < 768 ? 'fixed inset-0 z-[99999] bg-white overflow-y-auto' : '')}>
       <div className="sticky top-0 z-10 bg-gradient-to-r from-gray-100 to-gray-200 rounded-t-2xl border-b border-gray-200 flex items-center justify-between px-6 py-4 shadow-sm">
         <h2 className="text-2xl font-bold text-blue-900 tracking-tight">Settings</h2>
         <button onClick={onClose} className="text-gray-400 hover:text-blue-600 text-2xl font-bold" aria-label="Close">×</button>
       </div>
-      <div className="flex-1 overflow-y-auto">
-        <div className="p-6 space-y-6">
-          {/* Profile Section */}
-          <div className="space-y-4">
-            <h3 className="text-lg font-semibold text-gray-900">Profile</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <label htmlFor="name" className="block text-sm font-medium text-gray-700">Name</label>
-                <input
-                  id="name"
-                  type="text"
-                  value={settings.name}
-                  onChange={(e) => handleChange('', 'name', e.target.value)}
-                  className="w-full px-4 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                />
-              </div>
-              <div className="space-y-2">
-                <label htmlFor="email" className="block text-sm font-medium text-gray-700">Email</label>
-                <input
-                  id="email"
-                  type="email"
-                  value={settings.email}
-                  onChange={(e) => handleChange('', 'email', e.target.value)}
-                  className="w-full px-4 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                />
-              </div>
+      <div className={"flex-1 overflow-y-auto " + (window.innerWidth < 768 ? 'p-4 space-y-6' : 'max-h-[70vh] p-6 space-y-6')}>
+        <div className="space-y-4">
+          <h3 className="text-lg font-semibold text-gray-900">Profile</h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <label htmlFor="name" className="block text-sm font-medium text-gray-700">Name</label>
+              <input
+                id="name"
+                type="text"
+                value={settings.name}
+                onChange={(e) => handleChange('', 'name', e.target.value)}
+                placeholder="Enter your name"
+                className={`w-full px-4 py-2 rounded-lg border ${nameError ? 'border-red-400' : 'border-gray-300'} focus:ring-2 focus:ring-blue-500 focus:border-blue-500`}
+              />
+              {nameError && <p className="text-xs text-red-500 mt-1">{nameError}</p>}
+            </div>
+            <div className="space-y-2">
+              <label htmlFor="email" className="block text-sm font-medium text-gray-700">Email</label>
+              <input
+                id="email"
+                type="email"
+                value={settings.email}
+                onChange={(e) => handleChange('', 'email', e.target.value)}
+                placeholder="Enter your email"
+                className={`w-full px-4 py-2 rounded-lg border ${emailError ? 'border-red-400' : 'border-gray-300'} focus:ring-2 focus:ring-blue-500 focus:border-blue-500`}
+              />
+              {emailError && <p className="text-xs text-red-500 mt-1">{emailError}</p>}
             </div>
           </div>
-          {/* Avatar Section */}
-          <div className="flex items-center gap-4 p-6 rounded-2xl shadow bg-gradient-to-br from-gray-100 to-gray-200 mb-2 border border-gray-200">
-            <div className="relative">
-              <span className="inline-flex items-center justify-center h-20 w-20 rounded-full bg-gradient-to-br from-blue-100 to-blue-200 shadow-lg border-4 border-white text-5xl">
-                {user?.photoURL ? (
-                  user.photoURL.length === 2 ? (
-                    <span role="img" aria-label="avatar">{user.photoURL}</span>
-                  ) : (
-                    <img src={user.photoURL} alt="avatar" className="h-20 w-20 rounded-full object-cover" />
-                  )
+        </div>
+        <div className="flex items-center gap-4 p-6 rounded-2xl shadow bg-gradient-to-br from-gray-100 to-gray-200 mb-2 border border-gray-200">
+          <div className="relative">
+            <span className="inline-flex items-center justify-center h-20 w-20 rounded-full bg-gradient-to-br from-blue-100 to-blue-200 shadow-lg border-4 border-white text-5xl">
+              {user?.photoURL ? (
+                user.photoURL.length === 2 ? (
+                  <span role="img" aria-label="avatar">{user.photoURL}</span>
                 ) : (
-                  <span role="img" aria-label="avatar">🦄</span>
-                )}
-              </span>
-              <button
-                className="absolute bottom-1 right-1 bg-blue-600 text-white rounded-full p-2 shadow hover:bg-blue-700 focus:outline-none border-2 border-white"
-                title="Edit Avatar"
-                onClick={() => setShowAvatarModal(true)}
-              >
-                <svg className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536M9 13h3l8-8a2.828 2.828 0 10-4-4l-8 8v3z" /></svg>
-              </button>
-            </div>
-            <div>
-              <div className="font-semibold text-lg text-blue-900">Change your avatar</div>
-              <div className="text-gray-500 text-sm mb-2">Personalize your profile with an emoji or image</div>
-            </div>
+                  <img src={user.photoURL} alt="avatar" className="h-20 w-20 rounded-full object-cover" />
+                )
+              ) : (
+                <span role="img" aria-label="avatar">🦄</span>
+              )}
+            </span>
+            <button
+              className="absolute bottom-1 right-1 bg-blue-600 text-white rounded-full p-2 shadow hover:bg-blue-700 focus:outline-none border-2 border-white"
+              title="Edit Avatar"
+              onClick={() => setShowAvatarModal(true)}
+            >
+              <svg className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536M9 13h3l8-8a2.828 2.828 0 10-4-4l-8 8v3z" /></svg>
+            </button>
           </div>
-          {showAvatarModal && (
-            <UnifiedEditAvatarModal
-              user={user}
-              onClose={() => setShowAvatarModal(false)}
-              onSave={async (photoURL) => {
-                await updateUserProfile({ photoURL });
-                setShowAvatarModal(false);
-                toast({
-                  title: "Avatar updated!",
-                  description: "Your profile picture has been updated.",
-                  variant: "success",
-                  duration: 2000,
-                  style: { background: 'linear-gradient(90deg, #38ef7d 0%, #11998e 100%)', color: '#fff', fontWeight: 'bold', fontSize: '1.1rem', boxShadow: '0 4px 24px 0 rgba(56,239,125,0.15)' }
-                });
-              }}
-            />
-          )}
-          <hr className="my-4 border-gray-200" />
-          {/* Currency Settings */}
-          <Card className="mb-2 bg-gradient-to-br from-gray-50 to-gray-100 border border-gray-200 shadow-md">
-            <CardHeader>
-              <CardTitle>Currency Settings</CardTitle>
-              <CardDescription>Configure your currency preferences</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <Label>Base Currency</Label>
-                <div className="relative w-full max-w-xs" style={{zIndex: 60, overflow: 'visible'}}>
-                  <button
-                    type="button"
-                    className="flex items-center justify-between w-full px-4 py-3 bg-white border border-gray-300 rounded-lg shadow-lg text-lg font-semibold focus:outline-none focus:ring-2 focus:ring-blue-400 transition-all duration-200 hover:shadow-2xl hover:border-blue-400 group"
-                    onClick={() => setShowCurrencyDropdown(v => !v)}
-                    aria-haspopup="listbox"
-                    aria-expanded={showCurrencyDropdown}
-                    style={{minHeight: '56px'}}
-                  >
-                    <span className="flex items-center gap-2">
-                      <span className="text-2xl">{selectedCurrency.flag}</span>
-                      <span>{selectedCurrency.name} ({selectedCurrency.code})</span>
-                    </span>
-                    <span className="flex items-center gap-2">
-                      <span className="text-xl">{selectedCurrency.symbol}</span>
-                      <ChevronDown className={`ml-2 h-6 w-6 transition-transform duration-200 ${showCurrencyDropdown ? 'rotate-180' : ''}`} />
-                    </span>
-                  </button>
-                  {showCurrencyDropdown && (
-                    <div className="absolute left-0 right-0 z-50 mt-2 w-full bg-white border border-blue-200 rounded-2xl shadow-2xl max-h-80 overflow-y-auto animate-fade-in-scale origin-top transition-all duration-200" style={{minWidth: '100%'}}>
-                      <div className="p-2 sticky top-0 bg-gradient-to-r from-blue-50 to-blue-100 z-10 rounded-t-2xl">
-                        <Input
-                          autoFocus
-                          placeholder="Search currency..."
-                          value={currencySearch}
-                          onChange={e => setCurrencySearch(e.target.value)}
-                          className="mb-2 rounded-md border-gray-300 focus:border-blue-400 focus:ring-2 focus:ring-blue-200 bg-white"
-                        />
-                      </div>
-                      {filteredCurrencies.length === 0 && (
-                        <div className="p-4 text-center text-gray-400">No results</div>
-                      )}
-                      {filteredCurrencies.map(currency => (
-                        <button
-                          key={currency.code}
-                          type="button"
-                          className={`flex items-center justify-between w-full px-4 py-3 rounded-xl transition-all duration-150 hover:bg-blue-100 active:bg-blue-200 focus:bg-blue-200 border-2 border-transparent ${currency.code === settings.baseCurrency ? 'bg-blue-50 border-blue-400 font-bold shadow' : ''}`}
-                          onClick={() => {
-                            handleChange('', 'baseCurrency', currency.code);
-                            setShowCurrencyDropdown(false);
-                            setCurrencySearch("");
-                          }}
-                        >
-                          <span className="flex items-center gap-2">
-                            <span className="text-2xl">{currency.flag}</span>
-                            <span>{currency.name} ({currency.code})</span>
-                          </span>
-                          <span className="text-xl">{currency.symbol}</span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-                <div className="mt-2 text-sm text-gray-600">
-                  <span className="font-semibold">Preview:</span> {formatAmount(selectedCurrency.example, settings.baseCurrency, settings)}
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-          <hr className="my-4 border-gray-200" />
-          {/* Display Settings */}
-          <Card className="mb-2">
-            <CardHeader>
-              <CardTitle>Display Settings</CardTitle>
-              <CardDescription>Configure how amounts are displayed</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="flex items-center justify-between">
-                <Label>Show Original Amounts</Label>
-                <Switch
-                  checked={settings.showOriginalAmounts}
-                  onCheckedChange={(checked) => handleChange('', 'showOriginalAmounts', checked)}
-                />
-              </div>
-              <div className="flex items-center justify-between">
-                <Label>Show Converted Amounts</Label>
-                <Switch
-                  checked={settings.showConvertedAmounts}
-                  onCheckedChange={(checked) => handleChange('', 'showConvertedAmounts', checked)}
-                />
-              </div>
-            </CardContent>
-          </Card>
-          <hr className="my-4 border-gray-200" />
-          {/* Budget Settings */}
-          <Card className="mb-2">
-            <CardHeader>
-              <CardTitle>Budget Settings</CardTitle>
-              <CardDescription>Configure your monthly budget</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <Label>Monthly Budget</Label>
-                <Input
-                  type="number"
-                  value={settings.budget.monthly}
-                  onChange={(e) => handleChange('budget', 'monthly', parseFloat(e.target.value))}
-                  min="0"
-                  step="0.01"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>Budget Start Day</Label>
-                <Input
-                  type="number"
-                  value={settings.budget.startDay}
-                  onChange={(e) => handleChange('budget', 'startDay', parseInt(e.target.value))}
-                  min="1"
-                  max="31"
-                />
-              </div>
-              <div className="flex items-center justify-between">
-                <Label>Notify on Budget Exceed</Label>
-                <Switch
-                  checked={settings.budget.notifyOnExceed}
-                  onCheckedChange={(checked) => handleChange('budget', 'notifyOnExceed', checked)}
-                />
-              </div>
-            </CardContent>
-          </Card>
-          <hr className="my-4 border-gray-200" />
-          {/* Export Settings */}
-          <Card className="mb-2">
-            <CardHeader>
-              <CardTitle>Export Settings</CardTitle>
-              <CardDescription>Configure export preferences</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <Label>Default Export Format</Label>
-                <Select
-                  value={settings.export.defaultFormat}
-                  onValueChange={(value) => handleChange('export', 'defaultFormat', value)}
+          <div>
+            <div className="font-semibold text-lg text-blue-900">Change your avatar</div>
+            <div className="text-gray-500 text-sm mb-2">Personalize your profile with an emoji or image</div>
+          </div>
+        </div>
+        {showAvatarModal && (
+          <UnifiedEditAvatarModal
+            user={user}
+            onClose={() => setShowAvatarModal(false)}
+            onSave={async (photoURL) => {
+              await updateUserProfile({ photoURL });
+              setShowAvatarModal(false);
+              toast({
+                title: "Avatar updated!",
+                description: "Your profile picture has been updated.",
+                variant: "success",
+                duration: 2000,
+                style: { background: 'linear-gradient(90deg, #38ef7d 0%, #11998e 100%)', color: '#fff', fontWeight: 'bold', fontSize: '1.1rem', boxShadow: '0 4px 24px 0 rgba(56,239,125,0.15)' }
+              });
+            }}
+          />
+        )}
+        <hr className="my-4 border-gray-200" />
+        <Card className="mb-2 bg-gradient-to-br from-gray-50 to-gray-100 border border-gray-200 shadow-md">
+          <CardHeader>
+            <CardTitle>Currency Settings</CardTitle>
+            <CardDescription>Configure your currency preferences</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <Label>Base Currency</Label>
+              <div className="relative w-full max-w-xs" style={{zIndex: 60, overflow: 'visible'}}>
+                <button
+                  type="button"
+                  className="flex items-center justify-between w-full px-4 py-3 bg-white border border-gray-300 rounded-lg shadow-lg text-lg font-semibold focus:outline-none focus:ring-2 focus:ring-blue-400 transition-all duration-200 hover:shadow-2xl hover:border-blue-400 group"
+                  onClick={() => setShowCurrencyDropdown(v => !v)}
+                  aria-haspopup="listbox"
+                  aria-expanded={showCurrencyDropdown}
+                  style={{minHeight: '56px'}}
                 >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select export format" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {EXPORT_FORMATS.map(format => (
-                      <SelectItem key={format.value} value={format.value}>
-                        {format.label}
-                      </SelectItem>
+                  <span className="flex items-center gap-2">
+                    <span className="text-2xl">{selectedCurrency.flag}</span>
+                    <span>{selectedCurrency.name} ({selectedCurrency.code})</span>
+                  </span>
+                  <span className="flex items-center gap-2">
+                    <span className="text-xl">{selectedCurrency.symbol}</span>
+                    <ChevronDown className={`ml-2 h-6 w-6 transition-transform duration-200 ${showCurrencyDropdown ? 'rotate-180' : ''}`} />
+                  </span>
+                </button>
+                {showCurrencyDropdown && (
+                  <div className="absolute left-0 right-0 z-50 mt-2 w-full bg-white border border-blue-200 rounded-2xl shadow-2xl max-h-80 overflow-y-auto animate-fade-in-scale origin-top transition-all duration-200" style={{minWidth: '100%'}}>
+                    <div className="p-2 sticky top-0 bg-gradient-to-r from-blue-50 to-blue-100 z-10 rounded-t-2xl">
+                      <Input
+                        autoFocus
+                        placeholder="Search currency..."
+                        value={currencySearch}
+                        onChange={e => setCurrencySearch(e.target.value)}
+                        className="mb-2 rounded-md border-gray-300 focus:border-blue-400 focus:ring-2 focus:ring-blue-200 bg-white"
+                      />
+                    </div>
+                    {filteredCurrencies.length === 0 && (
+                      <div className="p-4 text-center text-gray-400">No results</div>
+                    )}
+                    {filteredCurrencies.map(currency => (
+                      <button
+                        key={currency.code}
+                        type="button"
+                        className={`flex items-center justify-between w-full px-4 py-3 rounded-xl transition-all duration-150 hover:bg-blue-100 active:bg-blue-200 focus:bg-blue-200 border-2 border-transparent ${currency.code === settings.baseCurrency ? 'bg-blue-50 border-blue-400 font-bold shadow' : ''}`}
+                        onClick={() => {
+                          handleChange('', 'baseCurrency', currency.code);
+                          setShowCurrencyDropdown(false);
+                          setCurrencySearch("");
+                        }}
+                      >
+                        <span className="flex items-center gap-2">
+                          <span className="text-2xl">{currency.flag}</span>
+                          <span>{currency.name} ({currency.code})</span>
+                        </span>
+                        <span className="text-xl">{currency.symbol}</span>
+                      </button>
                     ))}
-                  </SelectContent>
-                </Select>
+                  </div>
+                )}
               </div>
-            </CardContent>
-          </Card>
-        </div>
+              <div className="mt-2 text-sm text-gray-600">
+                <span className="font-semibold">Preview:</span> {formatAmount(selectedCurrency.example, settings.baseCurrency, settings)}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+        <hr className="my-4 border-gray-200" />
+        <Card className="mb-2">
+          <CardHeader>
+            <CardTitle>Display Settings</CardTitle>
+            <CardDescription>Configure how amounts are displayed</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex items-center justify-between">
+              <Label>Show Original Amounts</Label>
+              <Switch
+                checked={settings.showOriginalAmounts}
+                onCheckedChange={(checked) => handleChange('', 'showOriginalAmounts', checked)}
+              />
+            </div>
+            <div className="flex items-center justify-between">
+              <Label>Show Converted Amounts</Label>
+              <Switch
+                checked={settings.showConvertedAmounts}
+                onCheckedChange={(checked) => handleChange('', 'showConvertedAmounts', checked)}
+              />
+            </div>
+          </CardContent>
+        </Card>
+        <hr className="my-4 border-gray-200" />
+        <Card className="mb-2">
+          <CardHeader>
+            <CardTitle>Budget Settings</CardTitle>
+            <CardDescription>Configure your monthly budget</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <Label>Monthly Budget</Label>
+              <Input
+                type="number"
+                value={settings.budget.monthly}
+                onChange={(e) => handleChange('budget', 'monthly', parseFloat(e.target.value))}
+                min="0"
+                step="0.01"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Budget Start Day</Label>
+              <Input
+                type="number"
+                value={settings.budget.startDay}
+                onChange={(e) => handleChange('budget', 'startDay', parseInt(e.target.value))}
+                min="1"
+                max="31"
+              />
+            </div>
+            <div className="flex items-center justify-between">
+              <Label>Notify on Budget Exceed</Label>
+              <Switch
+                checked={settings.budget.notifyOnExceed}
+                onCheckedChange={(checked) => handleChange('budget', 'notifyOnExceed', checked)}
+              />
+            </div>
+          </CardContent>
+        </Card>
+        <hr className="my-4 border-gray-200" />
+        <Card className="mb-2">
+          <CardHeader>
+            <CardTitle>Export Settings</CardTitle>
+            <CardDescription>Configure export preferences</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <Label>Default Export Format</Label>
+              <Select
+                value={settings.export.defaultFormat}
+                onValueChange={(value) => handleChange('export', 'defaultFormat', value)}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select export format" />
+                </SelectTrigger>
+                <SelectContent>
+                  {EXPORT_FORMATS.map(format => (
+                    <SelectItem key={format.value} value={format.value}>
+                      {format.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </CardContent>
+        </Card>
       </div>
-      <div className="sticky bottom-0 bg-gradient-to-r from-gray-100 to-gray-200 rounded-b-2xl border-t border-gray-200 px-6 py-4 shadow-sm">
-        <div className="flex justify-end space-x-4">
-          <Button
-            variant="outline"
-            onClick={handleReset}
-            disabled={!isDirty}
-          >
-            Reset
-          </Button>
-          <Button
-            onClick={handleSave}
-            disabled={!isDirty}
-            className="bg-gradient-to-r from-blue-600 to-blue-400 hover:from-blue-700 hover:to-blue-500 text-white font-bold shadow transition-all text-lg flex items-center gap-2 px-6 py-2 rounded-lg"
-          >
-            <svg className="h-5 w-5 text-white" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
-            Save
-          </Button>
-        </div>
+      <div className={"flex justify-end gap-2 mt-8 " + (window.innerWidth < 768 ? 'sticky bottom-0 left-0 right-0 bg-white py-4 px-4 border-t border-gray-200 z-50' : '')}>
+        {saveSuccess && <span className="text-green-600 font-semibold flex items-center animate-fade-in">Saved! ✓</span>}
+        {isDirty && !saveSuccess && (
+          <span className="flex items-center gap-2 px-3 py-2 rounded-md bg-yellow-100 border border-yellow-400 text-yellow-800 font-semibold text-sm animate-fade-in shadow-sm">
+            <svg className="h-5 w-5 text-yellow-500" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+            You have unsaved changes
+          </span>
+        )}
+        <Button variant="outline" onClick={handleReset} disabled={!isDirty}>Reset</Button>
+        <Button onClick={handleSave} disabled={!!nameError || !!emailError || !isDirty} className="bg-blue-600 hover:bg-blue-700 text-white transition-all duration-300 ease-in-out transform hover:scale-105 shadow-lg">
+          Save
+        </Button>
       </div>
+      {window.innerWidth < 768 && (
+        <style>{`
+          .fixed.inset-0.z-\[99999\].bg-white.overflow-y-auto {
+            padding-bottom: 80px !important;
+          }
+          .sticky.bottom-0.left-0.right-0.bg-white.py-4.px-4.border-t.border-gray-200.z-50 {
+            box-shadow: 0 -2px 16px 0 rgba(56,239,125,0.10);
+          }
+          .p-4.space-y-6 > * {
+            font-size: 1.1rem !important;
+            margin-bottom: 1.5rem !important;
+          }
+          input, button, select, .rounded-2xl, .rounded-xl {
+            min-height: 56px !important;
+            font-size: 1.1rem !important;
+            border-radius: 1rem !important;
+          }
+          label, .font-semibold, .font-bold {
+            font-size: 1.05rem !important;
+          }
+          .space-y-2 > * {
+            margin-bottom: 0.75rem !important;
+          }
+        `}</style>
+      )}
     </div>
   );
 }

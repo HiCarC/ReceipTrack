@@ -335,8 +335,16 @@ export default function ReceiptUploader({ className }) {
       }
     };
 
+    const handleSettingsUpdated = (e) => {
+      setSettings(e.detail);
+    };
+
     window.addEventListener('storage', handleStorageChange);
-    return () => window.removeEventListener('storage', handleStorageChange);
+    window.addEventListener('settings-updated', handleSettingsUpdated);
+    return () => {
+      window.removeEventListener('storage', handleStorageChange);
+      window.removeEventListener('settings-updated', handleSettingsUpdated);
+    };
   }, []);
 
   console.log('ReceiptUploader component - Current settings state:', settings);
@@ -1204,6 +1212,54 @@ Note: For currency, return the standard 3-letter currency code (e.g., EUR, USD, 
     }, 100);
   };
 
+  // Add this useEffect near the top of the component, after the state declarations
+  useEffect(() => {
+    if (currentStep === 'receipt_form' || currentStep === 'manual_entry') {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = 'unset';
+    }
+    return () => {
+      document.body.style.overflow = 'unset';
+    };
+  }, [currentStep]);
+
+  // Add a helper to get the currency symbol
+  const getCurrencySymbol = (code) => {
+    const currency = SUPPORTED_CURRENCIES.find(c => c.code === code);
+    return currency ? currency.symbol : code;
+  };
+
+  // Add a helper to format currency with locale-aware symbol placement and postfix exceptions
+  const postfixCurrencies = ['SEK', 'NOK', 'DKK', 'PLN', 'CZK', 'HUF'];
+  const formatCurrency = (amount, currencyCode = 'EUR') => {
+    if (amount === null || amount === undefined) return '';
+    if (postfixCurrencies.includes(currencyCode)) {
+      return amount.toFixed(2) + ' ' + currencyCode;
+    }
+    // Pick a locale based on currency (for best symbol placement)
+    let locale = 'en-US';
+    if (currencyCode === 'EUR') locale = 'fr-FR';
+    if (currencyCode === 'CZK') locale = 'cs-CZ';
+    if (currencyCode === 'PLN') locale = 'pl-PL';
+    if (currencyCode === 'GBP') locale = 'en-GB';
+    if (currencyCode === 'JPY') locale = 'ja-JP';
+    if (currencyCode === 'CNY') locale = 'zh-CN';
+    if (currencyCode === 'AUD') locale = 'en-AU';
+    if (currencyCode === 'CAD') locale = 'en-CA';
+    if (currencyCode === 'CHF') locale = 'de-CH';
+    try {
+      return new Intl.NumberFormat(locale, {
+        style: 'currency',
+        currency: currencyCode,
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
+      }).format(amount);
+    } catch {
+      return amount + ' ' + currencyCode;
+    }
+  };
+
   return (
     <div className={`relative flex flex-col items-center w-full ${className}`}>
       {/* Loading Overlay */}
@@ -1301,7 +1357,7 @@ Note: For currency, return the standard 3-letter currency code (e.g., EUR, USD, 
               <div className="w-full text-center mb-6">
                 <p className="text-sm text-gray-400">Total Expenses</p>
                 <p className="text-5xl font-extrabold text-indigo-400 mb-4">
-                  {totalExpenses.toFixed(2)} {settings?.baseCurrency || 'EUR'}
+                  {formatCurrency(totalExpenses, settings?.baseCurrency || 'EUR')}
                 </p>
                 <div className="space-y-2 w-full px-4">
                   {Object.entries(categoryTotals).length > 0 ? (
@@ -1310,7 +1366,7 @@ Note: For currency, return the standard 3-letter currency code (e.g., EUR, USD, 
                       .map(([category, amount]) => (
                         <div key={category} className="flex justify-between items-center text-gray-300 text-sm">
                           <span>{category}</span>
-                          <span>{amount.toFixed(2)} {settings?.baseCurrency || 'EUR'}</span>
+                          <span>{formatCurrency(amount, settings?.baseCurrency || 'EUR')}</span>
                 </div>
                       ))
                   ) : (
@@ -1353,24 +1409,33 @@ Note: For currency, return the standard 3-letter currency code (e.g., EUR, USD, 
         </div>
 
         {/* Receipt Form Modal (for Manual Entry and OCR-populated forms) */}
-        <Dialog open={currentStep === 'receipt_form' || currentStep === 'manual_entry'} onOpenChange={(open) => {
+        <Dialog 
+          open={currentStep === 'receipt_form' || currentStep === 'manual_entry'} 
+          onOpenChange={(open) => {
           if (!open) {
-            setCurrentStep('upload_options'); // Close and return to main options
-            setEditingReceipt(null); // Clear editing state if user closes modal
+              setCurrentStep('upload_options');
+              setEditingReceipt(null);
             setFormData({ date: '', merchant: '', total: '', tax: '', subtotal: '', paymentMethod: '', currency: 'EUR', items: [], category: '' });
             setNewItem({ name: '', price: '' });
-            setFile(null); // Clear the selected file
-            setPreviewImageSrc(null); // Clear the preview image
-          }
-        }}>
-          <DialogContent className="sm:max-w-[800px] bg-slate-800 text-white border-gray-700 p-6 rounded-lg shadow-xl animate-fade-in">
+              setFile(null);
+              setPreviewImageSrc(null);
+            }
+          }}
+        >
+          <DialogContent 
+            className="sm:max-w-[800px] bg-slate-800 text-white border-gray-700 p-6 rounded-lg shadow-xl animate-fade-in overflow-hidden fixed top-[50%] left-[50%] translate-x-[-50%] translate-y-[-50%] max-h-[90vh]"
+            onPointerDownOutside={(e) => e.preventDefault()}
+            onInteractOutside={(e) => e.preventDefault()}
+          >
             <DialogHeader className="mb-4">
               <DialogTitle className="text-2xl font-bold text-gray-100">{editingReceipt ? 'Edit Receipt' : 'New Receipt'}</DialogTitle>
               <DialogDescription className="text-gray-400">
                 {editingReceipt ? 'Make changes to your receipt here. Click save when you\'re done.' : 'Review and edit your receipt details. Click save to record your expense.'}
               </DialogDescription>
             </DialogHeader>
-            <ScrollArea className="h-[calc(100vh-180px)] pr-4">
+            <ScrollArea 
+              className="pr-4 overflow-y-auto max-h-[70vh]"
+            >
               <form onSubmit={handleSaveReceiptSubmit}>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
                   <div className="space-y-2">
@@ -1410,7 +1475,7 @@ Note: For currency, return the standard 3-letter currency code (e.g., EUR, USD, 
                         onChange={handleFormInputChange}
                         className="w-full bg-slate-700/70 border-gray-700/50 text-white"
                     />
-                      <span className="ml-2 text-gray-400 text-sm">{SUPPORTED_CURRENCIES.find(c => c.code === activeFormData.currency)?.symbol || ''}</span>
+                      <span className="ml-2 text-gray-400 text-sm">{activeFormData.currency && formData.total ? '' : ''}{getCurrencySymbol(activeFormData.currency)}</span>
                     </div>
                   </div>
                   <div className="space-y-2">
@@ -1425,7 +1490,7 @@ Note: For currency, return the standard 3-letter currency code (e.g., EUR, USD, 
                         onChange={handleFormInputChange}
                         className="w-full bg-slate-700/70 border-gray-700/50 text-white"
                       />
-                      <span className="ml-2 text-gray-400 text-sm">{SUPPORTED_CURRENCIES.find(c => c.code === activeFormData.currency)?.symbol || ''}</span>
+                      <span className="ml-2 text-gray-400 text-sm">{getCurrencySymbol(activeFormData.currency)}</span>
                     </div>
                   </div>
                   <div className="space-y-2">
@@ -1503,7 +1568,7 @@ Note: For currency, return the standard 3-letter currency code (e.g., EUR, USD, 
                         }}
                         className="w-28 bg-slate-700/70 border-gray-700/50 text-white focus:border-blue-400 focus:ring-blue-400"
                       />
-                      <span className="text-gray-400">{activeFormData.currency}</span>
+                      <span className="text-gray-400">{getCurrencySymbol(activeFormData.currency)}</span>
                       {(activeFormData.items || []).length > 0 && ( 
                         <Button
                           type="button"
@@ -1556,7 +1621,7 @@ Note: For currency, return the standard 3-letter currency code (e.g., EUR, USD, 
                             onChange={(e) => setCurrentNewItem(prev => ({ ...prev, price: e.target.value }))}
                             className="w-28 bg-slate-700/70 border-gray-700/50 text-white"
                           />
-                          <span className="text-gray-400 text-sm ml-2">{activeFormData.currency}</span>
+                          <span className="text-gray-400 text-sm ml-2">{getCurrencySymbol(activeFormData.currency)}</span>
                         </div>
                       </div>
                       <Button
@@ -1595,7 +1660,7 @@ Note: For currency, return the standard 3-letter currency code (e.g., EUR, USD, 
                           onChange={(e) => setNewItem(prev => ({ ...prev, price: e.target.value }))}
                           className="w-28 bg-slate-700/70 border-gray-700/50 text-white"
                         />
-                          <span className="text-gray-400 text-sm ml-2">{activeFormData.currency}</span>
+                          <span className="text-gray-400 text-sm ml-2">{getCurrencySymbol(activeFormData.currency)}</span>
                       </div>
                   </div>
                   <Button
