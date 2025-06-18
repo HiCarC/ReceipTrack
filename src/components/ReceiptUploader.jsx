@@ -83,6 +83,61 @@ const normalizeDate = (input) => {
   }
 };
 
+// Add at the top-level of the file (outside the component):
+const missingMessages = {
+  merchant: [
+    "Whoops! We need to know where you spent your hard-earned cash. Please enter the merchant name! 🏪",
+    "The merchant is a mystery... for now. Fill it in! 🕵️‍♂️",
+    "No merchant? No memory! Please tell us where you shopped. 🛒"
+  ],
+  total: [
+    "How much did you spend? The universe (and your budget) needs to know! 💸",
+    "Total amount missing! Your wallet is confused. 🤔",
+    "No total, no tally! Please enter the amount. 🧮"
+  ],
+  date: [
+    "When did this happen? Time travel is hard without a date! ⏳",
+    "Date missing! Was it yesterday, today, or in a galaxy far, far away? 🌌",
+    "No date, no story! Please pick a day. 📅"
+  ],
+  items: [
+    "What did you buy? At least one item, please! 🛍️",
+    "No items? No fun! Add something to your receipt. 🎁",
+    "Your receipt is hungry for items. Feed it! 🍔"
+  ]
+};
+
+const getFunnyMissingMessage = (missing) => {
+  if (missing.length === 1) {
+    const key = missing[0];
+    const options = missingMessages[key];
+    return options[Math.floor(Math.random() * options.length)];
+  } else if (missing.length > 1) {
+    // Combine messages for multiple missing fields
+    return (
+      missing.map(key => {
+        const options = missingMessages[key];
+        return options[Math.floor(Math.random() * options.length)];
+      }).join(' ')
+    );
+  }
+  return "Something's missing, but we're not sure what!";
+};
+
+// Add at the top of the component:
+const categoryColors = {
+  Groceries: 'border-green-400',
+  Dining: 'border-pink-400',
+  Transportation: 'border-yellow-400',
+  Shopping: 'border-purple-400',
+  Bills: 'border-blue-400',
+  Entertainment: 'border-indigo-400',
+  Health: 'border-emerald-400',
+  Other: 'border-gray-400',
+  Uncategorized: 'border-blue-500',
+};
+const getCategoryColor = (cat) => categoryColors[cat] || categoryColors['Uncategorized'];
+
 export default function ReceiptUploader({ className }) {
   const { toast } = useToast();
   const authContext = useAuth();
@@ -486,17 +541,26 @@ export default function ReceiptUploader({ className }) {
     setIsBusy(true);
     setFormErrors({}); // Clear previous errors
 
+    // Use the correct form state for validation and saving
+    const activeFormData = editingReceipt ? editForm : formData;
+
     // Basic validation for required fields
-    if (!formData.merchant || !formData.total || !formData.date || formData.items.length === 0) {
+    const missingFields = [];
+    if (!activeFormData.merchant) missingFields.push('merchant');
+    if (!activeFormData.total) missingFields.push('total');
+    if (!activeFormData.date) missingFields.push('date');
+    if (!activeFormData.items || activeFormData.items.length === 0) missingFields.push('items');
+
+    if (missingFields.length > 0) {
       setFormErrors({
-        merchant: !formData.merchant ? 'Merchant is required.' : '',
-        date: !formData.date ? 'Date is required.' : '',
-        total: !formData.total ? 'Total amount is required.' : '',
-        items: formData.items.length === 0 ? 'At least one item is required.' : ''
+        merchant: !activeFormData.merchant ? 'Merchant is required.' : '',
+        date: !activeFormData.date ? 'Date is required.' : '',
+        total: !activeFormData.total ? 'Total amount is required.' : '',
+        items: !activeFormData.items || activeFormData.items.length === 0 ? 'At least one item is required.' : ''
       });
       toast({
         title: "Missing Information",
-        description: "Please fill in Merchant, Total, Date, and at least one Item.",
+        description: getFunnyMissingMessage(missingFields),
         variant: "destructive",
       });
       setIsBusy(false);
@@ -504,7 +568,7 @@ export default function ReceiptUploader({ className }) {
     }
 
     // Ensure all items have a name and a valid price
-    const cleanedItems = formData.items.filter(item => item.name && parseFloat(item.price) > 0).map(item => ({
+    const cleanedItems = (activeFormData.items || []).filter(item => item.name && parseFloat(item.price) > 0).map(item => ({
       name: item.name,
       price: parseFloat(item.price)
     }));
@@ -523,36 +587,46 @@ export default function ReceiptUploader({ className }) {
     }
 
     // Calculate tax if not manually entered (total - subtotal)
-    let calculatedTax = parseFloat(formData.tax) || 0;
-    if (!formData.tax && formData.total && formData.subtotal) {
-      calculatedTax = parseFloat(formData.total) - parseFloat(formData.subtotal);
+    let calculatedTax = parseFloat(activeFormData.tax) || 0;
+    if (!activeFormData.tax && activeFormData.total && activeFormData.subtotal) {
+      calculatedTax = parseFloat(activeFormData.total) - parseFloat(activeFormData.subtotal);
       if (isNaN(calculatedTax) || calculatedTax < 0) calculatedTax = 0; // Ensure non-negative tax
     }
 
     const receiptData = {
       userId: user.uid,
-      merchant: formData.merchant,
+      merchant: activeFormData.merchant,
       date: serverTimestamp(), // Use server timestamp for consistency
-      transactionDate: formData.date, // Keep original date string for display
-      total: parseFloat(formData.total),
-      subtotal: parseFloat(formData.subtotal),
+      transactionDate: activeFormData.date, // Keep original date string for display
+      total: parseFloat(activeFormData.total),
+      subtotal: parseFloat(activeFormData.subtotal),
       tax: calculatedTax,
-      paymentMethod: formData.paymentMethod || 'Other',
-      currency: formData.currency,
+      paymentMethod: activeFormData.paymentMethod || 'Other',
+      currency: activeFormData.currency,
       items: cleanedItems,
-      imageUrl: formData.imageUrl || '',
-      category: formData.category || 'Uncategorized', // Ensure category is never undefined
+      imageUrl: activeFormData.imageUrl || '',
+      category: activeFormData.category || 'Uncategorized', // Ensure category is never undefined
       createdAt: serverTimestamp()
     };
 
     console.log("Receipt data being sent to Firestore:", receiptData);
 
     try {
+      if (editingReceipt) {
+        // Update existing receipt
+        await updateDoc(doc(db, "receipts", editingReceipt.id), receiptData);
+        toast({
+          title: "Receipt Updated! 🚀",
+          description: "Your receipt has been successfully updated.",
+        });
+      } else {
+        // Create new receipt
       await addDoc(collection(db, "receipts"), receiptData);
       toast({
         title: "Receipt Saved! 🎉",
         description: "Your expense has been successfully recorded.",
       });
+      }
       // Reset form and close modal
       setFormData({ // Ensure formData is reset for next new entry
         date: new Date().toISOString().split('T')[0],
@@ -575,7 +649,7 @@ export default function ReceiptUploader({ className }) {
     } catch (error) {
       console.error("Error saving receipt:", error);
       toast({
-        title: "Error Saving Receipt 😥",
+        title: editingReceipt ? "Error Updating Receipt 😥" : "Error Saving Receipt 😥",
         description: `There was an issue saving your receipt: ${error.message}`,
         variant: "destructive",
       });
@@ -828,97 +902,111 @@ export default function ReceiptUploader({ className }) {
   // Update the receipt card rendering
   const renderReceiptCard = (receipt) => {
     const isExpanded = expandedReceiptId === receipt.id;
-
+    const amount = parseFloat(receipt.total);
+    const isNegative = isNaN(amount) || amount < 0;
+    const catColor = getCategoryColor(receipt.category);
+    const isSwiped = swipedId === receipt.id;
     return (
-      <Card
-        key={receipt.id}
-        className={`bg-slate-700/80 p-5 rounded-xl shadow-lg text-white border border-gray-700 cursor-pointer transition-all duration-300 ease-in-out ${isExpanded ? 'ring-2 ring-blue-500/50 scale-[1.01]' : 'hover:shadow-xl hover:-translate-y-1'}`}
-        onClick={() => setExpandedReceiptId(isExpanded ? null : receipt.id)} // Toggle expanded state on click
+      <div
+        className="relative w-full"
+        onTouchStart={e => handleTouchStart(receipt.id, e)}
+        onTouchMove={e => handleTouchMove(receipt.id, e)}
+        onTouchEnd={() => handleTouchEnd(receipt.id)}
       >
-      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-          <div className="flex items-baseline space-x-2">
-            <CardTitle className="text-xl font-bold leading-none">{receipt.merchant}</CardTitle>
-            {!isExpanded && (
-              <span className="text-sm text-gray-400 font-medium">
-                {formatDateSafely(receipt.transactionDate, 'DD MMM')}
-              </span>
-            )}
-          </div>
-        <div className="flex items-center space-x-2">
-            {!isExpanded && (
-              <span className="text-lg font-semibold text-gray-300">
-                {parseFloat(receipt.total).toFixed(2)} {receipt.currency}
-                {receipt.currency !== (settings?.baseCurrency || 'EUR') && exchangeRates && (
-                  <span className="ml-2 text-sm text-gray-400">
-                    ({convertToBaseCurrency(receipt.total, receipt.currency, settings?.baseCurrency || 'EUR', exchangeRates).toFixed(2)} {settings?.baseCurrency || 'EUR'})
-                  </span>
-                )}
-              </span>
-            )}
+        {/* Swipe backgrounds */}
+        <div className={`absolute inset-0 z-0 flex items-center transition-all duration-300 ${isSwiped && swipeDir === 'left' ? 'bg-red-600/80 justify-end pr-8' : isSwiped && swipeDir === 'right' ? 'bg-blue-600/80 justify-start pl-8' : 'bg-transparent'}`}
+          style={{ borderRadius: '1rem' }}
+        >
+          {isSwiped && swipeDir === 'left' && (
+            <Trash2 className="h-7 w-7 text-white animate-fade-in" />
+          )}
+          {isSwiped && swipeDir === 'right' && (
+            <Edit className="h-7 w-7 text-white animate-fade-in" />
+          )}
+        </div>
+        <Card
+          key={receipt.id}
+          className={`relative bg-slate-800/90 p-5 pl-4 rounded-2xl shadow-xl text-white border border-blue-900/30 border-l-4 ${catColor} transition-all duration-300 ease-in-out animate-fade-in-up ${isExpanded ? 'ring-2 ring-blue-500/50 scale-[1.01] shadow-2xl' : 'hover:shadow-2xl hover:-translate-y-1 active:scale-[0.98]'} ${isSwiped ? 'translate-x-16' : ''}`}
+          onClick={() => setExpandedReceiptId(isExpanded ? null : receipt.id)}
+          style={{ minHeight: 96 }}
+          aria-label={`Receipt for ${receipt.merchant}`}
+        >
+          <div className="flex items-center justify-between gap-2 w-full">
+            <div className="flex flex-col flex-1 min-w-0">
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="text-lg font-extrabold text-blue-200 truncate max-w-[120px] md:max-w-[200px] tracking-tight" title={receipt.merchant}>{receipt.merchant}</span>
+                <span className="text-xs text-blue-200/80 font-medium whitespace-nowrap">{formatDateSafely(receipt.transactionDate, 'DD MMM')}</span>
+              </div>
+              <div className="flex items-baseline gap-1 mt-1">
+                <span className={`text-2xl font-extrabold ${isNegative ? 'text-red-400' : 'text-blue-100'}`}>{isNegative ? '0.00' : amount.toFixed(2)}</span>
+                <span className="text-sm text-blue-200/80 ml-1">{receipt.currency}</span>
+              </div>
+            </div>
+            <div className="flex flex-col gap-2 items-end ml-2">
           <Button
-              onClick={(e) => {
-                e.stopPropagation(); // Prevent card from collapsing when edit button is clicked
-                handleEditClick(receipt);
-              }}
+                onClick={e => { e.stopPropagation(); handleEditClick(receipt); }}
             variant="ghost"
             size="icon"
-            className="text-blue-400 hover:bg-slate-600/50 hover:text-blue-300"
+                className="text-blue-400 hover:bg-blue-900/40 hover:text-blue-300 transition-transform duration-150 ease-in-out active:scale-90"
+                aria-label="Edit receipt"
           >
-            <Edit className="h-4 w-4" />
+                <Edit className="h-5 w-5" />
           </Button>
           <Button
-              onClick={(e) => {
-                e.stopPropagation(); // Prevent card from collapsing when delete button is clicked
-                handleDeleteReceipt(receipt.id);
-              }}
+                onClick={e => { e.stopPropagation(); handleDeleteReceipt(receipt.id); }}
             variant="ghost"
             size="icon"
-            className="text-red-400 hover:bg-slate-600/50 hover:text-red-300"
+                className="text-red-400 hover:bg-blue-900/40 hover:text-red-300 transition-transform duration-150 ease-in-out active:scale-90"
+                aria-label="Delete receipt"
           >
-            <Trash2 className="h-4 w-4" />
+                <Trash2 className="h-5 w-5" />
           </Button>
           </div>
-      </CardHeader>
-        {isExpanded && (
-      <CardContent>
-            <div className="grid grid-cols-2 gap-4 mb-4">
+          </div>
+          {isExpanded && (
+            <CardContent className="pt-4">
+              <div className="grid grid-cols-2 gap-4 mb-4">
           <div>
-            <p className="text-sm text-gray-400">Date</p>
-                <p className="text-lg">{formatDateSafely(receipt.transactionDate, 'DD MMM YYYY')}</p>
+                  <p className="text-xs text-blue-200/70">Subtotal</p>
+                  <p className="text-base">{receipt.subtotal ? parseFloat(receipt.subtotal).toFixed(2) : '-'}</p>
+          </div>
+          <div>
+                  <p className="text-xs text-blue-200/70">Tax</p>
+                  <p className="text-base">{receipt.tax ? parseFloat(receipt.tax).toFixed(2) : '-'}</p>
         </div>
           <div>
-            <p className="text-sm text-gray-400">Category</p>
-            <p className="text-lg">{receipt.category || 'Uncategorized'}</p>
+                  <p className="text-xs text-blue-200/70">Payment</p>
+                  <p className="text-base">{receipt.paymentMethod || 'Not specified'}</p>
           </div>
           <div>
-            <p className="text-sm text-gray-400">Payment Method</p>
-            <p className="text-lg">{receipt.paymentMethod || 'Not specified'}</p>
+                  <p className="text-xs text-blue-200/70">Category</p>
+                  <p className="text-base flex items-center gap-1">{receipt.category || 'Uncategorized'}
+                    <span className={`inline-block w-2 h-2 rounded-full ml-1 ${catColor.replace('border-l-4', 'bg-')}`}></span>
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs text-blue-200/70">Date</p>
+                  <p className="text-base">{formatDateSafely(receipt.transactionDate, 'DD MMM YYYY')}</p>
           </div>
         </div>
         {receipt.items && receipt.items.length > 0 && (
-          <div className="mt-4">
-            <p className="text-sm text-gray-400 mb-2">Items</p>
-            <ul className="space-y-1">
+                <div className="mt-2">
+                  <p className="text-xs text-blue-200/70 mb-1">Items</p>
+                  <ul className="space-y-1 list-disc list-inside">
               {receipt.items.map((item, index) => (
                 <li key={index} className="flex justify-between text-sm">
-                  <span>{item.name}</span>
-                  <span>
-                    {parseFloat(item.price).toFixed(2)} {receipt.currency}
-                    {receipt.currency !== (settings?.baseCurrency || 'EUR') && exchangeRates && (
-                      <span className="ml-2 text-xs text-gray-400">
-                        ({convertToBaseCurrency(item.price, receipt.currency, settings?.baseCurrency || 'EUR', exchangeRates).toFixed(2)} {settings?.baseCurrency || 'EUR'})
-                      </span>
-                    )}
-                  </span>
+                        <span className="truncate max-w-[100px]">{item.name}</span>
+                        <span>{parseFloat(item.price).toFixed(2)} {receipt.currency}</span>
                 </li>
               ))}
             </ul>
           </div>
         )}
       </CardContent>
-        )}
+          )}
     </Card>
-  );
+      </div>
+    );
   };
 
   const startCamera = async () => {
@@ -1034,16 +1122,16 @@ export default function ReceiptUploader({ className }) {
     // Safely parse numbers for initial editForm state
     const safeParseFloat = (value) => {
       const parsed = parseFloat(value);
-      return isNaN(parsed) ? '' : parsed.toFixed(2);
+      return isNaN(parsed) ? '0.00' : parsed.toFixed(2);
     };
 
     setEditForm({
       merchant: receipt.merchant || '',
-      amount: safeParseFloat(receipt.total), // Use total, not amount, for consistency
-      date: receipt.transactionDate || '', // Use transactionDate, not date
+      total: safeParseFloat(receipt.total), // Always set 'total' as string with two decimals
+      date: receipt.transactionDate || '',
       category: receipt.category || '',
-      subtotal: receipt.subtotal ? safeParseFloat(receipt.subtotal) : '', // Ensure 2 decimal places, or empty
-      payment_method: receipt.paymentMethod || '', // Use paymentMethod, not payment_method
+      subtotal: receipt.subtotal ? safeParseFloat(receipt.subtotal) : '',
+      payment_method: receipt.paymentMethod || '',
       currency: receipt.currency || 'EUR',
       items: receipt.items?.map(item => ({
         name: item.name || '',
@@ -1260,6 +1348,44 @@ Note: For currency, return the standard 3-letter currency code (e.g., EUR, USD, 
     }
   };
 
+  // Add swipe state:
+  const [swipedId, setSwipedId] = useState(null);
+  const [swipeDir, setSwipeDir] = useState(null);
+  const swipeRefs = useRef({});
+
+  // Add swipe handlers:
+  const handleTouchStart = (id, e) => {
+    swipeRefs.current[id] = { x: e.touches[0].clientX };
+  };
+  const handleTouchMove = (id, e) => {
+    if (!swipeRefs.current[id]) return;
+    const dx = e.touches[0].clientX - swipeRefs.current[id].x;
+    if (dx < -40) { setSwipedId(id); setSwipeDir('left'); } // Swipe left for delete
+    else if (dx > 40) { setSwipedId(id); setSwipeDir('right'); } // Swipe right for edit
+  };
+  const handleTouchEnd = (id) => {
+    if (swipedId === id && swipeDir === 'right') {
+      // Open edit modal
+      setTimeout(() => {
+        setSwipedId(null); setSwipeDir(null);
+        handleEditClick(receipts.find(r => r.id === id));
+      }, 200); // allow animation
+    } else if (swipedId === id && swipeDir === 'left') {
+      // Show delete confirmation
+      setTimeout(() => {
+        setSwipedId(null); setSwipeDir(null);
+        setPendingDeleteId(id);
+        setShowDeleteModal(true);
+      }, 200); // allow animation
+    } else {
+      setSwipedId(null); setSwipeDir(null);
+    }
+  };
+
+  // Add at the top of the component:
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [pendingDeleteId, setPendingDeleteId] = useState(null);
+
   return (
     <div className={`relative flex flex-col items-center w-full ${className}`}>
       {/* Loading Overlay */}
@@ -1423,33 +1549,18 @@ Note: For currency, return the standard 3-letter currency code (e.g., EUR, USD, 
           }}
         >
           <DialogContent 
-            className="sm:max-w-[800px] bg-slate-800 text-white border-gray-700 p-6 rounded-lg shadow-xl animate-fade-in overflow-hidden fixed top-[50%] left-[50%] translate-x-[-50%] translate-y-[-50%] max-h-[90vh]"
-            onPointerDownOutside={(e) => e.preventDefault()}
-            onInteractOutside={(e) => e.preventDefault()}
+            className="w-full max-w-lg md:max-w-2xl bg-gradient-to-b from-blue-900 via-slate-900/95 to-slate-900 text-white border-none p-4 md:p-8 rounded-2xl shadow-2xl animate-fade-in-up overflow-hidden fixed top-1/2 left-1/2 translate-x-[-50%] translate-y-[-50%] max-h-[90vh] z-50 flex flex-col"
+            style={{ touchAction: 'manipulation', backdropFilter: 'blur(10px)' }}
+            onPointerDownOutside={e => e.preventDefault()}
+            onInteractOutside={e => e.preventDefault()}
           >
-            <DialogHeader className="mb-4">
-              <DialogTitle className="text-2xl font-bold text-gray-100">{editingReceipt ? 'Edit Receipt' : 'New Receipt'}</DialogTitle>
-              <DialogDescription className="text-gray-400">
-                {editingReceipt ? 'Make changes to your receipt here. Click save when you\'re done.' : 'Review and edit your receipt details. Click save to record your expense.'}
-              </DialogDescription>
+            <DialogHeader className="mb-2 animate-fade-in duration-300 ease-in-out">
+              <DialogTitle className="text-xl md:text-2xl font-bold text-blue-200 text-center tracking-tight">{editingReceipt ? 'Edit Receipt' : 'New Receipt'}</DialogTitle>
+              <DialogDescription className="text-blue-300/80 text-center text-sm md:text-base">{editingReceipt ? 'Edit your receipt details below.' : 'Enter your receipt details below.'}</DialogDescription>
             </DialogHeader>
-            <ScrollArea 
-              className="pr-4 overflow-y-auto max-h-[70vh]"
-            >
-              <form onSubmit={handleSaveReceiptSubmit}>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="date">Date</Label>
-                    <Input
-                      id="date"
-                      name="date"
-                      type="date"
-                      value={activeFormData.date}
-                      onChange={handleFormInputChange}
-                      className="bg-slate-700/70 border-gray-700/50 text-white focus:border-blue-400"
-                    />
-                    {formErrors.date && <p className="text-red-400 text-sm">{formErrors.date}</p>}
-                  </div>
+            <ScrollArea className="flex-1 pr-2 overflow-y-auto max-h-[60vh] pb-24 animate-fade-in duration-300 ease-in-out">
+              <form onSubmit={handleSaveReceiptSubmit} autoComplete="off" className="space-y-8 md:space-y-10 px-1 md:px-0">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 animate-fade-in duration-200 ease-in-out">
                   <div className="space-y-2">
                     <Label htmlFor="merchant">Merchant</Label>
                     <Input
@@ -1458,258 +1569,187 @@ Note: For currency, return the standard 3-letter currency code (e.g., EUR, USD, 
                       ref={merchantInputRef}
                       value={activeFormData.merchant}
                       onChange={handleFormInputChange}
-                      className="bg-slate-700/70 border-gray-700/50 text-white focus:border-blue-400"
+                      className="bg-slate-800/90 border border-blue-700/40 text-white focus:border-blue-400 focus:ring-2 focus:ring-blue-400 focus:bg-blue-950/80 transition-all duration-200 ease-in-out rounded-xl shadow-inner px-4 py-3 text-base placeholder-blue-200/60 outline-none"
                       placeholder="Enter merchant name"
+                      autoCapitalize="words"
+                      autoFocus
+                      inputMode="text"
                     />
-                    {formErrors.merchant && <p className="text-red-400 text-sm">{formErrors.merchant}</p>}
+                    {formErrors.merchant && <p className="text-red-400 text-xs mt-1 animate-fade-in duration-200 ease-in-out">{formErrors.merchant}</p>}
                   </div>
-                  <div className="space-y-2 col-span-1">
+                  <div className="space-y-2">
                     <Label htmlFor="total">Total Amount</Label>
                     <div className="flex items-center">
                     <Input
                         id="total"
+                        name="total"
                       type="number"
+                        inputMode="decimal"
                         step="0.01"
                       placeholder="0.00"
                         value={activeFormData.total}
                         onChange={handleFormInputChange}
-                        className="w-full bg-slate-700/70 border-gray-700/50 text-white"
-                    />
-                      <span className="ml-2 text-gray-400 text-sm">{activeFormData.currency && formData.total ? '' : ''}{getCurrencySymbol(activeFormData.currency)}</span>
+                        className="w-full bg-slate-800/90 border border-blue-700/40 text-white text-right focus:border-blue-400 focus:ring-2 focus:ring-blue-400 focus:bg-blue-950/80 transition-all duration-200 ease-in-out rounded-xl shadow-inner px-4 py-3 text-base placeholder-blue-200/60 outline-none"
+                      />
+                      <span className="ml-2 text-blue-200 text-sm">{getCurrencySymbol(activeFormData.currency)}</span>
                     </div>
+                    {formErrors.total && <p className="text-red-400 text-xs mt-1 animate-fade-in duration-200 ease-in-out">{formErrors.total}</p>}
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="subtotal">Subtotal (Optional)</Label>
+                    <Label htmlFor="subtotal">Subtotal <span className="text-blue-200/60">(Optional)</span></Label>
                     <div className="flex items-center">
                     <Input
                         id="subtotal"
+                        name="subtotal"
                         type="number"
+                        inputMode="decimal"
                         step="0.01"
                         placeholder="0.00"
                         value={activeFormData.subtotal}
                         onChange={handleFormInputChange}
-                        className="w-full bg-slate-700/70 border-gray-700/50 text-white"
+                        className="w-full bg-slate-800/90 border border-blue-700/40 text-white text-right focus:border-blue-400 focus:ring-2 focus:ring-blue-400 focus:bg-blue-950/80 transition-all duration-200 ease-in-out rounded-xl shadow-inner px-4 py-3 text-base placeholder-blue-200/60 outline-none"
                       />
-                      <span className="ml-2 text-gray-400 text-sm">{getCurrencySymbol(activeFormData.currency)}</span>
+                      <span className="ml-2 text-blue-200 text-sm">{getCurrencySymbol(activeFormData.currency)}</span>
                     </div>
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="category">Category</Label>
-                    <Select
-                      value={activeFormData.category}
-                      onValueChange={(value) => handleFormInputChange({ target: { name: 'category', value: value } })}
-                      className="w-full bg-slate-700/70 border-gray-700/50 text-white"
-                    >
-                      <SelectTrigger className="w-full bg-slate-700/70 border-gray-700/50 text-white">
-                        <SelectValue placeholder="Select a category" />
-                      </SelectTrigger>
-                      <SelectContent className="bg-slate-800 text-white border-gray-700">
-                        {categories.map((cat) => (
-                          <SelectItem key={cat} value={cat}>
-                            {cat}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2">
                     <Label htmlFor="paymentMethod">Payment Method</Label>
-                    <Input
-                      id="paymentMethod"
-                      name="paymentMethod"
-                      value={activeFormData.paymentMethod}
-                      onChange={handleFormInputChange}
-                      className="bg-slate-700/70 border-gray-700/50 text-white focus:border-blue-400"
-                    />
-                  </div>
-                  <div className="space-y-2 col-span-1">
-                    <Label htmlFor="currency">Currency</Label>
                     <Select
-                      value={activeFormData.currency}
-                      onValueChange={(value) => handleFormInputChange({ target: { name: 'currency', value: value } })}
-                      className="w-full bg-slate-700/70 border-gray-700/50 text-white"
+                      value={activeFormData.paymentMethod}
+                      onValueChange={value => handleFormInputChange({ target: { name: 'paymentMethod', value } })}
                     >
-                      <SelectTrigger className="w-full bg-slate-700/70 border-gray-700/50 text-white">
-                        <SelectValue placeholder="Select a currency" />
+                      <SelectTrigger className="w-full bg-slate-800/90 border border-blue-700/40 text-white focus:border-blue-400 focus:ring-2 focus:ring-blue-400 focus:bg-blue-950/80 transition-all duration-200 ease-in-out rounded-xl shadow-inner px-4 py-3 text-base placeholder-blue-200/60 outline-none">
+                        <SelectValue placeholder="Select payment method" />
                       </SelectTrigger>
-                      <SelectContent className="bg-slate-800 text-white border-gray-700">
-                        {SUPPORTED_CURRENCIES.map((c) => (
-                          <SelectItem key={c.code} value={c.code}>
-                            {c.name} ({c.symbol})
-                          </SelectItem>
+                      <SelectContent className="bg-blue-950 text-white border-blue-700/40">
+                        {['Cash', 'Credit Card', 'Debit Card', 'Mobile Pay', 'Bank Transfer', 'Other'].map(method => (
+                          <SelectItem key={method} value={method}>{method}</SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
                   </div>
                 </div>
-
-                {/* Items Section */}
-                <div className="mt-6 space-y-4">
-                  <h3 className="text-lg font-semibold text-gray-200">Items</h3>
+                <div className="border-t border-blue-700/30 my-4" />
+                <div className="mt-2">
+                  <h3 className="text-base font-semibold text-blue-100 mb-2 animate-fade-in duration-200 ease-in-out">Items</h3>
                   {(activeFormData.items || []).map((item, index) => (
-                    <div key={index} className="flex items-center space-x-2">
+                    <div key={index} className="flex items-center gap-2 mb-2 animate-fade-in-up transition-transform duration-200 ease-in-out hover:scale-[1.02]">
                               <Input
                         id={`item-name-${index}`}
                                 placeholder="Item Name"
                         value={item.name || ''}
-                        onChange={(e) => handleItemInputChange(e, index, 'name')}
-                        className="flex-grow bg-slate-700/70 border-gray-700/50 text-white focus:border-blue-400 focus:ring-blue-400"
+                        onChange={e => handleItemInputChange(e, index, 'name')}
+                        className="flex-[2] min-w-0 bg-slate-800/90 border border-blue-700/40 text-white focus:border-blue-400 focus:ring-2 focus:ring-blue-400 focus:bg-blue-950/80 transition-all duration-200 ease-in-out rounded-xl shadow-inner px-4 py-3 text-base placeholder-blue-200/60 outline-none"
+                        autoCapitalize="words"
+                        inputMode="text"
                               />
                               <Input
                         id={`item-price-${index}`}
-                        type="text"
+                        type="number"
+                        inputMode="decimal"
                         placeholder="0.00"
                         value={item.price}
-                        onChange={(e) => handleItemInputChange(e, index, 'price')}
-                        onBlur={(e) => {
+                        onChange={e => handleItemInputChange(e, index, 'price')}
+                        onBlur={e => {
                           const value = e.target.value;
                           const parsed = parseFloat(value.replace(',', '.')).toFixed(2);
                           handleItemInputChange({ target: { value: isNaN(parsed) ? '' : parsed } }, index, 'price');
                         }}
-                        className="w-28 bg-slate-700/70 border-gray-700/50 text-white focus:border-blue-400 focus:ring-blue-400"
+                        className="flex-[1] w-20 bg-slate-800/90 border border-blue-700/40 text-white text-right focus:border-blue-400 focus:ring-2 focus:ring-blue-400 focus:bg-blue-950/80 transition-all duration-200 ease-in-out rounded-xl shadow-inner px-4 py-3 text-base placeholder-blue-200/60 outline-none"
                       />
-                      <span className="text-gray-400">{getCurrencySymbol(activeFormData.currency)}</span>
-                      {(activeFormData.items || []).length > 0 && ( 
+                      <span className="text-blue-200">{getCurrencySymbol(activeFormData.currency)}</span>
                         <Button
                           type="button"
-                          onClick={() => {
-                            const targetStateSetter = editingReceipt ? setEditForm : setFormData;
-                            targetStateSetter(prev => ({
+                        onClick={() => {
+                          const targetStateSetter = editingReceipt ? setEditForm : setFormData;
+                          targetStateSetter(prev => ({
+                            ...prev,
+                            items: (prev.items || []).filter((_, i) => i !== index)
+                          }));
+                          if (editingReceipt) {
+                            setCurrentReceipt(prev => ({
                               ...prev,
                               items: (prev.items || []).filter((_, i) => i !== index)
                             }));
-                            if (editingReceipt) {
-                              setCurrentReceipt(prev => ({
-                                ...prev,
-                                items: (prev.items || []).filter((_, i) => i !== index)
-                              }));
-                            }
-                          }}
+                          }
+                        }}
                           variant="ghost"
                           size="icon"
-                          className="text-red-500 hover:text-red-400"
+                        className="text-red-400 hover:bg-blue-900/40 hover:text-red-300 transition-transform duration-150 ease-in-out active:scale-90"
+                        aria-label="Remove item"
                         >
-                          <MinusCircle className="h-5 w-5" />
+                        <svg className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
                         </Button>
-                          )}
                         </div>
                   ))}
-
-                  {/* Add New Item fields (conditional based on editing vs. new) */}
-                  {editingReceipt ? (
-                    <div className="flex items-end gap-2">
-                      <div className="flex-grow space-y-2">
-                        <Label htmlFor="edit-new-item-name">New Item Name</Label>
-                        <Input
-                          id="edit-new-item-name"
-                          type="text"
-                          placeholder="Add new item name"
-                          value={currentNewItem.name}
-                          onChange={(e) => setCurrentNewItem({ ...currentNewItem, name: e.target.value })}
-                          className="w-full bg-slate-700/70 border-gray-700/50 text-white"
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="edit-new-item-price">Price</Label>
-                        <div className="flex items-center">
-                          <Input
-                            id="edit-new-item-price"
-                            type="number"
-                            step="0.01"
-                            placeholder="0.00"
-                            value={currentNewItem.price}
-                            onChange={(e) => setCurrentNewItem(prev => ({ ...prev, price: e.target.value }))}
-                            className="w-28 bg-slate-700/70 border-gray-700/50 text-white"
-                          />
-                          <span className="text-gray-400 text-sm ml-2">{getCurrencySymbol(activeFormData.currency)}</span>
-                        </div>
-                      </div>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        onClick={handleEditItemAdd} 
-                        disabled={!currentNewItem.name.trim() && !currentNewItem.price.trim()}
-                        className="text-blue-400 hover:bg-slate-600/50 hover:text-blue-300"
-                      >
-                        <PlusCircle className="h-5 w-5" />
-                      </Button>
-                    </div>
-                  ) : (
-                  <div className="flex items-end gap-2">
-                    <div className="flex-grow space-y-2">
+                  <div className="flex items-end gap-2 mt-2 animate-fade-in-up duration-200 ease-in-out">
+                    <div className="flex-1">
                       <Label htmlFor="new-item-name">New Item Name</Label>
                         <Input
                         id="new-item-name"
                           type="text"
                         placeholder="Add new item name"
-                          value={newItem.name}
-                          onChange={(e) => setNewItem({ ...newItem, name: e.target.value })}
-                        className="w-full bg-slate-700/70 border-gray-700/50 text-white"
+                        value={editingReceipt ? currentNewItem.name : newItem.name}
+                        onChange={e => editingReceipt ? setCurrentNewItem({ ...currentNewItem, name: e.target.value }) : setNewItem({ ...newItem, name: e.target.value })}
+                        className="flex-[2] min-w-0 bg-slate-800/90 border border-blue-700/40 text-white focus:border-blue-400 focus:ring-2 focus:ring-blue-400 focus:bg-blue-950/80 transition-all duration-200 ease-in-out rounded-xl shadow-inner px-4 py-3 text-base placeholder-blue-200/60 outline-none"
+                        autoCapitalize="words"
+                        inputMode="text"
                         />
                     </div>
-                    <div className="space-y-2">
+                    <div className="w-28">
                       <Label htmlFor="new-item-price">Price</Label>
-                      <div className="flex items-center">
                         <Input
                           id="new-item-price"
                           type="number"
-                          step="0.01"
+                        inputMode="decimal"
                           placeholder="0.00"
-                          value={newItem.price}
-                          onChange={(e) => setNewItem(prev => ({ ...prev, price: e.target.value }))}
-                          className="w-28 bg-slate-700/70 border-gray-700/50 text-white"
-                        />
-                          <span className="text-gray-400 text-sm ml-2">{getCurrencySymbol(activeFormData.currency)}</span>
+                        value={editingReceipt ? currentNewItem.price : newItem.price}
+                        onChange={e => editingReceipt ? setCurrentNewItem(prev => ({ ...prev, price: e.target.value })) : setNewItem(prev => ({ ...prev, price: e.target.value }))}
+                        className="flex-[1] w-20 bg-slate-800/90 border border-blue-700/40 text-white text-right focus:border-blue-400 focus:ring-2 focus:ring-blue-400 focus:bg-blue-950/80 transition-all duration-200 ease-in-out rounded-xl shadow-inner px-4 py-3 text-base placeholder-blue-200/60 outline-none"
+                      />
                       </div>
+                    <div className="flex flex-col justify-end pb-1">
+                      <span className="text-blue-200 text-sm">{getCurrencySymbol(activeFormData.currency)}</span>
                   </div>
                   <Button
                       type="button"
                       variant="ghost"
                       size="icon"
-                        onClick={handleAddItem} 
-                      disabled={!newItem.name.trim() && !newItem.price.trim()}
-                      className="text-blue-400 hover:bg-slate-600/50 hover:text-blue-300"
-                  >
-                      <PlusCircle className="h-5 w-5" />
+                      onClick={editingReceipt ? handleEditItemAdd : handleAddItem}
+                      disabled={editingReceipt ? (!currentNewItem.name.trim() || !currentNewItem.price.trim()) : (!newItem.name.trim() || !newItem.price.trim())}
+                      className="text-blue-400 hover:bg-blue-900/40 hover:text-blue-300 transition-transform duration-150 ease-in-out active:scale-90"
+                      aria-label="Add item"
+                    >
+                      <svg className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" /></svg>
                   </Button>
                 </div>
-                  )}
+                  {formErrors.items && <p className="text-red-400 text-xs mt-1 animate-fade-in duration-200 ease-in-out">{formErrors.items}</p>}
           </div>
-
-                <DialogFooter className="flex justify-end p-4 bg-slate-800/80 border-t border-gray-700/50 rounded-b-xl">
+              </form>
+            </ScrollArea>
+            <div className="flex justify-end gap-4 pt-6 border-t border-blue-700/30 mt-8 bg-transparent">
                 <Button
                     type="button" 
                     variant="secondary" 
                     onClick={() => {
                       setCurrentStep('upload_options');
                       setEditingReceipt(null);
-                      setIsEditing(false); // Ensure isEditing is reset when closing without saving
-                      resetFormData(); // Reset formData to default for new entries
+                  setIsEditing(false);
+                  resetFormData();
                     }} 
-                    className="bg-slate-700 hover:bg-slate-600 text-white"
+                className="bg-slate-700/90 hover:bg-blue-900 text-white text-base py-3 rounded-xl shadow-md transition-all duration-150 ease-in-out px-8"
                   >
                     Cancel
                 </Button>
                   <Button 
                     type="submit" 
-                    disabled={isBusy}
-                    onClick={(e) => {
-                      e.preventDefault();
-                      if (editingReceipt) {
-                        handleEditSaveSubmit(e); // Call handleEditSaveSubmit for existing receipts
-                      } else {
-                        handleSaveReceiptSubmit(); // Call handleSaveReceiptSubmit for new receipts
-                      }
-                    }}
-                    className="bg-blue-600 hover:bg-blue-700 text-white transition-all duration-300 ease-in-out transform hover:scale-105 shadow-lg"
-                  >
-                    {isBusy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
-                    {isBusy ? 'Saving...' : (editingReceipt ? 'Update Receipt' : 'Save Receipt')}
+                onClick={handleSaveReceiptSubmit}
+                className="bg-gradient-to-r from-blue-700 via-blue-600 to-blue-800 hover:from-blue-800 hover:to-blue-900 text-white text-base font-semibold py-3 rounded-xl shadow-xl transition-all duration-200 ease-in-out transform hover:scale-105 px-8"
+                style={{ minWidth: 140 }}
+              >
+                {isBusy ? <span className="animate-spin mr-2">⏳</span> : (editingReceipt ? 'Save Changes' : 'Save Receipt')}
                   </Button>
-                </DialogFooter>
-              </form>
-            </ScrollArea>
+            </div>
           </DialogContent>
         </Dialog>
                   </div>
@@ -1775,6 +1815,39 @@ Note: For currency, return the standard 3-letter currency code (e.g., EUR, USD, 
       <footer className="w-full text-center py-4 text-gray-400 text-sm mt-8 mb-4">
         Powered with <span className="animate-very-slow-pulse inline-block">❤️</span> by ExpenseApp
       </footer>
+      <Dialog open={showDeleteModal} onOpenChange={setShowDeleteModal}>
+        <DialogContent className="max-w-xs bg-red-600/95 text-white border-none rounded-2xl shadow-2xl animate-fade-in-up">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-lg font-bold">
+              <Trash2 className="h-6 w-6 text-yellow-200 animate-bounce" />
+              Delete Receipt?
+            </DialogTitle>
+            <DialogDescription className="text-white/80 mt-2">
+              This action <span className="font-bold text-yellow-200">cannot be undone</span>.<br />
+              Are you sure you want to send this receipt to the digital shredder?
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex justify-end gap-3 mt-6">
+            <Button
+              variant="ghost"
+              className="bg-white/10 text-white hover:bg-white/20 rounded-lg px-4 py-2"
+              onClick={() => { setShowDeleteModal(false); setPendingDeleteId(null); }}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              className="bg-yellow-400 text-red-700 font-bold hover:bg-yellow-300 rounded-lg px-4 py-2 shadow-md animate-pulse"
+              onClick={() => {
+                if (pendingDeleteId) handleDeleteReceipt(pendingDeleteId);
+                setShowDeleteModal(false); setPendingDeleteId(null);
+              }}
+            >
+              <Trash2 className="inline-block mr-1 h-5 w-5" /> Delete
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
