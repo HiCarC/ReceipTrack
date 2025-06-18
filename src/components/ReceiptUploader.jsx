@@ -138,10 +138,6 @@ const categoryColors = {
 };
 const getCategoryColor = (cat) => categoryColors[cat] || categoryColors['Uncategorized'];
 
-// Add at the top of the component:
-const [swipeOffset, setSwipeOffset] = useState({});
-const [swipeStartX, setSwipeStartX] = useState({});
-
 export default function ReceiptUploader({ className }) {
   const { toast } = useToast();
   const authContext = useAuth();
@@ -1434,6 +1430,10 @@ Note: For currency, return the standard 3-letter currency code (e.g., EUR, USD, 
     const dir = offset > 0 ? 'right' : offset < 0 ? 'left' : null;
     return { progress, dir };
   };
+
+  // Add these hooks for swipe gesture state
+  const [swipeOffset, setSwipeOffset] = useState({});
+  const [swipeStartX, setSwipeStartX] = useState({});
 
   return (
     <div className={`relative flex flex-col items-center w-full ${className}`}>
