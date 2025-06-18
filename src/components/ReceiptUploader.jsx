@@ -1573,7 +1573,7 @@ Note: For currency, return the standard 3-letter currency code (e.g., EUR, USD, 
                       </p>
                     </div>
                 ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-1 lg:grid-cols-1 gap-4 w-full max-h-[400px] overflow-y-auto pr-2 mb-12">
+                  <div className="grid grid-cols-1 md:grid-cols-1 lg:grid-cols-1 gap-4 w-full max-h-[400px] overflow-y-auto pr-2 mb-12 overflow-x-hidden">
                     {console.log('Rendering receipts. Current settings for map:', settings)}
                     {receipts.map(renderReceiptCard)}
                     </div>
