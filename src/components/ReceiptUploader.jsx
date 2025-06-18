@@ -909,7 +909,7 @@ export default function ReceiptUploader({ className }) {
     const { progress, dir } = getSwipeProgress(receipt.id);
     return (
       <div
-        className="relative w-full"
+        className="relative w-full overflow-x-hidden" // Add overflow-x-hidden here
         onTouchStart={e => handleTouchStart(receipt.id, e)}
         onTouchMove={e => handleTouchMove(receipt.id, e)}
         onTouchEnd={() => handleTouchEnd(receipt.id)}
@@ -953,7 +953,7 @@ export default function ReceiptUploader({ className }) {
           key={receipt.id}
           style={{
             minHeight: 96,
-            transform: `translateX(${swipeOffset[receipt.id] || 0}px)`,
+            transform: `translateX(${swipeOffset[receipt.id] || 0}px)`, // Only Card moves
             transition: swipeOffset[receipt.id] ? 'none' : 'transform 0.5s cubic-bezier(0.22,1,0.36,1)', // springy
           }}
           className={`relative bg-slate-800/90 p-5 pl-4 rounded-2xl shadow-xl text-white border border-blue-900/30 border-l-4 ${catColor} transition-all duration-300 ease-in-out animate-fade-in-up ${isExpanded ? 'ring-2 ring-blue-500/50 scale-[1.01] shadow-2xl' : 'hover:shadow-2xl hover:-translate-y-1 active:scale-[0.98]'}`}
