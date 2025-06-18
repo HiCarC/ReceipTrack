@@ -910,6 +910,7 @@ export default function ReceiptUploader({ className }) {
     return (
       <div
         className="relative w-full overflow-x-hidden" // Add overflow-x-hidden here
+        style={{ touchAction: 'manipulation' }}
         onTouchStart={e => handleTouchStart(receipt.id, e)}
         onTouchMove={e => handleTouchMove(receipt.id, e)}
         onTouchEnd={() => handleTouchEnd(receipt.id)}
@@ -1384,9 +1385,13 @@ Note: For currency, return the standard 3-letter currency code (e.g., EUR, USD, 
 
   // Add swipe handlers:
   const handleTouchStart = (id, e) => {
+    e.preventDefault();
+    e.stopPropagation();
     setSwipeStartX(prev => ({ ...prev, [id]: e.touches[0].clientX }));
   };
   const handleTouchMove = (id, e) => {
+    e.preventDefault();
+    e.stopPropagation();
     if (swipeStartX[id] == null) return;
     const dx = e.touches[0].clientX - swipeStartX[id];
     setSwipeOffset(prev => ({ ...prev, [id]: dx }));
@@ -1436,7 +1441,7 @@ Note: For currency, return the standard 3-letter currency code (e.g., EUR, USD, 
   const [swipeStartX, setSwipeStartX] = useState({});
 
   return (
-    <div className={`relative flex flex-col items-center w-full ${className}`}>
+    <div className={`relative flex flex-col items-center w-full ${className}`} style={{ touchAction: 'manipulation', overflowX: 'hidden' }}>
       {/* Loading Overlay */}
       {isLoading && (
         <div className="fixed inset-0 z-[9999] bg-black/80 backdrop-blur-sm flex flex-col items-center justify-center">
@@ -1469,7 +1474,7 @@ Note: For currency, return the standard 3-letter currency code (e.g., EUR, USD, 
         )}
 
       {/* Main Content Area */}
-      <div className="flex-grow flex flex-col items-center justify-start px-4 sm:px-6 lg:px-8 mt-8 mb-12">
+      <div className="flex-grow flex flex-col items-center justify-start px-4 sm:px-6 lg:px-8 mt-8 mb-12" style={{ touchAction: 'manipulation', overflowX: 'hidden' }}>
         {/* Dashboard Header */}
         <div className="text-center mb-8 w-full max-w-4xl">
           <h1 className="text-4xl font-extrabold text-white mb-4">
@@ -1480,7 +1485,7 @@ Note: For currency, return the standard 3-letter currency code (e.g., EUR, USD, 
           </p>
         </div>
 
-        <div className="flex flex-col md:flex-row gap-8 w-full">
+        <div className="flex flex-col md:flex-row gap-8 w-full" style={{ overflowX: 'hidden' }}>
           {/* Choose Upload Method Card */}
           <Card className="w-full md:w-1/3 p-6 flex flex-col items-center justify-start gap-6 bg-slate-800/80 text-white shadow-2xl rounded-xl border border-blue-400/20">
             <CardHeader className="w-full text-center p-0 mb-4">
