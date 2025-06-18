@@ -9,7 +9,7 @@ function RootContent() {
   const { user } = useAuth(); // Now useAuth is called within AuthProvider's scope
 
   return (
-    <div className="min-h-screen w-full flex flex-col bg-gradient-to-br from-gray-900 via-indigo-950 to-purple-950">
+    <div className="min-h-screen w-full flex flex-col bg-gradient-to-br from-gray-900 via-indigo-950 to-purple-950" style={{ overflowX: 'hidden' }}>
       <AuthHeader />
       {user ? <ReceiptUploader className="flex-grow" /> : <LandingPage className="flex-grow" />}
       <Toaster />

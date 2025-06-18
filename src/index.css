@@ -7,9 +7,36 @@
     height: 100%;
     overflow-y: scroll;
     overflow-x: hidden;
+    width: 100%;
+    max-width: 100vw;
   }
   body {
     height: 100%;
+    overflow-x: hidden;
+    width: 100%;
+    max-width: 100vw;
+    margin: 0;
+    padding: 0;
+  }
+
+  /* Prevent horizontal scrolling globally */
+  * {
+    box-sizing: border-box;
+  }
+
+  /* Ensure no element can cause horizontal overflow */
+  div, section, main, aside, header, footer {
+    max-width: 100%;
+    overflow-x: hidden;
+  }
+
+  /* Prevent touch scrolling on mobile */
+  @media (max-width: 768px) {
+    html, body {
+      overflow-x: hidden;
+      position: relative;
+      width: 100vw;
+    }
   }
 
   :root {
