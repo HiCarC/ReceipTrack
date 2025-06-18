@@ -138,6 +138,10 @@ const categoryColors = {
 };
 const getCategoryColor = (cat) => categoryColors[cat] || categoryColors['Uncategorized'];
 
+// Add at the top of the component:
+const [swipeOffset, setSwipeOffset] = useState({});
+const [swipeStartX, setSwipeStartX] = useState({});
+
 export default function ReceiptUploader({ className }) {
   const { toast } = useToast();
   const authContext = useAuth();
@@ -906,6 +910,7 @@ export default function ReceiptUploader({ className }) {
     const isNegative = isNaN(amount) || amount < 0;
     const catColor = getCategoryColor(receipt.category);
     const isSwiped = swipedId === receipt.id;
+    const { progress, dir } = getSwipeProgress(receipt.id);
     return (
       <div
         className="relative w-full"
@@ -913,22 +918,50 @@ export default function ReceiptUploader({ className }) {
         onTouchMove={e => handleTouchMove(receipt.id, e)}
         onTouchEnd={() => handleTouchEnd(receipt.id)}
       >
-        {/* Swipe backgrounds */}
-        <div className={`absolute inset-0 z-0 flex items-center transition-all duration-300 ${isSwiped && swipeDir === 'left' ? 'bg-red-600/80 justify-end pr-8' : isSwiped && swipeDir === 'right' ? 'bg-blue-600/80 justify-start pl-8' : 'bg-transparent'}`}
-          style={{ borderRadius: '1rem' }}
+        {/* Swipe backgrounds with animated icon */}
+        <div
+          className={`absolute inset-0 z-0 flex items-center transition-all duration-200 ${dir === 'left' ? 'justify-end pr-8' : dir === 'right' ? 'justify-start pl-8' : ''}`}
+          style={{
+            background: dir === 'left'
+              ? `rgba(220,38,38,${progress * 0.8})` // red-600
+              : dir === 'right'
+              ? `rgba(37,99,235,${progress * 0.8})` // blue-600
+              : 'transparent',
+            borderRadius: '1rem',
+            pointerEvents: 'none',
+          }}
         >
-          {isSwiped && swipeDir === 'left' && (
-            <Trash2 className="h-7 w-7 text-white animate-fade-in" />
+          {dir === 'left' && (
+            <Trash2
+              className="h-7 w-7 text-white"
+              style={{
+                opacity: progress,
+                transform: `scale(${0.8 + 0.4 * progress})`,
+                transition: 'all 0.2s',
+              }}
+            />
           )}
-          {isSwiped && swipeDir === 'right' && (
-            <Edit className="h-7 w-7 text-white animate-fade-in" />
+          {dir === 'right' && (
+            <Edit
+              className="h-7 w-7 text-white"
+              style={{
+                opacity: progress,
+                transform: `scale(${0.8 + 0.4 * progress})`,
+                transition: 'all 0.2s',
+              }}
+            />
           )}
         </div>
         <Card
+          id={`receipt-card-${receipt.id}`}
           key={receipt.id}
-          className={`relative bg-slate-800/90 p-5 pl-4 rounded-2xl shadow-xl text-white border border-blue-900/30 border-l-4 ${catColor} transition-all duration-300 ease-in-out animate-fade-in-up ${isExpanded ? 'ring-2 ring-blue-500/50 scale-[1.01] shadow-2xl' : 'hover:shadow-2xl hover:-translate-y-1 active:scale-[0.98]'} ${isSwiped ? 'translate-x-16' : ''}`}
+          style={{
+            minHeight: 96,
+            transform: `translateX(${swipeOffset[receipt.id] || 0}px)`,
+            transition: swipeOffset[receipt.id] ? 'none' : 'transform 0.5s cubic-bezier(0.22,1,0.36,1)', // springy
+          }}
+          className={`relative bg-slate-800/90 p-5 pl-4 rounded-2xl shadow-xl text-white border border-blue-900/30 border-l-4 ${catColor} transition-all duration-300 ease-in-out animate-fade-in-up ${isExpanded ? 'ring-2 ring-blue-500/50 scale-[1.01] shadow-2xl' : 'hover:shadow-2xl hover:-translate-y-1 active:scale-[0.98]'}`}
           onClick={() => setExpandedReceiptId(isExpanded ? null : receipt.id)}
-          style={{ minHeight: 96 }}
           aria-label={`Receipt for ${receipt.merchant}`}
         >
           <div className="flex items-center justify-between gap-2 w-full">
@@ -1355,36 +1388,52 @@ Note: For currency, return the standard 3-letter currency code (e.g., EUR, USD, 
 
   // Add swipe handlers:
   const handleTouchStart = (id, e) => {
-    swipeRefs.current[id] = { x: e.touches[0].clientX };
+    setSwipeStartX(prev => ({ ...prev, [id]: e.touches[0].clientX }));
   };
   const handleTouchMove = (id, e) => {
-    if (!swipeRefs.current[id]) return;
-    const dx = e.touches[0].clientX - swipeRefs.current[id].x;
-    if (dx < -40) { setSwipedId(id); setSwipeDir('left'); } // Swipe left for delete
-    else if (dx > 40) { setSwipedId(id); setSwipeDir('right'); } // Swipe right for edit
+    if (swipeStartX[id] == null) return;
+    const dx = e.touches[0].clientX - swipeStartX[id];
+    setSwipeOffset(prev => ({ ...prev, [id]: dx }));
   };
   const handleTouchEnd = (id) => {
-    if (swipedId === id && swipeDir === 'right') {
-      // Open edit modal
+    const offset = swipeOffset[id] || 0;
+    const card = document.getElementById(`receipt-card-${id}`);
+    const width = card ? card.offsetWidth : 1;
+    const threshold = width * 0.4;
+    if (offset > threshold) {
+      try { navigator.vibrate && navigator.vibrate(30); } catch {}
       setTimeout(() => {
-        setSwipedId(null); setSwipeDir(null);
+        setSwipeOffset(prev => ({ ...prev, [id]: 0 }));
+        setSwipeStartX(prev => ({ ...prev, [id]: undefined }));
         handleEditClick(receipts.find(r => r.id === id));
-      }, 200); // allow animation
-    } else if (swipedId === id && swipeDir === 'left') {
-      // Show delete confirmation
+      }, 150);
+    } else if (offset < -threshold) {
+      try { navigator.vibrate && navigator.vibrate([30, 30, 30]); } catch {}
       setTimeout(() => {
-        setSwipedId(null); setSwipeDir(null);
+        setSwipeOffset(prev => ({ ...prev, [id]: 0 }));
+        setSwipeStartX(prev => ({ ...prev, [id]: undefined }));
         setPendingDeleteId(id);
         setShowDeleteModal(true);
-      }, 200); // allow animation
+      }, 150);
     } else {
-      setSwipedId(null); setSwipeDir(null);
+      setSwipeOffset(prev => ({ ...prev, [id]: 0 }));
+      setSwipeStartX(prev => ({ ...prev, [id]: undefined }));
     }
   };
 
   // Add at the top of the component:
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [pendingDeleteId, setPendingDeleteId] = useState(null);
+
+  // Add a helper to get swipe progress (0 to 1) and direction:
+  const getSwipeProgress = (id) => {
+    const offset = swipeOffset[id] || 0;
+    const card = document.getElementById(`receipt-card-${id}`);
+    const width = card ? card.offsetWidth : 1;
+    const progress = Math.min(Math.abs(offset) / (width * 0.4), 1);
+    const dir = offset > 0 ? 'right' : offset < 0 ? 'left' : null;
+    return { progress, dir };
+  };
 
   return (
     <div className={`relative flex flex-col items-center w-full ${className}`}>
