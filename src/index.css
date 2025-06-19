@@ -43,6 +43,8 @@
       overflow-x: hidden !important;
       position: relative;
       touch-action: pan-y !important;
+      padding-top: env(safe-area-inset-top);
+      background: #0f172a; /* fallback for dark bg */
     }
     
     /* Prevent iOS Safari from adding padding */
@@ -147,6 +149,13 @@ html, body {
   overflow-x: hidden !important;
   position: relative;
   touch-action: pan-y !important;
+  padding-top: env(safe-area-inset-top);
+  background: #0f172a;
+}
+
+header, .fixed.top-0, .sticky.top-0 {
+  padding-top: env(safe-area-inset-top);
+  background: #0f172a;
 }
 
 @media (max-width: 768px) {
