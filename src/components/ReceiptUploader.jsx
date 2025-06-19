@@ -1474,7 +1474,15 @@ Note: For currency, return the standard 3-letter currency code (e.g., EUR, USD, 
         )}
 
       {/* Main Content Area */}
-      <div className="flex-grow flex flex-col items-center justify-start px-2 sm:px-4 lg:px-6 mt-8 mb-12" style={{ touchAction: 'manipulation', overflowX: 'hidden', maxWidth: '100vw' }}>
+      <div
+        className="flex-grow flex flex-col items-center justify-start px-2 sm:px-4 lg:px-6 mt-8 mb-12"
+        style={{
+          touchAction: 'pan-y',
+          overflowX: 'hidden',
+          maxWidth: '100vw',
+          width: '100vw'
+        }}
+      >
         {/* Dashboard Header */}
         <div className="text-center mb-8 w-full max-w-4xl px-2">
           <h1 className="text-4xl font-extrabold text-white mb-4">
