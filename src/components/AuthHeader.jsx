@@ -337,24 +337,24 @@ export default function AuthHeader() {
   const [showAvatarModal, setShowAvatarModal] = useState(false);
 
   return (
-    <header className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 ${
+    <header className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 w-full overflow-x-hidden overflow-y-hidden ${
       isScrolled 
         ? 'bg-slate-800/80 backdrop-blur-md shadow-lg' 
         : 'bg-transparent'
     }`}>
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex justify-between items-center h-16 relative">
+      <div className="max-w-7xl mx-auto px-2 sm:px-4 lg:px-6 w-full overflow-x-hidden overflow-y-hidden">
+        <div className="flex justify-between items-center h-16 relative w-full overflow-x-hidden overflow-y-hidden">
           {/* Original Logo */}
           <div className="flex-shrink-0">
             <a href="/" className="flex items-center space-x-2">
               <span className="text-2xl">💰</span>
-              <span className="text-xl font-bold bg-gradient-to-r from-blue-600 to-blue-400 bg-clip-text text-transparent">ExpenseTracker</span>
+              <span className="text-lg md:text-xl font-bold bg-gradient-to-r from-blue-600 to-blue-400 bg-clip-text text-transparent">ExpenseTracker</span>
             </a>
           </div>
 
           {/* Animated Headline in Header (positioned absolutely in the middle) */}
           <div
-            className={`absolute transform -translate-x-1/2 transition-all duration-500 font-semibold text-blue-100 whitespace-nowrap
+            className={`absolute transform -translate-x-1/2 transition-all duration-500 font-semibold text-blue-100 whitespace-nowrap max-w-full overflow-hidden
               ${scrollProgress > 0 ? 'opacity-100' : 'opacity-0'}
             `}
             style={{
@@ -363,19 +363,19 @@ export default function AuthHeader() {
               opacity: scrollProgress,
             }}
           >
-            <h2 className="text-lg">Effortless Receipt Management</h2>
+            <h2 className="text-base md:text-lg truncate">Effortless Receipt Management</h2>
           </div>
 
           {/* User Menu / Auth Buttons */}
-          <div className="flex items-center space-x-4">
+          <div className="flex items-center space-x-2 md:space-x-4">
             {!user ? (
-              <div className="flex space-x-2">
+              <div className="flex space-x-1 md:space-x-2">
                 <Button
                   onClick={() => {
                     setIsSignUp(true);
                     setShowModal(true);
                   }}
-                  className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg"
+                  className="bg-blue-600 hover:bg-blue-700 text-white px-2 md:px-4 py-2 rounded-lg text-sm md:text-base"
                 >
                   Register
                 </Button>
@@ -385,16 +385,16 @@ export default function AuthHeader() {
                     setShowModal(true);
                   }}
                   variant="ghost"
-                  className="text-white hover:bg-gray-700 px-4 py-2 rounded-lg"
+                  className="text-white hover:bg-gray-700 px-2 md:px-4 py-2 rounded-lg text-sm md:text-base"
                 >
-                  <LogIn className="mr-2 h-4 w-4" /> Sign In
+                  <LogIn className="mr-1 md:mr-2 h-4 w-4" /> Sign In
                 </Button>
               </div>
             ) : (
               <div className="relative">
                 <button
                   onClick={() => setShowProfile(!showProfile)}
-                  className="flex items-center space-x-2 p-2 rounded-lg hover:bg-gray-100 transition-colors text-white"
+                  className="flex items-center space-x-1 md:space-x-2 p-2 rounded-lg hover:bg-gray-100 transition-colors text-white"
                 >
                   <span className="inline-flex items-center justify-center h-8 w-8 rounded-full bg-gradient-to-br from-blue-100 to-blue-200 shadow border-2 border-white text-2xl">
                     {user?.photoURL ? (
@@ -407,7 +407,7 @@ export default function AuthHeader() {
                       <span role="img" aria-label="avatar">🦄</span>
                     )}
                   </span>
-                  <span className="text-sm font-medium">{user?.displayName || 'User'}</span>
+                  <span className="text-xs md:text-sm font-medium truncate max-w-20 md:max-w-none">{user?.displayName || 'User'}</span>
                 </button>
                 {showProfile && (
                   <div className="absolute right-0 mt-2 w-48 bg-slate-800 rounded-md shadow-lg py-1 z-50">

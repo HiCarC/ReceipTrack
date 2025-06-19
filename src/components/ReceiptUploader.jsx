@@ -1474,9 +1474,9 @@ Note: For currency, return the standard 3-letter currency code (e.g., EUR, USD, 
         )}
 
       {/* Main Content Area */}
-      <div className="flex-grow flex flex-col items-center justify-start px-4 sm:px-6 lg:px-8 mt-8 mb-12" style={{ touchAction: 'manipulation', overflowX: 'hidden' }}>
+      <div className="flex-grow flex flex-col items-center justify-start px-2 sm:px-4 lg:px-6 mt-8 mb-12" style={{ touchAction: 'manipulation', overflowX: 'hidden', maxWidth: '100vw' }}>
         {/* Dashboard Header */}
-        <div className="text-center mb-8 w-full max-w-4xl">
+        <div className="text-center mb-8 w-full max-w-4xl px-2">
           <h1 className="text-4xl font-extrabold text-white mb-4">
             {/* Removed: Your Expense Dashboard */}
           </h1>
@@ -1485,11 +1485,11 @@ Note: For currency, return the standard 3-letter currency code (e.g., EUR, USD, 
           </p>
         </div>
 
-        <div className="flex flex-col md:flex-row gap-8 w-full" style={{ overflowX: 'hidden' }}>
+        <div className="flex flex-col md:flex-row gap-4 md:gap-8 w-full max-w-full" style={{ overflowX: 'hidden' }}>
           {/* Choose Upload Method Card */}
-          <Card className="w-full md:w-1/3 p-6 flex flex-col items-center justify-start gap-6 bg-slate-800/80 text-white shadow-2xl rounded-xl border border-blue-400/20">
+          <Card className="w-full md:w-1/3 p-4 md:p-6 flex flex-col items-center justify-start gap-4 md:gap-6 bg-slate-800/80 text-white shadow-2xl rounded-xl border border-blue-400/20">
             <CardHeader className="w-full text-center p-0 mb-4">
-              <CardTitle className="text-2xl font-bold text-blue-100">Choose Upload Method</CardTitle>
+              <CardTitle className="text-xl md:text-2xl font-bold text-blue-100">Choose Upload Method</CardTitle>
             </CardHeader>
             <CardContent className="w-full flex flex-col items-center justify-center gap-4 p-0">
               {file && <p className="text-sm text-gray-400 mb-2">File: {file.name}</p>}
@@ -1528,25 +1528,25 @@ Note: For currency, return the standard 3-letter currency code (e.g., EUR, USD, 
           </Card>
 
           {/* Combined Total Expenses and Your Receipts Card */}
-          <Card className="w-full md:w-2/3 p-6 flex flex-col items-center justify-start gap-6 bg-slate-800/80 text-white shadow-2xl rounded-xl border border-blue-400/20">
+          <Card className="w-full md:w-2/3 p-4 md:p-6 flex flex-col items-center justify-start gap-4 md:gap-6 bg-slate-800/80 text-white shadow-2xl rounded-xl border border-blue-400/20">
             <CardHeader className="w-full text-center p-0 mb-4">
-              <CardTitle className="text-2xl font-bold text-blue-100">Your Financial Overview</CardTitle>
+              <CardTitle className="text-xl md:text-2xl font-bold text-blue-100">Your Financial Overview</CardTitle>
             </CardHeader>
             <CardContent className="w-full flex flex-col items-center justify-center p-0">
               {/* Total Expenses Section */}
               <div className="w-full text-center mb-6">
                 <p className="text-sm text-gray-400">Total Expenses</p>
-                <p className="text-5xl font-extrabold text-indigo-400 mb-4">
+                <p className="text-4xl md:text-5xl font-extrabold text-indigo-400 mb-4">
                   {formatCurrency(totalExpenses, settings?.baseCurrency || 'EUR')}
                 </p>
-                <div className="space-y-2 w-full px-4">
+                <div className="space-y-2 w-full px-2 md:px-4">
                   {Object.entries(categoryTotals).length > 0 ? (
                     Object.entries(categoryTotals)
                       .sort(([, amountA], [, amountB]) => amountB - amountA) // Sort by amount descending
                       .map(([category, amount]) => (
                         <div key={category} className="flex justify-between items-center text-gray-300 text-sm">
-                          <span>{category}</span>
-                          <span>{formatCurrency(amount, settings?.baseCurrency || 'EUR')}</span>
+                          <span className="truncate">{category}</span>
+                          <span className="ml-2">{formatCurrency(amount, settings?.baseCurrency || 'EUR')}</span>
                 </div>
                       ))
                   ) : (
@@ -1578,7 +1578,7 @@ Note: For currency, return the standard 3-letter currency code (e.g., EUR, USD, 
                       </p>
                     </div>
                 ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-1 lg:grid-cols-1 gap-4 w-full max-h-[400px] overflow-y-auto pr-2 mb-12 overflow-x-hidden">
+                  <div className="grid grid-cols-1 gap-4 w-full max-h-[400px] overflow-y-auto overflow-x-hidden mb-12">
                     {console.log('Rendering receipts. Current settings for map:', settings)}
                     {receipts.map(renderReceiptCard)}
                     </div>
@@ -1603,7 +1603,7 @@ Note: For currency, return the standard 3-letter currency code (e.g., EUR, USD, 
           }}
         >
           <DialogContent 
-            className="w-full max-w-lg md:max-w-2xl bg-gradient-to-b from-blue-900 via-slate-900/95 to-slate-900 text-white border-none p-4 md:p-8 rounded-2xl shadow-2xl animate-fade-in-up overflow-hidden fixed top-1/2 left-1/2 translate-x-[-50%] translate-y-[-50%] max-h-[90vh] z-50 flex flex-col"
+            className="w-[95vw] max-w-lg md:max-w-2xl bg-gradient-to-b from-blue-900 via-slate-900/95 to-slate-900 text-white border-none p-4 md:p-8 rounded-2xl shadow-2xl animate-fade-in-up overflow-hidden max-h-[90vh] z-50 flex flex-col"
             style={{ touchAction: 'manipulation', backdropFilter: 'blur(10px)' }}
             onPointerDownOutside={e => e.preventDefault()}
             onInteractOutside={e => e.preventDefault()}
@@ -1613,7 +1613,7 @@ Note: For currency, return the standard 3-letter currency code (e.g., EUR, USD, 
               <DialogDescription className="text-blue-300/80 text-center text-sm md:text-base">{editingReceipt ? 'Edit your receipt details below.' : 'Enter your receipt details below.'}</DialogDescription>
             </DialogHeader>
             <ScrollArea className="flex-1 pr-2 overflow-y-auto max-h-[60vh] pb-24 animate-fade-in duration-300 ease-in-out">
-              <form onSubmit={handleSaveReceiptSubmit} autoComplete="off" className="space-y-8 md:space-y-10 px-1 md:px-0">
+              <form onSubmit={handleSaveReceiptSubmit} autoComplete="off" className="space-y-6 md:space-y-8 px-1 md:px-0">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 animate-fade-in duration-200 ease-in-out">
                   <div className="space-y-2">
                     <Label htmlFor="merchant">Merchant</Label>
@@ -1709,9 +1709,9 @@ Note: For currency, return the standard 3-letter currency code (e.g., EUR, USD, 
                           const parsed = parseFloat(value.replace(',', '.')).toFixed(2);
                           handleItemInputChange({ target: { value: isNaN(parsed) ? '' : parsed } }, index, 'price');
                         }}
-                        className="flex-[1] w-20 bg-slate-800/90 border border-blue-700/40 text-white text-right focus:border-blue-400 focus:ring-2 focus:ring-blue-400 focus:bg-blue-950/80 transition-all duration-200 ease-in-out rounded-xl shadow-inner px-4 py-3 text-base placeholder-blue-200/60 outline-none"
+                        className="flex-[1] min-w-0 bg-slate-800/90 border border-blue-700/40 text-white text-right focus:border-blue-400 focus:ring-2 focus:ring-blue-400 focus:bg-blue-950/80 transition-all duration-200 ease-in-out rounded-xl shadow-inner px-4 py-3 text-base placeholder-blue-200/60 outline-none"
                       />
-                      <span className="text-blue-200">{getCurrencySymbol(activeFormData.currency)}</span>
+                      <span className="text-blue-200 text-sm">{getCurrencySymbol(activeFormData.currency)}</span>
                         <Button
                           type="button"
                         onClick={() => {
@@ -1737,7 +1737,7 @@ Note: For currency, return the standard 3-letter currency code (e.g., EUR, USD, 
                         </div>
                   ))}
                   <div className="flex items-end gap-2 mt-2 animate-fade-in-up duration-200 ease-in-out">
-                    <div className="flex-1">
+                    <div className="flex-1 min-w-0">
                       <Label htmlFor="new-item-name">New Item Name</Label>
                         <Input
                         id="new-item-name"
@@ -1745,12 +1745,12 @@ Note: For currency, return the standard 3-letter currency code (e.g., EUR, USD, 
                         placeholder="Add new item name"
                         value={editingReceipt ? currentNewItem.name : newItem.name}
                         onChange={e => editingReceipt ? setCurrentNewItem({ ...currentNewItem, name: e.target.value }) : setNewItem({ ...newItem, name: e.target.value })}
-                        className="flex-[2] min-w-0 bg-slate-800/90 border border-blue-700/40 text-white focus:border-blue-400 focus:ring-2 focus:ring-blue-400 focus:bg-blue-950/80 transition-all duration-200 ease-in-out rounded-xl shadow-inner px-4 py-3 text-base placeholder-blue-200/60 outline-none"
+                        className="w-full bg-slate-800/90 border border-blue-700/40 text-white focus:border-blue-400 focus:ring-2 focus:ring-blue-400 focus:bg-blue-950/80 transition-all duration-200 ease-in-out rounded-xl shadow-inner px-4 py-3 text-base placeholder-blue-200/60 outline-none"
                         autoCapitalize="words"
                         inputMode="text"
                         />
                     </div>
-                    <div className="w-28">
+                    <div className="w-20 md:w-28 min-w-0">
                       <Label htmlFor="new-item-price">Price</Label>
                         <Input
                           id="new-item-price"
@@ -1759,7 +1759,7 @@ Note: For currency, return the standard 3-letter currency code (e.g., EUR, USD, 
                           placeholder="0.00"
                         value={editingReceipt ? currentNewItem.price : newItem.price}
                         onChange={e => editingReceipt ? setCurrentNewItem(prev => ({ ...prev, price: e.target.value })) : setNewItem(prev => ({ ...prev, price: e.target.value }))}
-                        className="flex-[1] w-20 bg-slate-800/90 border border-blue-700/40 text-white text-right focus:border-blue-400 focus:ring-2 focus:ring-blue-400 focus:bg-blue-950/80 transition-all duration-200 ease-in-out rounded-xl shadow-inner px-4 py-3 text-base placeholder-blue-200/60 outline-none"
+                        className="w-full bg-slate-800/90 border border-blue-700/40 text-white text-right focus:border-blue-400 focus:ring-2 focus:ring-blue-400 focus:bg-blue-950/80 transition-all duration-200 ease-in-out rounded-xl shadow-inner px-4 py-3 text-base placeholder-blue-200/60 outline-none"
                       />
                       </div>
                     <div className="flex flex-col justify-end pb-1">
@@ -1791,15 +1791,14 @@ Note: For currency, return the standard 3-letter currency code (e.g., EUR, USD, 
                   setIsEditing(false);
                   resetFormData();
                     }} 
-                className="bg-slate-700/90 hover:bg-blue-900 text-white text-base py-3 rounded-xl shadow-md transition-all duration-150 ease-in-out px-8"
+                className="bg-slate-700/90 hover:bg-blue-900 text-white text-base py-3 rounded-xl shadow-md transition-all duration-150 ease-in-out px-4 md:px-8"
                   >
                     Cancel
                 </Button>
                   <Button 
                     type="submit" 
                 onClick={handleSaveReceiptSubmit}
-                className="bg-gradient-to-r from-blue-700 via-blue-600 to-blue-800 hover:from-blue-800 hover:to-blue-900 text-white text-base font-semibold py-3 rounded-xl shadow-xl transition-all duration-200 ease-in-out transform hover:scale-105 px-8"
-                style={{ minWidth: 140 }}
+                className="bg-gradient-to-r from-blue-700 via-blue-600 to-blue-800 hover:from-blue-800 hover:to-blue-900 text-white text-base font-semibold py-3 rounded-xl shadow-xl transition-all duration-200 ease-in-out transform hover:scale-105 px-4 md:px-8"
               >
                 {isBusy ? <span className="animate-spin mr-2">⏳</span> : (editingReceipt ? 'Save Changes' : 'Save Receipt')}
                   </Button>
