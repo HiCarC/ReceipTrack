@@ -1699,11 +1699,16 @@ Reply with a JSON object enclosed in triple backticks like this:\n\`\`\`json\n{\
                     <Select
                       value={activeFormData.paymentMethod}
                       onValueChange={value => handleFormInputChange({ target: { name: 'paymentMethod', value } })}
+                      onOpenChange={open => {
+                        if (open && document.activeElement && document.activeElement.tagName === 'INPUT') {
+                          document.activeElement.blur();
+                        }
+                      }}
                     >
                       <SelectTrigger className="w-full bg-slate-800/90 border border-blue-700/40 text-white focus:border-blue-400 focus:ring-2 focus:ring-blue-400 focus:bg-blue-950/80 transition-all duration-200 ease-in-out rounded-xl shadow-inner px-4 py-3 text-base placeholder-blue-200/60 outline-none">
                         <SelectValue placeholder="Select payment method" />
                       </SelectTrigger>
-                      <SelectContent className="bg-blue-950 text-white border-blue-700/40 shadow-xl rounded-xl animate-fade-in-up">
+                      <SelectContent className="bg-blue-950 text-white border-blue-700/40 shadow-xl rounded-xl animate-fade-in-up max-h-60 overflow-y-auto">
                         {['Cash', 'Credit Card', 'Debit Card', 'Mobile Pay', 'Bank Transfer', 'Other'].map(method => (
                           <SelectItem
                             key={method}
@@ -1711,6 +1716,33 @@ Reply with a JSON object enclosed in triple backticks like this:\n\`\`\`json\n{\
                             className="text-white bg-blue-950 hover:bg-blue-800 focus:bg-blue-800 data-[state=checked]:bg-blue-900 data-[state=checked]:text-blue-200 transition-colors duration-150 rounded-lg px-4 py-3 cursor-pointer text-base"
                           >
                             {method}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="category">Category</Label>
+                    <Select
+                      value={activeFormData.category}
+                      onValueChange={value => handleFormInputChange({ target: { name: 'category', value } })}
+                      onOpenChange={open => {
+                        if (open && document.activeElement && document.activeElement.tagName === 'INPUT') {
+                          document.activeElement.blur();
+                        }
+                      }}
+                    >
+                      <SelectTrigger className="w-full bg-slate-800/90 border border-blue-700/40 text-white focus:border-blue-400 focus:ring-2 focus:ring-blue-400 focus:bg-blue-950/80 transition-all duration-200 ease-in-out rounded-xl shadow-inner px-4 py-3 text-base placeholder-blue-200/60 outline-none">
+                        <SelectValue placeholder="Select category" />
+                      </SelectTrigger>
+                      <SelectContent className="bg-blue-950 text-white border-blue-700/40 shadow-xl rounded-xl animate-fade-in-up max-h-60 overflow-y-auto">
+                        {categories.map(cat => (
+                          <SelectItem
+                            key={cat}
+                            value={cat}
+                            className="text-white bg-blue-950 hover:bg-blue-800 focus:bg-blue-800 data-[state=checked]:bg-blue-900 data-[state=checked]:text-blue-200 transition-colors duration-150 rounded-lg px-4 py-3 cursor-pointer text-base"
+                          >
+                            {cat}
                           </SelectItem>
                         ))}
                       </SelectContent>

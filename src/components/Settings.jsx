@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useToast } from "@/components/ui/use-toast";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -68,6 +68,21 @@ export function Settings({ onClose, onCloseDropdown }) {
   const [nameError, setNameError] = useState("");
   const [emailError, setEmailError] = useState("");
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const cardRef = useRef(null);
+  const triggerRef = useRef(null);
+  const searchRef = useRef(null);
+  const [dropdownMaxHeight, setDropdownMaxHeight] = useState(320);
+
+  useEffect(() => {
+    if (showCurrencyDropdown && cardRef.current && triggerRef.current && searchRef.current) {
+      const cardRect = cardRef.current.getBoundingClientRect();
+      const triggerRect = triggerRef.current.getBoundingClientRect();
+      const searchRect = searchRef.current.getBoundingClientRect();
+      // Calculate available height below the trigger inside the card
+      const available = cardRect.height - (triggerRect.top - cardRect.top) - triggerRect.height - searchRect.height - 32; // 32px for padding/margin
+      setDropdownMaxHeight(available > 120 ? available : 120); // Minimum height
+    }
+  }, [showCurrencyDropdown]);
 
   // Instant validation
   useEffect(() => {
@@ -283,17 +298,18 @@ export function Settings({ onClose, onCloseDropdown }) {
             />
           )}
           <hr className="my-4 border-gray-200" />
-          <Card className="mb-2 bg-gradient-to-br from-gray-50 to-gray-100 border border-gray-200 shadow-md">
+          <Card className="mb-2 bg-gradient-to-br from-gray-50 to-gray-100 border border-gray-200 shadow-md" ref={cardRef}>
             <CardHeader>
               <CardTitle>Currency Settings</CardTitle>
               <CardDescription>Configure your currency preferences</CardDescription>
             </CardHeader>
-            <CardContent className="space-y-4">
+            <CardContent className={`space-y-4 transition-all duration-300 ${showCurrencyDropdown ? 'min-h-[420px] pb-32' : ''}`}>
               <div className="space-y-2">
                 <Label>Base Currency</Label>
-                <div className="relative w-full max-w-xs" style={{zIndex: 60, overflow: 'visible'}}>
+                <div className={`relative w-full max-w-xs flex flex-col transition-all duration-300 ${showCurrencyDropdown ? 'h-[520px]' : ''}`} style={{zIndex: 60, overflow: 'visible'}}>
                   <button
                     type="button"
+                    ref={triggerRef}
                     className="flex items-center justify-between w-full px-4 py-3 bg-white border border-gray-300 rounded-lg shadow-lg text-lg font-semibold focus:outline-none focus:ring-2 focus:ring-blue-400 transition-all duration-200 hover:shadow-2xl hover:border-blue-400 group"
                     onClick={() => setShowCurrencyDropdown(v => !v)}
                     aria-haspopup="listbox"
@@ -310,13 +326,17 @@ export function Settings({ onClose, onCloseDropdown }) {
                     </span>
                   </button>
                   {showCurrencyDropdown && (
-                    <div className="absolute left-0 right-0 z-50 mt-2 w-full bg-white border border-blue-200 rounded-2xl shadow-2xl max-h-80 overflow-y-auto animate-fade-in-scale origin-top transition-all duration-200" style={{minWidth: '100%'}}>
+                    <div
+                      className="absolute left-0 right-0 z-50 mt-2 w-full bg-white border border-blue-200 rounded-2xl shadow-2xl overflow-y-auto animate-fade-in-scale origin-top transition-all duration-200"
+                      style={{ minWidth: '100%', maxHeight: showCurrencyDropdown ? 'calc(100% - 56px)' : dropdownMaxHeight }}
+                    >
                       <div className="p-2 sticky top-0 bg-gradient-to-r from-blue-50 to-blue-100 z-10 rounded-t-2xl">
                         <Input
-                          autoFocus
+                          ref={searchRef}
                           placeholder="Search currency..."
                           value={currencySearch}
                           onChange={e => setCurrencySearch(e.target.value)}
+                          onClick={e => e.target.focus()}
                           className="mb-2 rounded-md border-gray-300 focus:border-blue-400 focus:ring-2 focus:ring-blue-200 bg-white"
                         />
                       </div>
