@@ -568,7 +568,7 @@ export default function ReceiptUploader({ className }) {
     }
 
     // Ensure all items have a name and a valid price
-    const cleanedItems = (activeFormData.items || []).filter(item => item.name && parseFloat(item.price) > 0).map(item => ({
+    const cleanedItems = (activeFormData.items || []).filter(item => item.name && !isNaN(parseFloat(item.price)) && item.price !== '').map(item => ({
       name: item.name,
       price: parseFloat(item.price)
     }));
@@ -1196,21 +1196,34 @@ export default function ReceiptUploader({ className }) {
                   text: `Analyze this receipt image and extract the following information in JSON format:
 1. Store/Merchant name
 2. Total amount
-3. Date
-4. Category (choose from: Groceries, Dining, Transportation, Shopping, Bills, Entertainment, Health, Other)
-5. Payment Method (e.g., Cash, Credit Card, Debit Card, Mobile Payment)
-6. Currency (detect from the receipt, looking for currency symbols or codes like €, $, £, ¥, etc.)
-7. Items (list of items with their prices)
+3. Subtotal (if present)
+4. Date
+5. Category (choose from: Groceries, Dining, Transportation, Shopping, Bills, Entertainment, Health, Other)
+6. Payment Method (e.g., Cash, Credit Card, Debit Card, Mobile Payment, Bank Transfer, Voucher, Other)
+7. Currency (detect from the receipt, looking for currency symbols or codes like €, $, £, ¥, etc.)
+8. Items (list of items with their prices)
 
-Consider these guidelines for categorization:
-- Groceries: Supermarkets, food stores, grocery items
-- Dining: Restaurants, cafes, fast food, takeout
-- Transportation: Gas stations, public transport, taxis, car services
-- Shopping: Retail stores, clothing, electronics, general merchandise
-- Bills: Utilities, services, subscriptions
-- Entertainment: Movies, events, leisure activities
-- Health: Medical, pharmacy, wellness
-- Other: Any items that don't fit the above categories
+If there are discounts (e.g., 'Discount', 'Rabatt', 'Descuento', 'Remise', 'Sconto', etc.), include each discount as an item in the 'items' array, with a negative price and a clear description (e.g., {"name": "Discount", "price": "-2.00"}). Do not use a separate 'discounts' field.
+
+For subtotal, look for lines or sections labeled 'Subtotal', 'Sous-total', 'Zwischensumme', 'Sub-total', or similar, usually just above the tax or total. Return the value as a string if found, or leave blank/null if not present.
+
+For payment method, use all available clues to infer the most probable method, even if not explicitly stated. Look for:
+- Card numbers (e.g., ****1234, VISA, Mastercard, AMEX, Maestro, Discover, UnionPay, Carte Bancaire, etc.)
+- Payment terminal info (POS, EFT, terminal IDs, Auth #, Approval #)
+- Cash indicators ("Paid by cash", "cash tendered", "change given", "amount due: 0.00")
+- Mobile payment ("Apple Pay", "Google Pay", "Samsung Pay", "NFC", "Contactless", "QR code", "WeChat Pay", "Alipay")
+- Bank transfer ("IBAN", "BIC", "Sort code", "Bank name", "SEPA", "Wire transfer")
+- Vouchers/gift cards ("Gift card", "Voucher", "Store credit")
+- Split/multiple payments ("Split payment", "Partial card, partial cash")
+- Payment logos or icons
+- Words like 'CASH', 'CARD', 'DEBIT', 'CREDIT', 'TRANSFER', 'MOBILE', 'CONTACTLESS', etc.
+
+If multiple payment methods are detected, return the most likely one in 'payment_method', and list alternatives in 'payment_method_alternatives' (array).
+If the method is not explicit, make an educated guess based on these clues and the context. If truly unknown, return 'Other'.
+
+Also include:
+- 'payment_method_reason': a short explanation of why you chose this method.
+- 'payment_method_confidence': a value from 0 (low) to 1 (high) indicating your confidence in the guess.
 
 For currency detection, look for:
 - Currency symbols (€, $, £, ¥, etc.)
@@ -1220,29 +1233,7 @@ For currency detection, look for:
 - Currency mentioned in the payment section
 - Currency symbols next to prices
 
-For payment method, look for:
-- Credit/Debit card logos or names
-- Cash indicators
-- Mobile payment symbols (Apple Pay, Google Pay, etc.)
-- Contactless payment indicators
-
-Reply with a JSON object enclosed in triple backticks like this:
-\`\`\`json
-{
-  "store": "Store Name",
-  "amount": "23.50",
-  "date": "13/06/2025",
-  "category": "Category Name",
-  "payment_method": "Payment Method",
-  "currency": "EUR",
-  "items": [
-    {"name": "Item 1", "price": "10.00"},
-    {"name": "Item 2", "price": "13.50"}
-  ]
-}
-\`\`\`
-
-Note: For currency, return the standard 3-letter currency code (e.g., EUR, USD, GBP, JPY) based on the detected currency.`
+Reply with a JSON object enclosed in triple backticks like this:\n\`\`\`json\n{\n  \"store\": \"Store Name\",\n  \"amount\": \"23.50\",\n  \"subtotal\": \"20.00\",\n  \"date\": \"13/06/2025\",\n  \"category\": \"Category Name\",\n  \"payment_method\": \"Credit Card\",\n  \"payment_method_alternatives\": [\"Cash\", \"Mobile Pay\"],\n  \"payment_method_reason\": \"Found 'VISA' and card number ****1234 on the receipt.\",\n  \"payment_method_confidence\": 0.95,\n  \"currency\": \"EUR\",\n  \"items\": [\n    {\"name\": \"Item 1\", \"price\": \"10.00\"},\n    {\"name\": \"Discount\", \"price\": "-2.00\"},\n    {\"name\": \"Item 2\", \"price\": \"13.50\"}\n  ]\n}\n\`\`\`\n\nNote: For currency, return the standard 3-letter currency code (e.g., EUR, USD, GBP, JPY) based on the detected currency.`
                 },
                 { type: "image_url", image_url: { url: base64 } }
               ]
@@ -1265,18 +1256,33 @@ Note: For currency, return the standard 3-letter currency code (e.g., EUR, USD, 
       const parsedJSON = JSON.parse(jsonMatch[1]);
 
       // Update form data with the extracted information
+      // Extra validation: ensure all discount items have negative prices
+      const discountKeywords = [
+        'discount', 'rabatt', 'descuento', 'remise', 'sconto', 'desconto', 'skonto'
+      ];
+      const normalizedItems = (parsedJSON.items || []).map(item => {
+        if (!item.name) return item;
+        const nameLower = item.name.toLowerCase();
+        const isDiscount = discountKeywords.some(keyword => nameLower.includes(keyword));
+        let price = item.price;
+        if (isDiscount && price) {
+          // Remove currency symbols and spaces, convert to number
+          let num = parseFloat(price.toString().replace(/[^\d.-]/g, ''));
+          if (isNaN(num)) return item;
+          if (num > 0) num = -num;
+          price = num.toFixed(2);
+        }
+        return { ...item, price };
+      });
       setFormData(prev => ({
         ...prev,
         merchant: parsedJSON.store || '',
         total: parsedJSON.amount ? parsedJSON.amount.replace(/[^\d.,]/g, '').replace(',', '.') : '',
-        date: parsedJSON.date ? normalizeDate(parsedJSON.date) : '',
+        date: parsedJSON.date ? normalizeDate(parsedJSON.date) : new Date().toISOString().split('T')[0],
         category: parsedJSON.category || '',
         paymentMethod: parsedJSON.payment_method || '',
         currency: parsedJSON.currency || 'EUR', // Use detected currency or default to EUR
-        items: parsedJSON.items?.map(item => ({
-          name: item.name || '',
-          price: item.price ? item.price.replace(/[^\d.,]/g, '').replace(',', '.') : ''
-        })) || []
+        items: normalizedItems
       }));
 
       setCurrentStep('receipt_form');
@@ -1444,11 +1450,11 @@ Note: For currency, return the standard 3-letter currency code (e.g., EUR, USD, 
     <div className={`relative flex flex-col items-center w-full ${className}`} style={{ touchAction: 'manipulation', overflowX: 'hidden' }}>
       {/* Loading Overlay */}
       {isLoading && (
-        <div className="fixed inset-0 z-[9999] bg-black/80 backdrop-blur-sm flex flex-col items-center justify-center">
-          <div className="bg-slate-800 p-8 rounded-xl shadow-2xl border border-blue-400/20 max-w-md w-full mx-4 text-center">
+        <div className="fixed inset-0 z-[9999] bg-black/80 backdrop-blur-sm flex flex-col items-center justify-center overflow-visible max-h-none">
+          <div className="bg-slate-800 p-8 rounded-xl shadow-2xl border border-blue-400/20 max-w-md w-full mx-4 text-center overflow-visible max-h-none">
             {/* Receipt Animation */}
-            <div className="relative h-20 mb-6 flex items-center justify-center">
-              <div className="absolute w-24 h-32 bg-white rounded-lg shadow-lg transform -rotate-6 animate-bounce-slow">
+            <div className="relative h-20 mb-6 flex items-center justify-center overflow-visible max-h-none">
+              <div className="absolute w-24 h-32 bg-white rounded-lg shadow-lg transform -rotate-6 animate-bounce-slow overflow-visible max-h-none">
                 <div className="p-2">
                   <div className="h-2 bg-gray-200 rounded w-3/4 mb-1 animate-pulse"></div>
                   <div className="h-2 bg-gray-200 rounded w-1/2 mb-1 animate-pulse"></div>
@@ -1457,7 +1463,7 @@ Note: For currency, return the standard 3-letter currency code (e.g., EUR, USD, 
                   <div className="h-2 bg-gray-200 rounded w-1/2 mb-1 animate-pulse"></div>
                 </div>
               </div>
-              <div className="absolute w-24 h-32 bg-white rounded-lg shadow-lg transform rotate-6 animate-bounce-slow-delayed">
+              <div className="absolute w-24 h-32 bg-white rounded-lg shadow-lg transform rotate-6 animate-bounce-slow-delayed overflow-visible max-h-none">
                 <div className="p-2">
                   <div className="h-2 bg-gray-200 rounded w-3/4 mb-1 animate-pulse"></div>
                   <div className="h-2 bg-gray-200 rounded w-1/2 mb-1 animate-pulse"></div>
@@ -1611,18 +1617,32 @@ Note: For currency, return the standard 3-letter currency code (e.g., EUR, USD, 
           }}
         >
           <DialogContent 
-            className="w-[95vw] max-w-lg md:max-w-2xl bg-gradient-to-b from-blue-900 via-slate-900/95 to-slate-900 text-white border-none p-4 md:p-8 rounded-2xl shadow-2xl animate-fade-in-up overflow-hidden max-h-[90vh] z-50 flex flex-col"
+            className="w-[90vw] max-w-lg md:max-w-2xl bg-gradient-to-b from-blue-900 via-slate-900/95 to-slate-900 text-white border-none p-1 md:p-4 rounded-2xl shadow-2xl animate-fade-in-up overflow-visible max-h-[90vh] z-50 flex flex-col"
             style={{ touchAction: 'manipulation', backdropFilter: 'blur(10px)' }}
             onPointerDownOutside={e => e.preventDefault()}
             onInteractOutside={e => e.preventDefault()}
           >
-            <DialogHeader className="mb-2 animate-fade-in duration-300 ease-in-out">
+            <DialogHeader className="mb-1 animate-fade-in duration-300 ease-in-out">
               <DialogTitle className="text-xl md:text-2xl font-bold text-blue-200 text-center tracking-tight">{editingReceipt ? 'Edit Receipt' : 'New Receipt'}</DialogTitle>
               <DialogDescription className="text-blue-300/80 text-center text-sm md:text-base">{editingReceipt ? 'Edit your receipt details below.' : 'Enter your receipt details below.'}</DialogDescription>
             </DialogHeader>
-            <ScrollArea className="flex-1 pr-2 overflow-y-auto max-h-[60vh] pb-24 animate-fade-in duration-300 ease-in-out">
-              <form onSubmit={handleSaveReceiptSubmit} autoComplete="off" className="space-y-6 md:space-y-8 px-1 md:px-0">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 animate-fade-in duration-200 ease-in-out">
+            <div className="flex-1 overflow-y-auto max-h-[55vh] px-0 md:px-0">
+              <form onSubmit={handleSaveReceiptSubmit} autoComplete="off" className="space-y-2 md:space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-1 md:gap-2 animate-fade-in duration-200 ease-in-out">
+                  {/* Date Field - world class UX/UI */}
+                  <div className="space-y-2">
+                    <Label htmlFor="date">Date</Label>
+                    <Input
+                      id="date"
+                      name="date"
+                      type="date"
+                      value={activeFormData.date}
+                      onChange={handleFormInputChange}
+                      className="w-full bg-slate-800/90 border border-blue-700/40 text-white focus:border-blue-400 focus:ring-2 focus:ring-blue-400 focus:bg-blue-950/80 transition-all duration-200 ease-in-out rounded-xl shadow-inner px-4 py-3 text-base placeholder-blue-200/60 outline-none"
+                    />
+                    {formErrors.date && <p className="text-red-400 text-xs mt-1 animate-fade-in duration-200 ease-in-out">{formErrors.date}</p>}
+                  </div>
+                  {/* Merchant Field */}
                   <div className="space-y-2">
                     <Label htmlFor="merchant">Merchant</Label>
                     <Input
@@ -1683,9 +1703,15 @@ Note: For currency, return the standard 3-letter currency code (e.g., EUR, USD, 
                       <SelectTrigger className="w-full bg-slate-800/90 border border-blue-700/40 text-white focus:border-blue-400 focus:ring-2 focus:ring-blue-400 focus:bg-blue-950/80 transition-all duration-200 ease-in-out rounded-xl shadow-inner px-4 py-3 text-base placeholder-blue-200/60 outline-none">
                         <SelectValue placeholder="Select payment method" />
                       </SelectTrigger>
-                      <SelectContent className="bg-blue-950 text-white border-blue-700/40">
+                      <SelectContent className="bg-blue-950 text-white border-blue-700/40 shadow-xl rounded-xl animate-fade-in-up">
                         {['Cash', 'Credit Card', 'Debit Card', 'Mobile Pay', 'Bank Transfer', 'Other'].map(method => (
-                          <SelectItem key={method} value={method}>{method}</SelectItem>
+                          <SelectItem
+                            key={method}
+                            value={method}
+                            className="text-white bg-blue-950 hover:bg-blue-800 focus:bg-blue-800 data-[state=checked]:bg-blue-900 data-[state=checked]:text-blue-200 transition-colors duration-150 rounded-lg px-4 py-3 cursor-pointer text-base"
+                          >
+                            {method}
+                          </SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
@@ -1788,8 +1814,8 @@ Note: For currency, return the standard 3-letter currency code (e.g., EUR, USD, 
                   {formErrors.items && <p className="text-red-400 text-xs mt-1 animate-fade-in duration-200 ease-in-out">{formErrors.items}</p>}
           </div>
               </form>
-            </ScrollArea>
-            <div className="flex justify-end gap-4 pt-6 border-t border-blue-700/30 mt-8 bg-transparent">
+            </div>
+            <div className="flex justify-end gap-2 pt-2 border-t border-blue-700/30 mt-2 bg-transparent">
                 <Button
                     type="button" 
                     variant="secondary" 
