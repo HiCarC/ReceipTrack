@@ -32,6 +32,11 @@ import {
 import {
   ScrollArea,
 } from "./ui/scroll-area";
+import { Doughnut, Line, Pie, Bar } from 'react-chartjs-2';
+import { Chart, ArcElement, Tooltip, Legend, CategoryScale, LinearScale, PointElement, LineElement, TimeScale, Filler, BarElement } from 'chart.js';
+import { CircularProgressbarWithChildren, buildStyles } from 'react-circular-progressbar';
+import 'react-circular-progressbar/dist/styles.css';
+Chart.register(ArcElement, Tooltip, Legend, CategoryScale, LinearScale, PointElement, LineElement, TimeScale, Filler, BarElement);
 
 // Define supported currencies
 const SUPPORTED_CURRENCIES = [
@@ -443,6 +448,7 @@ export default function ReceiptUploader({ className }) {
         title: "Receipt Deleted! 🗑️",
         description: "The receipt has been successfully removed.",
       });
+      await fetchReceipts();
     } catch (error) {
       console.error("Error deleting receipt:", error);
       toast({
@@ -645,7 +651,7 @@ export default function ReceiptUploader({ className }) {
       setFile(null);
       setPreviewImageSrc(null);
       setCurrentStep('upload_options');
-      fetchReceipts();
+      await fetchReceipts();
     } catch (error) {
       console.error("Error saving receipt:", error);
       toast({
@@ -735,16 +741,16 @@ export default function ReceiptUploader({ className }) {
       const updatedReceiptData = {
         userId: user.uid, // Use userId for consistency
         merchant: editForm.merchant,
-        total: parsedTotal.toFixed(2), // Store as string with 2 decimal places
-        subtotal: parsedSubtotal ? parsedSubtotal.toFixed(2) : undefined, // Store as string with 2 decimal places
-        tax: parseFloat(taxAmount).toFixed(2), // Ensure tax is also 2 decimal places
+        total: parsedTotal, // Store as number
+        subtotal: parsedSubtotal ? parsedSubtotal : undefined, // Store as number
+        tax: parseFloat(taxAmount), // Store as number
         transactionDate: editForm.date, // Use transactionDate for consistency
         category: editForm.category,
         paymentMethod: editForm.payment_method,
         currency: editForm.currency || editingReceipt.currency || settings.baseCurrency,
         items: editForm.items.map(item => ({
           name: item.name,
-          price: parseFloat(item.price).toFixed(2) // Ensure item prices are 2 decimal places
+          price: parseFloat(item.price) // Store as number
         })),
         updated_at: serverTimestamp()
       };
@@ -759,7 +765,7 @@ export default function ReceiptUploader({ className }) {
       setEditingReceipt(null);
       setIsEditing(false);
       setCurrentStep('upload_options');
-      fetchReceipts();
+      await fetchReceipts();
     } catch (error) {
       console.error("Error updating receipt:", error);
       toast({
@@ -951,7 +957,7 @@ export default function ReceiptUploader({ className }) {
         </div>
         <Card
           id={`receipt-card-${receipt.id}`}
-          key={receipt.id}
+          key={receipt.id || receipt._id || receipt.date+receipt.merchant+receipt.total}
           style={{
             minHeight: 96,
             transform: `translateX(${swipeOffset[receipt.id] || 0}px)`, // Only Card moves
@@ -1422,7 +1428,7 @@ Reply with a JSON object enclosed in triple backticks like this:\n\`\`\`json\n{\
         setPendingDeleteId(id);
         setShowDeleteModal(true);
       }, 150);
-    } else {
+      } else {
       setSwipeOffset(prev => ({ ...prev, [id]: 0 }));
       setSwipeStartX(prev => ({ ...prev, [id]: undefined }));
     }
@@ -1445,6 +1451,34 @@ Reply with a JSON object enclosed in triple backticks like this:\n\`\`\`json\n{\
   // Add these hooks for swipe gesture state
   const [swipeOffset, setSwipeOffset] = useState({});
   const [swipeStartX, setSwipeStartX] = useState({});
+
+  // --- Date helpers ---
+  const today = new Date();
+  const weekStart = new Date(today);
+  weekStart.setHours(0, 0, 0, 0);
+  weekStart.setDate(today.getDate() - today.getDay()); // Sunday (local)
+  const weekEnd = new Date(weekStart);
+  weekEnd.setDate(weekStart.getDate() + 6); // Saturday
+  weekEnd.setHours(23, 59, 59, 999); // End of day
+
+  // Helper to robustly normalize a date string/object to local midnight
+  const normalizeToLocalMidnight = (d) => {
+    if (!d) return null;
+    if (typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d)) {
+      // Parse as local date (YYYY-MM-DD)
+      const [year, month, day] = d.split('-').map(Number);
+      return new Date(year, month - 1, day);
+    }
+    const date = new Date(d);
+    if (isNaN(date)) return null;
+    return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  };
+
+  // Filter receipts for current week (inclusive)
+  const weekReceipts = receipts.filter(r => {
+    const d = normalizeToLocalMidnight(r.date || r.transactionDate || r.createdAt);
+    return d && d >= weekStart && d <= weekEnd;
+  });
 
   return (
     <div className={`relative flex flex-col items-center w-full ${className}`} style={{ touchAction: 'manipulation', overflowX: 'hidden' }}>
@@ -1499,14 +1533,15 @@ Reply with a JSON object enclosed in triple backticks like this:\n\`\`\`json\n{\
           </p>
         </div>
 
-        <div className="flex flex-col md:flex-row gap-4 md:gap-8 w-full max-w-full" style={{ overflowX: 'hidden' }}>
-          {/* Choose Upload Method Card */}
-          <Card className="w-full md:w-1/3 p-4 md:p-6 flex flex-col items-center justify-start gap-4 md:gap-6 bg-slate-800/80 text-white shadow-2xl rounded-xl border border-blue-400/20">
+        {/* Responsive row layout for laptop/desktop, column for mobile */}
+        <div className="flex flex-col md:flex-row gap-8 w-full max-w-full items-start justify-center mb-8" style={{ overflowX: 'hidden' }}>
+          {/* Upload Method Card */}
+          <div className="w-full md:w-1/3 flex flex-col items-center mb-8 md:mb-0">
+            <Card className="w-full p-4 md:p-6 flex flex-col items-center justify-start gap-4 bg-slate-800/80 text-white shadow-2xl rounded-xl border border-blue-400/20">
             <CardHeader className="w-full text-center p-0 mb-4">
-              <CardTitle className="text-xl md:text-2xl font-bold text-blue-100">Choose Upload Method</CardTitle>
+                <CardTitle className="text-xl md:text-2xl font-bold text-blue-100">Choose Upload Method</CardTitle>
             </CardHeader>
             <CardContent className="w-full flex flex-col items-center justify-center gap-4 p-0">
-              {file && <p className="text-sm text-gray-400 mb-2">File: {file.name}</p>}
                   <input
                     type="file"
                 id="fileInput"
@@ -1517,7 +1552,7 @@ Reply with a JSON object enclosed in triple backticks like this:\n\`\`\`json\n{\
                   />
                 <Button
                 onClick={() => document.getElementById('fileInput').click()}
-                className="w-full bg-blue-700 text-white font-semibold py-3 rounded-xl hover:bg-blue-800 transition-all duration-300 ease-in-out transform hover:scale-105 flex items-center justify-center gap-2 shadow-lg"
+                  className="w-full bg-blue-700 text-white font-semibold py-3 rounded-xl hover:bg-blue-800 transition-all duration-300 ease-in-out transform hover:scale-105 flex items-center justify-center gap-2 shadow-lg overflow-hidden"
                 >
                 <Upload className="h-5 w-5" />
                 Upload File
@@ -1526,52 +1561,40 @@ Reply with a JSON object enclosed in triple backticks like this:\n\`\`\`json\n{\
                 onClick={() => {
                   setIsCameraOpen(true);
                 }}
-                className="w-full bg-blue-700 text-white font-semibold py-3 rounded-xl hover:bg-blue-800 transition-all duration-300 ease-in-out transform hover:scale-105 flex items-center justify-center gap-2 shadow-lg"
+                  className="w-full bg-blue-700 text-white font-semibold py-3 rounded-xl hover:bg-blue-800 transition-all duration-300 ease-in-out transform hover:scale-105 flex items-center justify-center gap-2 shadow-lg overflow-hidden"
               >
                 <Camera className="h-5 w-5" />
                 Take Photo
               </Button>
               <Button
-                onClick={handleManualEntry}
-                className="w-full bg-blue-700 text-white font-semibold py-3 rounded-xl hover:bg-blue-800 transition-all duration-300 ease-in-out transform hover:scale-105 flex items-center justify-center gap-2 shadow-lg"
+                  onClick={handleManualEntry}
+                  className="w-full bg-blue-700 text-white font-semibold py-3 rounded-xl hover:bg-blue-800 transition-all duration-300 ease-in-out transform hover:scale-105 flex items-center justify-center gap-2 shadow-lg overflow-hidden"
               >
                 <List className="h-5 w-5" />
                 Enter Manually
               </Button>
             </CardContent>
           </Card>
+          </div>
 
-          {/* Combined Total Expenses and Your Receipts Card */}
-          <Card className="w-full md:w-2/3 p-4 md:p-6 flex flex-col items-center justify-start gap-4 md:gap-6 bg-slate-800/80 text-white shadow-2xl rounded-xl border border-blue-400/20">
+          {/* Financial Overview Card */}
+          <div className="w-full md:w-1/3 flex flex-col items-center mb-8 md:mb-0">
+            <ExpensesDashboard
+              totalExpenses={totalExpenses}
+              categoryTotals={categoryTotals}
+              formatCurrency={formatCurrency}
+              settings={settings}
+              receipts={receipts}
+            />
+          </div>
+
+          {/* Your Receipts Card */}
+          <div className="w-full md:w-1/3 flex flex-col items-center">
+            <Card className="w-full p-4 md:p-6 flex flex-col items-center justify-start gap-4 bg-slate-800/80 text-white shadow-2xl rounded-xl border border-blue-400/20">
             <CardHeader className="w-full text-center p-0 mb-4">
-              <CardTitle className="text-xl md:text-2xl font-bold text-blue-100">Your Financial Overview</CardTitle>
+                <CardTitle className="text-xl font-bold text-blue-100">Your Receipts</CardTitle>
             </CardHeader>
             <CardContent className="w-full flex flex-col items-center justify-center p-0">
-              {/* Total Expenses Section */}
-              <div className="w-full text-center mb-6">
-                <p className="text-sm text-gray-400">Total Expenses</p>
-                <p className="text-4xl md:text-5xl font-extrabold text-indigo-400 mb-4">
-                  {formatCurrency(totalExpenses, settings?.baseCurrency || 'EUR')}
-                </p>
-                <div className="space-y-2 w-full px-2 md:px-4">
-                  {Object.entries(categoryTotals).length > 0 ? (
-                    Object.entries(categoryTotals)
-                      .sort(([, amountA], [, amountB]) => amountB - amountA) // Sort by amount descending
-                      .map(([category, amount]) => (
-                        <div key={category} className="flex justify-between items-center text-gray-300 text-sm">
-                          <span className="truncate">{category}</span>
-                          <span className="ml-2">{formatCurrency(amount, settings?.baseCurrency || 'EUR')}</span>
-                </div>
-                      ))
-                  ) : (
-                    <p className="text-center text-gray-400 text-md">No categorized expenses yet.</p>
-                  )}
-                        </div>
-              </div>
-
-              {/* Your Receipts Section */}
-              <div className="w-full mt-6">
-                <h2 className="text-xl font-bold text-blue-100 text-center mb-4">Your Receipts</h2>
                 {isFirestoreLoading ? (
                   <div className="flex flex-col items-center justify-center text-gray-400">
                     <Loader2 className="h-8 w-8 animate-spin mb-2" />
@@ -1593,13 +1616,12 @@ Reply with a JSON object enclosed in triple backticks like this:\n\`\`\`json\n{\
                     </div>
                 ) : (
                   <div className="grid grid-cols-1 gap-4 w-full max-h-[400px] overflow-y-auto overflow-x-hidden mb-12">
-                    {console.log('Rendering receipts. Current settings for map:', settings)}
-                    {receipts.map(renderReceiptCard)}
+                    {receipts.map((receipt) => renderReceiptCard(receipt))}
                     </div>
                 )}
-              </div>
             </CardContent>
           </Card>
+          </div>
         </div>
 
         {/* Receipt Form Modal (for Manual Entry and OCR-populated forms) */}
@@ -1967,6 +1989,379 @@ Reply with a JSON object enclosed in triple backticks like this:\n\`\`\`json\n{\
           </div>
         </DialogContent>
       </Dialog>
+      {/* Insights Section */}
+      <InsightsSection
+        receipts={receipts}
+        categoryTotals={categoryTotals}
+        formatCurrency={formatCurrency}
+        settings={settings}
+      />
+    </div>
+  );
+}
+
+// Place these at the very end of the file, after the main ReceiptUploader function:
+
+export function UploadMethodModal({
+  file,
+  fileInputRef,
+  handleImageChange,
+  onUploadFile,
+  onTakePhoto,
+  onManualEntry,
+  className = '',
+}) {
+  return (
+    <Card className={`w-full p-4 flex flex-col items-center justify-start gap-4 bg-slate-800/80 text-white shadow-2xl rounded-xl border border-blue-400/20 ${className}`}>
+      <CardHeader className="w-full text-center p-0 mb-4">
+        <CardTitle className="text-xl font-bold text-blue-100">Choose Upload Method</CardTitle>
+      </CardHeader>
+      <CardContent className="w-full flex flex-col items-center justify-center gap-4 p-0">
+        <input
+          type="file"
+          id="fileInput"
+          ref={fileInputRef}
+          onChange={handleImageChange}
+          accept="image/*"
+          className="hidden"
+        />
+        <Button
+          onClick={onUploadFile}
+          className="w-full bg-blue-700 text-white font-semibold py-3 rounded-xl hover:bg-blue-800 transition-all duration-300 ease-in-out transform hover:scale-105 flex items-center justify-center gap-2 shadow-lg overflow-hidden"
+        >
+          <Upload className="h-5 w-5" />
+          Upload File
+        </Button>
+        <Button
+          onClick={onTakePhoto}
+          className="w-full bg-blue-700 text-white font-semibold py-3 rounded-xl hover:bg-blue-800 transition-all duration-300 ease-in-out transform hover:scale-105 flex items-center justify-center gap-2 shadow-lg overflow-hidden"
+        >
+          <Camera className="h-5 w-5" />
+          Take Photo
+        </Button>
+        <Button
+          onClick={onManualEntry}
+          className="w-full bg-blue-700 text-white font-semibold py-3 rounded-xl hover:bg-blue-800 transition-all duration-300 ease-in-out transform hover:scale-105 flex items-center justify-center gap-2 shadow-lg overflow-hidden"
+        >
+          <List className="h-5 w-5" />
+          Enter Manually
+        </Button>
+      </CardContent>
+    </Card>
+  );
+}
+
+export function ExpensesDashboard({ totalExpenses, categoryTotals, formatCurrency, settings, receipts = [] }) {
+  // --- Semi-Circle Doughnut Data ---
+  const categoryLabels = Object.keys(categoryTotals);
+  const categoryData = Object.values(categoryTotals);
+  const categoryColors = [
+    '#6366F1', '#22D3EE', '#F472B6', '#FBBF24', '#34D399', '#818CF8', '#F87171', '#A3E635', '#F59E42', '#60A5FA', '#F43F5E', '#10B981', '#EAB308', '#8B5CF6', '#FDE68A', '#FCA5A5', '#6EE7B7', '#F9A8D4', '#FCD34D', '#C7D2FE'
+  ];
+  const doughnutData = {
+    labels: categoryLabels,
+    datasets: [
+      {
+        data: categoryData,
+        backgroundColor: categoryLabels.map((_, i) => categoryColors[i % categoryColors.length]),
+        borderWidth: 3,
+        borderColor: '#181e2a',
+        hoverBorderColor: '#6366F1',
+      },
+    ],
+  };
+  // --- UI ---
+  return (
+    <div className="w-full max-w-2xl mx-auto mt-4 mb-4 px-2">
+      <div className="bg-slate-800/80 text-white shadow-2xl rounded-xl border border-blue-400/20 p-6 flex flex-col items-center" style={{overflow: 'hidden', minHeight: 380, maxHeight: 420}}>
+        {/* Modern Semi-Circle Doughnut Chart */}
+        <div className="w-full flex flex-col items-center justify-center mb-6 relative" style={{height: 140, overflow: 'hidden', maxHeight: 180}}>
+          <Doughnut
+            data={doughnutData}
+            options={{
+              circumference: 180,
+              rotation: -90,
+              cutout: '80%',
+              plugins: {
+                legend: { display: false },
+                tooltip: {
+                  callbacks: {
+                    label: ctx => {
+                      const value = ctx.raw;
+                      const total = ctx.dataset.data.reduce((a, b) => a + b, 0);
+                      const percent = ((value / total) * 100).toFixed(1);
+                      return `${ctx.label}: ${formatCurrency(value, settings?.baseCurrency || 'EUR')} (${percent}%)`;
+                    },
+                  },
+                  backgroundColor: '#22223b',
+                  titleColor: '#fff',
+                  bodyColor: '#fff',
+                  borderColor: '#6366F1',
+                  borderWidth: 1,
+                  displayColors: false,
+                  padding: 12,
+                },
+              },
+              elements: {
+                arc: {
+                  borderCapStyle: 'round',
+                  borderJoinStyle: 'round',
+                  borderRadius: 99,
+                  shadowBlur: 10,
+                  shadowColor: 'rgba(99,102,241,0.18)',
+                },
+              },
+              responsive: true,
+              maintainAspectRatio: false,
+            }}
+            height={140}
+            style={{overflow: 'hidden'}}
+          />
+          {/* Centered stats overlay */}
+          <div className="absolute left-0 right-0 top-0 flex flex-col items-center justify-center pointer-events-none" style={{height: 100, marginTop: 30, overflow: 'hidden'}}>
+            <div className="text-xs font-semibold text-gray-300 mb-1 tracking-wide" style={{letterSpacing: 1}}>TOTAL SPENT</div>
+            <div className="text-2xl md:text-3xl font-extrabold text-indigo-200 mb-1 text-center" style={{overflow: 'hidden', whiteSpace: 'nowrap', maxWidth: '100%'}}>{formatCurrency(totalExpenses, settings?.baseCurrency || 'EUR')}</div>
+            <div className="text-xs text-gray-400">{categoryLabels.length} categories</div>
+          </div>
+        </div>
+        {/* Category Cards Grid (unchanged) */}
+        <div className="w-full grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+          {Object.entries(categoryTotals).map(([cat, amt]) => {
+            const percent = Math.min(100, Math.round((amt / totalExpenses) * 100));
+            const color = categoryColors[categoryLabels.indexOf(cat) % categoryColors.length];
+            const emoji = cat === 'Groceries' ? '🛒' : cat === 'Dining' ? '🍽️' : cat === 'Transport' ? '🚌' : cat === 'Bills' ? '💡' : cat === 'Entertainment' ? '🎬' : cat === 'Health' ? '💊' : cat === 'Family' ? '👨‍👩‍👧‍👦' : '💸';
+            const daysLeft = cat === 'Groceries' ? 20 : cat === 'Dining' ? 7 : cat === 'Transport' ? 6 : cat === 'Bills' ? 15 : 10;
+            return (
+              <div key={cat} className="rounded-2xl bg-slate-900/80 shadow-lg p-4 flex flex-col gap-2 items-start border border-blue-400/10 relative overflow-hidden">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-2xl">{emoji}</span>
+                  <span className="font-semibold text-base text-white/90">{cat}</span>
+                  <span className="ml-auto text-xs text-gray-400">{daysLeft} days left</span>
+                </div>
+                <div className="flex items-end gap-2">
+                  <span className="text-2xl font-extrabold text-white">{formatCurrency(amt, settings?.baseCurrency || 'EUR')}</span>
+                  <span className="text-xs text-green-400 font-bold">{percent}%</span>
+                </div>
+                {/* Progress Bar */}
+                <div className="w-full h-2 rounded-full bg-slate-700/60 mt-1 mb-1 overflow-hidden">
+                  <div
+                    className="h-2 rounded-full transition-all duration-700"
+                    style={{ width: `${percent}%`, background: color, boxShadow: `0 0 8px 0 ${color}80` }}
+                  ></div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function ReceiptsList({ receipts, renderReceiptCard, isFirestoreLoading, firestoreError, fetchReceipts, currentFunnyMessage, settings }) {
+  return (
+    <div className="w-full max-w-2xl mx-auto mt-4 mb-4 px-2">
+      <div className="bg-slate-800/80 text-white shadow-2xl rounded-xl border border-blue-400/20 p-6 flex flex-col items-center">
+        <h2 className="text-xl font-bold text-blue-100 mb-4">Your Receipts</h2>
+        {isFirestoreLoading ? (
+          <div className="flex flex-col items-center justify-center text-gray-400">
+            <Loader2 className="h-8 w-8 animate-spin mb-2" />
+            <p>{currentFunnyMessage}</p>
+          </div>
+        ) : firestoreError ? (
+          <div className="text-center text-red-400">
+            <XCircle className="h-8 w-8 mx-auto mb-2" />
+            <p>{firestoreError}</p>
+            <Button onClick={fetchReceipts} className="mt-4">Try Again</Button>
+          </div>
+        ) : receipts.length === 0 ? (
+          <div className="text-center">
+            <p className="text-xl text-slate-400 font-semibold mb-2">No receipts yet!</p>
+            <p className="text-md text-slate-500">
+              It's a blank canvas for your financial journey. <br />
+              Start by <span className="text-blue-400 font-medium">uploading your first receipt</span> or <span className="text-blue-400 font-medium">adding one manually</span>.
+            </p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 gap-4 w-full max-h-[400px] overflow-y-auto overflow-x-hidden mb-4">
+            {receipts.map((receipt) => renderReceiptCard(receipt))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function InsightsSection({ receipts = [], categoryTotals = {}, formatCurrency, settings }) {
+  const [period, setPeriod] = useState('week');
+
+  // --- Date helpers ---
+  const today = new Date();
+  let periodStart, periodEnd, periodLabel;
+  if (period === 'week') {
+    periodStart = new Date(today);
+    periodStart.setHours(0, 0, 0, 0);
+    periodStart.setDate(today.getDate() - today.getDay()); // Sunday (local)
+    periodEnd = new Date(periodStart);
+    periodEnd.setDate(periodStart.getDate() + 6); // Saturday
+    periodEnd.setHours(23, 59, 59, 999);
+    const formatShort = d => d.toLocaleDateString(undefined, { day: '2-digit', month: 'short' });
+    periodLabel = `${formatShort(periodStart)} - ${formatShort(periodEnd)}`;
+  } else {
+    periodStart = new Date(today.getFullYear(), today.getMonth(), 1, 0, 0, 0, 0);
+    periodEnd = new Date(today.getFullYear(), today.getMonth() + 1, 0, 23, 59, 59, 999);
+    const formatShort = d => d.toLocaleDateString(undefined, { day: '2-digit', month: 'short' });
+    periodLabel = `${formatShort(periodStart)} - ${formatShort(periodEnd)}`;
+  }
+
+  // Helper to robustly normalize a date string/object to local midnight
+  const normalizeToLocalMidnight = (d) => {
+    if (!d) return null;
+    if (typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d)) {
+      // Parse as local date (YYYY-MM-DD)
+      const [year, month, day] = d.split('-').map(Number);
+      return new Date(year, month - 1, day);
+    }
+    const date = new Date(d);
+    if (isNaN(date)) return null;
+    return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  };
+
+  // Filter receipts for selected period (inclusive)
+  const periodReceipts = receipts.filter(r => {
+    const d = normalizeToLocalMidnight(r.transactionDate || r.date || r.createdAt);
+    return d && d >= periodStart && d <= periodEnd;
+  });
+
+  const weekDays = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+  // Group receipts by day of week (for week) or by day of month (for month)
+  let dailyTotals;
+  if (period === 'week') {
+    dailyTotals = Array(7).fill(0);
+    periodReceipts.forEach(r => {
+      const date = new Date(r.date || r.transactionDate || r.createdAt || '');
+      if (!isNaN(date)) {
+        const day = date.getDay();
+        dailyTotals[day] += parseFloat(r.total) || 0;
+      }
+    });
+  } else {
+    const daysInMonth = periodEnd.getDate();
+    dailyTotals = Array(daysInMonth).fill(0);
+    periodReceipts.forEach(r => {
+      const date = new Date(r.date || r.transactionDate || r.createdAt || '');
+      if (!isNaN(date)) {
+        const day = date.getDate() - 1;
+        dailyTotals[day] += parseFloat(r.total) || 0;
+      }
+    });
+  }
+  const expenses = dailyTotals.reduce((a, b) => a + b, 0);
+  const spentPerDay = period === 'week' ? expenses / 7 : expenses / dailyTotals.length;
+  // Category legend (for period)
+  const periodCategoryTotals = periodReceipts.reduce((acc, r) => {
+    const cat = r.category || 'Uncategorized';
+    const amt = parseFloat(r.total) || 0;
+    acc[cat] = (acc[cat] || 0) + amt;
+    return acc;
+  }, {});
+  const categoryLabels = Object.keys(periodCategoryTotals);
+  const categoryColors = [
+    '#a78bfa', '#f472b6', '#3b82f6', '#60a5fa', '#fbbf24', '#10b981', '#818cf8', '#f59e42', '#6366F1', '#22D3EE', '#F472B6', '#FBBF24', '#34D399', '#818CF8', '#F87171', '#A3E635', '#F59E42', '#F43F5E', '#10B981', '#EAB308', '#8B5CF6', '#FDE68A', '#FCA5A5', '#6EE7B7', '#F9A8D4', '#FCD34D', '#C7D2FE'
+  ];
+  const total = expenses;
+  // Bar chart data
+  const barData = {
+    labels: period === 'week' ? weekDays : Array.from({length: dailyTotals.length}, (_, i) => (i+1).toString()),
+    datasets: [
+      {
+        label: 'Expenses',
+        data: dailyTotals,
+        backgroundColor: '#6366f1',
+        borderRadius: 12,
+        barPercentage: 0.6,
+        categoryPercentage: 0.7,
+        borderSkipped: false,
+      },
+    ],
+  };
+  // Bar chart options (unchanged)
+  const barOptions = {
+    plugins: {
+      legend: { display: false },
+      tooltip: {
+        callbacks: {
+          label: ctx => `${formatCurrency(ctx.raw, settings?.baseCurrency || 'EUR')}`,
+        },
+        backgroundColor: '#22223b',
+        titleColor: '#fff',
+        bodyColor: '#fff',
+        borderColor: '#6366F1',
+        borderWidth: 1,
+        displayColors: false,
+        padding: 12,
+      },
+    },
+    scales: {
+      x: {
+        grid: { color: '#e5e7eb', drawTicks: false, borderDash: [4, 4] },
+        ticks: { color: '#64748b', font: { size: 14, weight: 'bold' } },
+      },
+      y: {
+        grid: { color: '#e5e7eb', drawTicks: false, borderDash: [4, 4] },
+        ticks: { color: '#64748b', font: { size: 12 }, stepSize: 30 },
+        beginAtZero: true,
+        max: Math.max(60, Math.ceil(Math.max(...dailyTotals) / 10) * 10),
+      },
+    },
+    responsive: true,
+    maintainAspectRatio: false,
+    animation: { duration: 1200, easing: 'easeOutQuart' },
+  };
+  // Category legend with percentages
+  const legend = categoryLabels.map((cat, i) => {
+    const percent = total ? ((periodCategoryTotals[cat] / total) * 100).toFixed(1) : 0;
+    return { name: cat, color: categoryColors[i % categoryColors.length], percent };
+  });
+  return (
+    <div className="w-full max-w-2xl mx-auto mt-2 mb-4 px-2">
+      <div className="bg-white/90 text-gray-900 shadow-xl rounded-2xl border border-gray-200 p-6 flex flex-col items-center">
+        {/* Header */}
+        <div className="w-full flex flex-row items-center justify-between mb-2">
+          <div className="text-lg font-bold">Expense Insights</div>
+          <select
+            className="bg-gray-100 rounded-lg px-2 py-1 text-sm font-semibold border border-gray-200 focus:outline-none"
+            value={period}
+            onChange={e => setPeriod(e.target.value)}
+          >
+            <option value="week">week</option>
+            <option value="month">month</option>
+          </select>
+        </div>
+        {/* Date range and stats */}
+        <div className="w-full flex flex-row items-center justify-between mb-2 text-xs font-semibold text-gray-500">
+          <span>{periodLabel}</span>
+          <span>SPENT/DAY</span>
+        </div>
+        <div className="w-full flex flex-row items-center justify-between mb-4">
+          <span className="text-2xl font-bold text-red-500">{formatCurrency(expenses, settings?.baseCurrency || 'EUR')}</span>
+          <span className="text-2xl font-bold text-gray-900">{formatCurrency(spentPerDay, settings?.baseCurrency || 'EUR')}</span>
+        </div>
+        {/* Bar Chart */}
+        <div className="w-full h-40 md:h-48 mb-2">
+          <Bar data={barData} options={barOptions} />
+        </div>
+        {/* Category Legend */}
+        <div className="flex flex-row flex-wrap items-center justify-center gap-4 mt-2 w-full">
+          {legend.map(l => (
+            <div key={l.name} className="flex items-center gap-2">
+              <span className="inline-block w-6 h-3 rounded-full" style={{background: l.color}}></span>
+              <span className="text-xs font-semibold text-gray-700">{l.name}</span>
+              <span className="text-xs text-gray-400">{l.percent}%</span>
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }
