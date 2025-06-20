@@ -1480,6 +1480,10 @@ Reply with a JSON object enclosed in triple backticks like this:\n\`\`\`json\n{\
     return d && d >= weekStart && d <= weekEnd;
   });
 
+  // In ReceiptUploader (parent):
+  const [selectedCategory, setSelectedCategory] = useState(null);
+  const [modalOpen, setModalOpen] = useState(false);
+
   return (
     <div className={`relative flex flex-col items-center w-full ${className}`} style={{ touchAction: 'manipulation', overflowX: 'hidden' }}>
       {/* Loading Overlay */}
@@ -1585,6 +1589,10 @@ Reply with a JSON object enclosed in triple backticks like this:\n\`\`\`json\n{\
               formatCurrency={formatCurrency}
               settings={settings}
               receipts={receipts}
+              selectedCategory={selectedCategory}
+              setSelectedCategory={setSelectedCategory}
+              modalOpen={modalOpen}
+              setModalOpen={setModalOpen}
             />
           </div>
 
@@ -1996,6 +2004,107 @@ Reply with a JSON object enclosed in triple backticks like this:\n\`\`\`json\n{\
         formatCurrency={formatCurrency}
         settings={settings}
       />
+      {/* Category Details Modal */}
+      <Dialog open={modalOpen} onOpenChange={setModalOpen}>
+        <DialogContent className="max-w-md w-[95vw] bg-slate-900/95 text-white rounded-2xl shadow-2xl animate-fade-in-up p-0 flex flex-col overflow-hidden">
+          {selectedCategory && (
+            <>
+              <DialogHeader className="p-6 pb-4 flex-shrink-0 border-b border-white/10">
+                <DialogTitle className="flex items-center gap-3 text-2xl font-bold text-indigo-200 tracking-tight">
+                  <span className="text-3xl flex-shrink-0">{selectedCategory.emoji}</span>
+                  <span className="truncate min-w-0">{selectedCategory.name}</span>
+                </DialogTitle>
+                <DialogDescription className="text-blue-200/80 mt-1 text-sm">
+                  Category breakdown, recent receipts, and stats.
+                </DialogDescription>
+              </DialogHeader>
+
+              <ScrollArea className="flex-1">
+                <div className="p-6 flex flex-col gap-4">
+                  {/* Amount and percent */}
+                  <div className="flex flex-row items-center justify-between mb-2">
+                    <div>
+                      <div className="text-2xl font-extrabold text-indigo-300">{formatCurrency(selectedCategory.amount, settings?.baseCurrency || 'EUR')}</div>
+                      <div className="text-xs text-gray-400">{selectedCategory.percent}% of total</div>
+                    </div>
+                    {/* Mini bar chart for this category by day (last 7 days) */}
+                    <div className="w-28 h-16 flex items-end">
+                      {/* Mini bar chart */}
+                      {(() => {
+                        // Prepare mini bar chart data for this category (last 7 days)
+                        const today = new Date();
+                        const days = Array.from({ length: 7 }, (_, i) => {
+                          const d = new Date(today);
+                          d.setDate(today.getDate() - (6 - i));
+                          return d;
+                        });
+                        const dayLabels = days.map(d => d.toLocaleDateString(undefined, { weekday: 'short' }));
+                        const dayTotals = days.map(d => {
+                          const dStr = d.toISOString().split('T')[0];
+                          return receipts.filter(r =>
+                            (r.category || 'Uncategorized') === selectedCategory.name &&
+                            (r.transactionDate === dStr || (r.transactionDate && r.transactionDate.startsWith(dStr)))
+                          ).reduce((sum, r) => sum + (parseFloat(r.total) || 0), 0);
+                        });
+                        const maxVal = Math.max(...dayTotals, 1);
+                        return (
+                          <div className="flex items-end gap-1 w-full h-full">
+                            {dayTotals.map((val, i) => (
+                              <div key={i} className="flex flex-col items-center justify-end h-full">
+                                <div
+                                  className="rounded-full"
+                                  style={{
+                                    width: 10,
+                                    height: `${Math.max(8, (val / maxVal) * 48)}px`,
+                                    background: selectedCategory.color,
+                                    opacity: val > 0 ? 1 : 0.25,
+                                    transition: 'height 0.4s cubic-bezier(.4,2,.3,1)',
+                                  }}
+                                ></div>
+                                <div className="text-[10px] text-gray-400 mt-1">{dayLabels[i][0]}</div>
+                              </div>
+                            ))}
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  </div>
+                  {/* Recent receipts for this category */}
+                  <div>
+                    <div className="text-sm font-semibold text-blue-200 mb-1">Recent Receipts</div>
+                    <div className="max-h-40 overflow-y-auto flex flex-col gap-2 pr-1">
+                      {receipts.filter(r => (r.category || 'Uncategorized') === selectedCategory.name)
+                        .sort((a, b) => {
+                          const da = new Date(a.transactionDate || a.date || a.createdAt);
+                          const db = new Date(b.transactionDate || b.date || b.createdAt);
+                          return db - da;
+                        })
+                        .slice(0, 5)
+                        .map((r, idx) => (
+                          <div key={r.id || idx} className="flex flex-row items-center justify-between bg-slate-800/80 rounded-lg px-3 py-2 shadow-inner">
+                            <div className="flex flex-col">
+                              <span className="font-medium text-white text-sm truncate max-w-[120px]">{r.merchant || 'Unknown'}</span>
+                              <span className="text-xs text-gray-400">{formatCurrency(r.total, r.currency || settings?.baseCurrency || 'EUR')}</span>
+                            </div>
+                            <div className="flex flex-col items-end">
+                              <span className="text-xs text-blue-200">{r.transactionDate ? new Date(r.transactionDate).toLocaleDateString() : ''}</span>
+                              <span className="text-xs text-gray-400">{r.paymentMethod || ''}</span>
+                            </div>
+                          </div>
+                        ))}
+                      {receipts.filter(r => (r.category || 'Uncategorized') === selectedCategory.name).length === 0 && (
+                        <div className="text-xs text-gray-400 italic">No receipts in this category yet.</div>
+                      )}
+                    </div>
+                  </div>
+                  {/* Close button */}
+                  <Button onClick={() => setModalOpen(false)} className="mt-4 w-full bg-blue-700 hover:bg-blue-800 text-white font-bold py-2 rounded-xl shadow-lg">Close</Button>
+                </div>
+              </ScrollArea>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -2051,7 +2160,7 @@ export function UploadMethodModal({
   );
 }
 
-export function ExpensesDashboard({ totalExpenses, categoryTotals, formatCurrency, settings, receipts = [] }) {
+export function ExpensesDashboard({ totalExpenses, categoryTotals, formatCurrency, settings, receipts = [], selectedCategory, setSelectedCategory, modalOpen, setModalOpen }) {
   // --- Semi-Circle Doughnut Data ---
   const categoryLabels = Object.keys(categoryTotals);
   const categoryData = Object.values(categoryTotals);
@@ -2073,15 +2182,16 @@ export function ExpensesDashboard({ totalExpenses, categoryTotals, formatCurrenc
   // --- UI ---
   return (
     <div className="w-full max-w-2xl mx-auto mt-4 mb-4 px-2">
-      <div className="bg-slate-800/80 text-white shadow-2xl rounded-xl border border-blue-400/20 p-6 flex flex-col items-center" style={{overflow: 'hidden', minHeight: 380, maxHeight: 420}}>
-        {/* Modern Semi-Circle Doughnut Chart */}
-        <div className="w-full flex flex-col items-center justify-center mb-6 relative" style={{height: 140, overflow: 'hidden', maxHeight: 180}}>
+      <div className="bg-slate-800/60 backdrop-blur-lg shadow-2xl rounded-3xl border border-blue-400/20 p-6 flex flex-col items-center glass-card" style={{overflow: 'hidden', minHeight: 380, maxHeight: 420, background: 'rgba(30,41,59,0.65)', boxShadow: '0 8px 32px 0 rgba(31, 38, 135, 0.18)', border: '1.5px solid rgba(99,102,241,0.12)', backdropFilter: 'blur(18px)'}}>
+        {/* Modern Semi-Circle Doughnut Chart (restored) */}
+        <div className="w-full flex flex-col items-center justify-center mb-6 relative group" style={{height: 140, overflow: 'hidden', maxHeight: 180, transition: 'transform 0.3s cubic-bezier(.4,2,.3,1)', willChange: 'transform'}}>
           <Doughnut
             data={doughnutData}
             options={{
               circumference: 180,
               rotation: -90,
               cutout: '80%',
+              animation: { animateRotate: true, duration: 1200, easing: 'easeOutQuart' },
               plugins: {
                 legend: { display: false },
                 tooltip: {
@@ -2118,28 +2228,35 @@ export function ExpensesDashboard({ totalExpenses, categoryTotals, formatCurrenc
             style={{overflow: 'hidden'}}
           />
           {/* Centered stats overlay */}
-          <div className="absolute left-0 right-0 top-0 flex flex-col items-center justify-center pointer-events-none" style={{height: 100, marginTop: 30, overflow: 'hidden'}}>
+          <div className="absolute left-0 right-0 top-0 flex flex-col items-center justify-center pointer-events-none group-hover:scale-105 group-hover:shadow-blue-400/30 transition-transform duration-200 px-2 md:px-0" style={{height: 100, marginTop: 30, overflow: 'hidden'}}>
             <div className="text-xs font-semibold text-gray-300 mb-1 tracking-wide" style={{letterSpacing: 1}}>TOTAL SPENT</div>
-            <div className="text-2xl md:text-3xl font-extrabold text-indigo-200 mb-1 text-center" style={{overflow: 'hidden', whiteSpace: 'nowrap', maxWidth: '100%'}}>{formatCurrency(totalExpenses, settings?.baseCurrency || 'EUR')}</div>
+            <div className="text-xl xs:text-2xl md:text-3xl font-extrabold text-indigo-200 mb-1 text-center" style={{overflow: 'hidden', whiteSpace: 'nowrap', maxWidth: '100%', padding: '0 0.5rem'}}>{formatCurrency(totalExpenses, settings?.baseCurrency || 'EUR')}</div>
             <div className="text-xs text-gray-400">{categoryLabels.length} categories</div>
           </div>
         </div>
-        {/* Category Cards Grid (unchanged) */}
-        <div className="w-full grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
-          {Object.entries(categoryTotals).map(([cat, amt]) => {
+        {/* Category Cards Grid (mobile-friendly) */}
+        <div className="w-full grid grid-cols-1 gap-4 mb-4 md:grid-cols-2">
+          {Object.entries(categoryTotals).map(([cat, amt], idx) => {
             const percent = Math.min(100, Math.round((amt / totalExpenses) * 100));
             const color = categoryColors[categoryLabels.indexOf(cat) % categoryColors.length];
             const emoji = cat === 'Groceries' ? '🛒' : cat === 'Dining' ? '🍽️' : cat === 'Transport' ? '🚌' : cat === 'Bills' ? '💡' : cat === 'Entertainment' ? '🎬' : cat === 'Health' ? '💊' : cat === 'Family' ? '👨‍👩‍👧‍👦' : '💸';
             const daysLeft = cat === 'Groceries' ? 20 : cat === 'Dining' ? 7 : cat === 'Transport' ? 6 : cat === 'Bills' ? 15 : 10;
             return (
-              <div key={cat} className="rounded-2xl bg-slate-900/80 shadow-lg p-4 flex flex-col gap-2 items-start border border-blue-400/10 relative overflow-hidden">
+              <button
+                key={cat}
+                className="rounded-2xl bg-slate-900/80 shadow-lg p-3 flex flex-col gap-2 items-start border border-blue-400/10 relative overflow-hidden cursor-pointer transition-transform duration-200 hover:scale-105 hover:shadow-blue-400/30 active:scale-95 w-full focus:outline-none focus:ring-2 focus:ring-blue-400"
+                style={{boxShadow: '0 2px 12px 0 rgba(99,102,241,0.08)', border: `1.5px solid ${color}33`, minHeight: 128, touchAction: 'manipulation'}}
+                onClick={() => { setSelectedCategory({ name: cat, amount: amt, percent, color, emoji }); setModalOpen(true); }}
+                tabIndex={0}
+                aria-label={`Show details for ${cat}`}
+              >
                 <div className="flex items-center gap-2 mb-1">
                   <span className="text-2xl">{emoji}</span>
                   <span className="font-semibold text-base text-white/90">{cat}</span>
                   <span className="ml-auto text-xs text-gray-400">{daysLeft} days left</span>
                 </div>
                 <div className="flex items-end gap-2">
-                  <span className="text-2xl font-extrabold text-white">{formatCurrency(amt, settings?.baseCurrency || 'EUR')}</span>
+                  <span className="text-xl md:text-2xl font-extrabold text-white">{formatCurrency(amt, settings?.baseCurrency || 'EUR')}</span>
                   <span className="text-xs text-green-400 font-bold">{percent}%</span>
                 </div>
                 {/* Progress Bar */}
@@ -2149,7 +2266,7 @@ export function ExpensesDashboard({ totalExpenses, categoryTotals, formatCurrenc
                     style={{ width: `${percent}%`, background: color, boxShadow: `0 0 8px 0 ${color}80` }}
                   ></div>
                 </div>
-              </div>
+              </button>
             );
           })}
         </div>
