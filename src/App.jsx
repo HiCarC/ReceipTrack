@@ -50,7 +50,9 @@ function RootContent() {
   return (
     <div className="min-h-screen w-full flex flex-col bg-gradient-to-br from-gray-900 via-indigo-950 to-purple-950" style={{ overflowX: 'hidden' }}>
       <AuthHeader />
-      <div className="flex-grow">{mainContent}</div>
+      <div key={currentTab} className="flex-grow animate-content-fade-in">
+        {mainContent}
+      </div>
       {user && isMobile && (
         <MobileNavBar
           currentTab={currentTab}

@@ -1144,32 +1144,16 @@ export default function ReceiptUploader({ className, showOnly }) {
   };
 
   const handleConfirmPreview = () => {
-    if (previewImageSrc) {
-      setIsLoading(true);
-      setCurrentFunnyMessage(getRandomFunnyMessage());
-      setShowFullScreenPreview(false);
-      // Convert base64 to blob and process it
-      fetch(previewImageSrc)
-        .then(res => res.blob())
-        .then(blob => {
-          processOCR(blob);
-        })
-        .catch(error => {
-          console.error('Error processing captured image:', error);
-          toast({
-            title: "Error Processing Image",
-            description: "There was an issue processing your captured image. Please try again.",
-            variant: "destructive",
-          });
-          setIsLoading(false);
-        });
-    }
+    setShowFullScreenPreview(false);
+    processOCR(file);
   };
 
   const handleRetakePreview = () => {
     setShowFullScreenPreview(false);
     setPreviewImageSrc(null);
-    setIsCameraOpen(true); // Reopen camera for retake
+    setFile(null);
+    setIsCameraOpen(false); // Ensure camera is closed
+    setCurrentStep('upload_options'); // Go back to the upload options/method selection card
   };
 
   const handleEditClick = (receipt) => {
@@ -1197,6 +1181,7 @@ export default function ReceiptUploader({ className, showOnly }) {
     setCurrentReceipt(receipt);
     setIsEditing(true);
     setCurrentStep('receipt_form'); // Open the receipt form modal for editing
+    setReturnToCategory(selectedCategory); // Save the category context
   };
 
   const processOCR = async (file) => {
@@ -1592,41 +1577,41 @@ Note: For currency, return the standard 3-letter currency code (e.g., EUR, USD, 
           {/* Upload Method Card */}
           <div className={`w-full md:w-1/3 flex-col items-center mb-8 md:mb-0 ${showOnly === 'upload' ? 'flex' : !showOnly ? 'flex' : 'hidden'} md:flex`}>
             <Card className="w-full p-4 md:p-6 flex flex-col items-center justify-start gap-4 bg-slate-800/80 text-white shadow-2xl rounded-xl border border-blue-400/20">
-              <CardHeader className="w-full text-center p-0 mb-4">
+            <CardHeader className="w-full text-center p-0 mb-4">
                 <CardTitle className="text-xl md:text-2xl font-bold text-blue-100">Choose Upload Method</CardTitle>
-              </CardHeader>
-              <CardContent className="w-full flex flex-col items-center justify-center gap-4 p-0">
+            </CardHeader>
+            <CardContent className="w-full flex flex-col items-center justify-center gap-4 p-0">
                   <input
                     type="file"
-                    id="fileInput"
+                id="fileInput"
                     ref={fileInputRef}
-                    onChange={handleImageChange}
-                    accept="image/*"
-                    className="hidden"
+                onChange={handleImageChange}
+                accept="image/*"
+                className="hidden"
                   />
                 <Button
-                  onClick={() => document.getElementById('fileInput').click()}
+                onClick={() => document.getElementById('fileInput').click()}
                   className="w-full bg-blue-700 text-white font-semibold py-3 rounded-xl hover:bg-blue-800 transition-all duration-300 ease-in-out transform hover:scale-105 flex items-center justify-center gap-2 shadow-lg overflow-hidden"
                 >
-                  <Upload className="h-5 w-5" />
-                  Upload File
+                <Upload className="h-5 w-5" />
+                Upload File
                 </Button>
-                <Button
+              <Button
                   onClick={() => setIsCameraOpen(true)}
                   className="w-full bg-blue-700 text-white font-semibold py-3 rounded-xl hover:bg-blue-800 transition-all duration-300 ease-in-out transform hover:scale-105 flex items-center justify-center gap-2 shadow-lg overflow-hidden"
-                >
-                  <Camera className="h-5 w-5" />
-                  Take Photo
-                </Button>
-                <Button
+              >
+                <Camera className="h-5 w-5" />
+                Take Photo
+              </Button>
+              <Button
                   onClick={handleManualEntry}
                   className="w-full bg-blue-700 text-white font-semibold py-3 rounded-xl hover:bg-blue-800 transition-all duration-300 ease-in-out transform hover:scale-105 flex items-center justify-center gap-2 shadow-lg overflow-hidden"
-                >
-                  <List className="h-5 w-5" />
-                  Enter Manually
-                </Button>
-              </CardContent>
-            </Card>
+              >
+                <List className="h-5 w-5" />
+                Enter Manually
+              </Button>
+            </CardContent>
+          </Card>
           </div>
 
           {/* Financial Overview Card */}
@@ -1654,10 +1639,10 @@ Note: For currency, return the standard 3-letter currency code (e.g., EUR, USD, 
           {/* Your Receipts Card */}
           <div className={`w-full md:w-1/3 flex-col items-center ${showOnly === 'receipts' ? 'flex' : !showOnly ? 'flex' : 'hidden'} md:flex`}>
             <Card className="w-full p-4 md:p-6 flex flex-col items-center justify-start gap-4 bg-slate-800/80 text-white shadow-2xl rounded-2xl border border-blue-400/20">
-              <CardHeader className="w-full text-center p-0 mb-4">
+            <CardHeader className="w-full text-center p-0 mb-4">
                 <CardTitle className="text-xl font-bold text-blue-100">Your Receipts</CardTitle>
-              </CardHeader>
-              <CardContent className="w-full flex flex-col items-center justify-center p-0">
+            </CardHeader>
+            <CardContent className="w-full flex flex-col items-center justify-center p-0">
                 {isFirestoreLoading ? (
                   <div className="flex flex-col items-center justify-center text-gray-400">
                     <Loader2 className="h-8 w-8 animate-spin mb-2" />
@@ -1675,15 +1660,15 @@ Note: For currency, return the standard 3-letter currency code (e.g., EUR, USD, 
                     <p className="text-md text-slate-500">
                       It's a blank canvas for your financial journey. <br />
                       Start by <span className="text-blue-400 font-medium">uploading your first receipt</span> or <span className="text-blue-400 font-medium">adding one manually</span>.
-                    </p>
-                  </div>
+                      </p>
+                    </div>
                 ) : (
                   <div className="grid grid-cols-1 gap-4 w-full md:max-h-[400px] md:overflow-y-auto md:overflow-x-hidden mb-12">
                     {receipts.map((receipt) => renderReceiptCard(receipt))}
-                  </div>
+                    </div>
                 )}
-              </CardContent>
-            </Card>
+            </CardContent>
+          </Card>
           </div>
         </div>
 
@@ -1948,28 +1933,31 @@ Note: For currency, return the standard 3-letter currency code (e.g., EUR, USD, 
         </Dialog>
                   </div>
 
-      {/* Full-screen camera preview modal */}
+      {/* Full Screen Preview */}
       {showFullScreenPreview && (
-        <div className="fixed inset-0 z-50 bg-black flex flex-col items-center justify-center p-4">
-          <img src={previewImageSrc} alt="Preview" className="max-w-full max-h-[80vh] object-contain mb-4" />
-          <div className="flex space-x-4">
-                <Button
+        <div className="fixed inset-0 z-[100] bg-black flex flex-col animate-fade-in">
+          <img src={previewImageSrc} alt="Preview" className="flex-1 object-contain" />
+          <div className="absolute bottom-0 left-0 right-0 flex justify-center items-center gap-4 p-4 bg-gradient-to-t from-black/80 to-transparent pb-24">
+            <Button
               onClick={handleRetakePreview}
-              className="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded"
-                >
+              variant="outline"
+              className="text-lg py-3 px-6 bg-slate-700/80 border-slate-500 hover:bg-slate-600 text-white backdrop-blur-sm"
+            >
+              <XCircle className="h-5 w-5 mr-2" />
               Retake
-                </Button>
-                <Button
+            </Button>
+            <Button
               onClick={handleConfirmPreview}
-              className="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded"
-                >
-              Use Image
-                </Button>
-            </div>
+              className="text-lg py-3 px-6 bg-blue-600/80 hover:bg-blue-500 text-white backdrop-blur-sm"
+            >
+              <CheckCircle className="h-5 w-5 mr-2" />
+              Use Photo
+            </Button>
           </div>
-        )}
+        </div>
+      )}
 
-      {/* Camera Modal */}
+      {/* Camera View */}
       <Dialog open={isCameraOpen} onOpenChange={(open) => {
         if (!open) {
           stopCamera(); // Ensure camera is stopped when modal is closed

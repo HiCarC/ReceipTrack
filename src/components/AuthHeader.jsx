@@ -74,6 +74,17 @@ export default function AuthHeader() {
     setNewEmail(user?.email || "");
   }, [user]);
 
+  // Listen for avatar updates from Settings component
+  useEffect(() => {
+    const handleAvatarUpdate = (event) => {
+      const { photoURL } = event.detail;
+      setProfilePhoto(photoURL);
+    };
+
+    window.addEventListener('avatar-updated', handleAvatarUpdate);
+    return () => window.removeEventListener('avatar-updated', handleAvatarUpdate);
+  }, []);
+
   // Add scroll event listener
   useEffect(() => {
     const handleScroll = () => {

@@ -64,7 +64,7 @@ export default function MobileNavBar({ currentTab, onTabChange }) {
         {/* Expenses (left, custom SVG) */}
         <button
           onClick={() => handleTabChange('expenses')}
-          className={`flex items-center justify-center h-14 w-14 rounded-full transition-all duration-200 active:scale-95 ${currentTab === 'expenses' ? 'text-blue-400 bg-blue-900/40 shadow-lg border border-blue-400/60' : 'text-blue-200 hover:text-blue-300 border border-transparent'}`}
+          className={`relative flex items-center justify-center h-14 w-14 rounded-full transition-all duration-300 ease-in-out active:scale-95 ${currentTab === 'expenses' ? 'bg-blue-500/30 text-white scale-110 shadow-lg' : 'text-slate-400 opacity-60 grayscale-[50%] hover:opacity-100 hover:grayscale-0'}`}
           aria-label="Expenses"
           tabIndex={0}
           style={{ touchAction: 'manipulation', zIndex: 2 }}
@@ -75,7 +75,7 @@ export default function MobileNavBar({ currentTab, onTabChange }) {
         {/* Upload (center, floating FAB, morphing) */}
         <button
           onClick={() => handleTabChange('upload')}
-          className={`absolute left-1/2 -translate-x-1/2 -top-0.5 rounded-full h-20 w-20 flex items-center justify-center border-4 border-slate-900 transition-all duration-200 active:scale-95 ${currentTab === 'upload' ? 'bg-gradient-to-tr from-blue-500 via-blue-600 to-indigo-500 shadow-[0_0_32px_8px_rgba(59,130,246,0.35)] animate-glow ring-4 ring-blue-300 animate-morph' : 'bg-gradient-to-tr from-blue-600 via-blue-500 to-indigo-500 shadow-xl hover:scale-105 animate-pulse-fab'}`}
+          className={`absolute left-1/2 -translate-x-1/2 -top-0.5 rounded-full h-20 w-20 flex items-center justify-center border-4 border-slate-900 transition-all duration-300 ease-in-out active:scale-95 ${currentTab === 'upload' ? 'bg-gradient-to-tr from-blue-500 via-blue-600 to-indigo-500 shadow-[0_0_32px_8px_rgba(59,130,246,0.35)] animate-glow ring-4 ring-blue-300' : 'bg-slate-700 opacity-70 grayscale hover:opacity-100 hover:grayscale-0'}`}
           style={{ zIndex: 60, boxShadow: currentTab === 'upload' ? '0 0 32px 8px rgba(59,130,246,0.35)' : undefined, touchAction: 'manipulation' }}
           aria-label="Upload"
           tabIndex={0}
@@ -86,7 +86,7 @@ export default function MobileNavBar({ currentTab, onTabChange }) {
         {/* Receipts (right, custom SVG) */}
         <button
           onClick={() => handleTabChange('receipts')}
-          className={`flex items-center justify-center h-14 w-14 rounded-full transition-all duration-200 active:scale-95 ${currentTab === 'receipts' ? 'text-blue-400 bg-blue-900/40 shadow-lg border border-blue-400/60' : 'text-blue-200 hover:text-blue-300 border border-transparent'}`}
+          className={`relative flex items-center justify-center h-14 w-14 rounded-full transition-all duration-300 ease-in-out active:scale-95 ${currentTab === 'receipts' ? 'bg-blue-500/30 text-white scale-110 shadow-lg' : 'text-slate-400 opacity-60 grayscale-[50%] hover:opacity-100 hover:grayscale-0'}`}
           aria-label="Receipts"
           tabIndex={0}
           style={{ touchAction: 'manipulation', zIndex: 2 }}
