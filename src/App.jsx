@@ -1,6 +1,5 @@
 import { AuthProvider, useAuth } from "@/contexts/AuthContext"
 import { useState } from 'react';
-import { UploadMethodModal } from './components/ReceiptUploader';
 import ReceiptUploader from './components/ReceiptUploader'
 import LandingPage from './components/LandingPage'
 import { Toaster } from "@/components/ui/toaster"
@@ -21,10 +20,14 @@ function ReceiptsScreen(props) {
   return <ReceiptUploader {...props} showOnly="receipts" />;
 }
 
+function UploadScreen(props) {
+  // This is the upload methods part of ReceiptUploader
+  return <ReceiptUploader {...props} showOnly="upload" />;
+}
+
 function RootContent() {
   const { user } = useAuth();
   const [currentTab, setCurrentTab] = useState('expenses');
-  const [showUploadModal, setShowUploadModal] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
 
   // Only show bottom nav on mobile
@@ -38,6 +41,8 @@ function RootContent() {
     mainContent = <ExpensesScreen />;
   } else if (currentTab === 'receipts') {
     mainContent = <ReceiptsScreen />;
+  } else if (currentTab === 'upload') {
+    mainContent = <UploadScreen />;
   } else if (currentTab === 'settings') {
     mainContent = <Settings onClose={() => setCurrentTab('expenses')} />;
   }
@@ -49,24 +54,8 @@ function RootContent() {
       {user && isMobile && (
         <MobileNavBar
           currentTab={currentTab}
-          onTabChange={tab => {
-            if (tab === 'upload') setShowUploadModal(true);
-            else setCurrentTab(tab);
-          }}
+          onTabChange={setCurrentTab}
         />
-      )}
-      {showUploadModal && (
-        <div className="fixed inset-0 z-[9999] flex items-end justify-center bg-black/40" onClick={() => setShowUploadModal(false)}>
-          <div className="w-full max-w-md mx-auto mb-4" onClick={e => e.stopPropagation()}>
-            <UploadMethodModal
-              // Pass required props for upload actions here
-              onUploadFile={() => {/* trigger file upload */}}
-              onTakePhoto={() => {/* trigger camera */}}
-              onManualEntry={() => {/* trigger manual entry */}}
-              // ...other props as needed
-            />
-          </div>
-        </div>
       )}
       <Toaster />
     </div>

@@ -49,10 +49,6 @@ export default function MobileNavBar({ currentTab, onTabChange }) {
 
   return (
     <>
-      {/* Blurred background behind the bar for true glass effect */}
-      <div className="fixed bottom-0 left-0 right-0 h-28 z-40 pointer-events-none">
-        <div className="absolute inset-0 bg-gradient-to-tr from-slate-900/70 to-blue-900/50 backdrop-blur-2xl rounded-t-3xl" style={{ WebkitBackdropFilter: 'blur(24px)', backdropFilter: 'blur(24px)' }} />
-      </div>
       <nav
         ref={navRef}
         className="fixed bottom-0 left-0 right-0 z-50 flex justify-between items-center px-8 h-20 md:hidden shadow-2xl border-t border-blue-900/40 bg-gradient-to-tr from-slate-900/80 to-blue-900/60 backdrop-blur-xl bg-opacity-70 rounded-t-3xl transition-all duration-300 overflow-hidden"

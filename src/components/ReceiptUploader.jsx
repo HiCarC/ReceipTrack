@@ -143,7 +143,7 @@ const categoryColors = {
 };
 const getCategoryColor = (cat) => categoryColors[cat] || categoryColors['Uncategorized'];
 
-export default function ReceiptUploader({ className }) {
+export default function ReceiptUploader({ className, showOnly }) {
   const { toast } = useToast();
   const authContext = useAuth();
   const user = authContext ? authContext.user : null;
@@ -672,7 +672,7 @@ export default function ReceiptUploader({ className }) {
       setSelectedCategory(returnToCategory);
       setModalOpen(true);
       setReturnToCategory(null);
-    } else {
+      } else {
       // Otherwise, go back to the main view
       setCurrentStep('upload_options');
     }
@@ -1590,49 +1590,47 @@ Note: For currency, return the standard 3-letter currency code (e.g., EUR, USD, 
         {/* Responsive row layout for laptop/desktop, column for mobile */}
         <div className="flex flex-col md:flex-row gap-8 w-full max-w-full items-start justify-center mb-8" style={{ overflowX: 'hidden' }}>
           {/* Upload Method Card */}
-          <div className="w-full md:w-1/3 flex flex-col items-center mb-8 md:mb-0">
+          <div className={`w-full md:w-1/3 flex-col items-center mb-8 md:mb-0 ${showOnly === 'upload' ? 'flex' : !showOnly ? 'flex' : 'hidden'} md:flex`}>
             <Card className="w-full p-4 md:p-6 flex flex-col items-center justify-start gap-4 bg-slate-800/80 text-white shadow-2xl rounded-xl border border-blue-400/20">
-            <CardHeader className="w-full text-center p-0 mb-4">
+              <CardHeader className="w-full text-center p-0 mb-4">
                 <CardTitle className="text-xl md:text-2xl font-bold text-blue-100">Choose Upload Method</CardTitle>
-            </CardHeader>
-            <CardContent className="w-full flex flex-col items-center justify-center gap-4 p-0">
+              </CardHeader>
+              <CardContent className="w-full flex flex-col items-center justify-center gap-4 p-0">
                   <input
                     type="file"
-                id="fileInput"
+                    id="fileInput"
                     ref={fileInputRef}
-                onChange={handleImageChange}
-                accept="image/*"
-                className="hidden"
+                    onChange={handleImageChange}
+                    accept="image/*"
+                    className="hidden"
                   />
                 <Button
-                onClick={() => document.getElementById('fileInput').click()}
+                  onClick={() => document.getElementById('fileInput').click()}
                   className="w-full bg-blue-700 text-white font-semibold py-3 rounded-xl hover:bg-blue-800 transition-all duration-300 ease-in-out transform hover:scale-105 flex items-center justify-center gap-2 shadow-lg overflow-hidden"
                 >
-                <Upload className="h-5 w-5" />
-                Upload File
+                  <Upload className="h-5 w-5" />
+                  Upload File
                 </Button>
-              <Button
-                onClick={() => {
-                  setIsCameraOpen(true);
-                }}
+                <Button
+                  onClick={() => setIsCameraOpen(true)}
                   className="w-full bg-blue-700 text-white font-semibold py-3 rounded-xl hover:bg-blue-800 transition-all duration-300 ease-in-out transform hover:scale-105 flex items-center justify-center gap-2 shadow-lg overflow-hidden"
-              >
-                <Camera className="h-5 w-5" />
-                Take Photo
-              </Button>
-              <Button
+                >
+                  <Camera className="h-5 w-5" />
+                  Take Photo
+                </Button>
+                <Button
                   onClick={handleManualEntry}
                   className="w-full bg-blue-700 text-white font-semibold py-3 rounded-xl hover:bg-blue-800 transition-all duration-300 ease-in-out transform hover:scale-105 flex items-center justify-center gap-2 shadow-lg overflow-hidden"
-              >
-                <List className="h-5 w-5" />
-                Enter Manually
-              </Button>
-            </CardContent>
-          </Card>
+                >
+                  <List className="h-5 w-5" />
+                  Enter Manually
+                </Button>
+              </CardContent>
+            </Card>
           </div>
 
           {/* Financial Overview Card */}
-          <div className="w-full md:w-1/3 flex flex-col items-center mb-8 md:mb-0">
+          <div className={`w-full md:w-1/3 flex-col items-center mb-8 md:mb-0 ${showOnly === 'expenses' ? 'flex' : !showOnly ? 'flex' : 'hidden'} md:flex`}>
             <ExpensesDashboard
               totalExpenses={totalExpenses}
               categoryTotals={categoryTotals}
@@ -1644,15 +1642,22 @@ Note: For currency, return the standard 3-letter currency code (e.g., EUR, USD, 
               modalOpen={modalOpen}
               setModalOpen={setModalOpen}
             />
+            {/* Insights Section */}
+            <InsightsSection
+              receipts={receipts}
+              categoryTotals={categoryTotals}
+              formatCurrency={formatCurrency}
+              settings={settings}
+            />
           </div>
 
           {/* Your Receipts Card */}
-          <div className="w-full md:w-1/3 flex flex-col items-center">
-            <Card className="w-full p-4 md:p-6 flex flex-col items-center justify-start gap-4 bg-slate-800/80 text-white shadow-2xl rounded-xl border border-blue-400/20">
-            <CardHeader className="w-full text-center p-0 mb-4">
+          <div className={`w-full md:w-1/3 flex-col items-center ${showOnly === 'receipts' ? 'flex' : !showOnly ? 'flex' : 'hidden'} md:flex`}>
+            <Card className="w-full p-4 md:p-6 flex flex-col items-center justify-start gap-4 bg-slate-800/80 text-white shadow-2xl rounded-2xl border border-blue-400/20">
+              <CardHeader className="w-full text-center p-0 mb-4">
                 <CardTitle className="text-xl font-bold text-blue-100">Your Receipts</CardTitle>
-            </CardHeader>
-            <CardContent className="w-full flex flex-col items-center justify-center p-0">
+              </CardHeader>
+              <CardContent className="w-full flex flex-col items-center justify-center p-0">
                 {isFirestoreLoading ? (
                   <div className="flex flex-col items-center justify-center text-gray-400">
                     <Loader2 className="h-8 w-8 animate-spin mb-2" />
@@ -1670,15 +1675,15 @@ Note: For currency, return the standard 3-letter currency code (e.g., EUR, USD, 
                     <p className="text-md text-slate-500">
                       It's a blank canvas for your financial journey. <br />
                       Start by <span className="text-blue-400 font-medium">uploading your first receipt</span> or <span className="text-blue-400 font-medium">adding one manually</span>.
-                      </p>
-                    </div>
+                    </p>
+                  </div>
                 ) : (
                   <div className="grid grid-cols-1 gap-4 w-full md:max-h-[400px] md:overflow-y-auto md:overflow-x-hidden mb-12">
                     {receipts.map((receipt) => renderReceiptCard(receipt))}
-                    </div>
+                  </div>
                 )}
-            </CardContent>
-          </Card>
+              </CardContent>
+            </Card>
           </div>
         </div>
 
@@ -2037,13 +2042,6 @@ Note: For currency, return the standard 3-letter currency code (e.g., EUR, USD, 
           </div>
         </DialogContent>
       </Dialog>
-      {/* Insights Section */}
-      <InsightsSection
-        receipts={receipts}
-        categoryTotals={categoryTotals}
-        formatCurrency={formatCurrency}
-        settings={settings}
-      />
       {/* Category Details Modal */}
       <Dialog open={modalOpen} onOpenChange={setModalOpen}>
         <DialogContent className="max-w-md w-[95vw] bg-slate-900/95 text-white rounded-2xl shadow-2xl animate-fade-in-up p-0 flex flex-col overflow-hidden">
