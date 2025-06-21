@@ -415,6 +415,18 @@ export function Settings({ onClose, onCloseDropdown }) {
               <Label htmlFor="showConverted" className="font-medium text-blue-200 cursor-pointer">Show converted amounts in base currency</Label>
               <Switch id="showConverted" checked={settings.display?.showConvertedAmounts ?? false} onCheckedChange={(checked) => handleChange('display', 'showConvertedAmounts', checked)} />
             </div>
+            <div className="flex items-center justify-between p-3 bg-slate-800/70 rounded-lg">
+              <Label htmlFor="weekStartsOn" className="font-medium text-blue-200 cursor-pointer">Week starts on</Label>
+              <select
+                id="weekStartsOn"
+                value={settings.weekStartsOn || 'monday'}
+                onChange={e => handleChange('', 'weekStartsOn', e.target.value)}
+                className="bg-slate-700/80 text-white rounded-lg px-3 py-2 border border-blue-700/40 focus:ring-2 focus:ring-blue-400 focus:border-blue-400"
+              >
+                <option value="monday">Monday</option>
+                <option value="sunday">Sunday</option>
+              </select>
+            </div>
           </div>
         </div>
         {/* Budget Settings Section */}

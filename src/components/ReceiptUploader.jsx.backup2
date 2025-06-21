@@ -35,10 +35,9 @@ import {
 } from "./ui/scroll-area";
 import { Doughnut, Line, Pie, Bar } from 'react-chartjs-2';
 import { Chart, ArcElement, Tooltip, Legend, CategoryScale, LinearScale, PointElement, LineElement, TimeScale, Filler, BarElement } from 'chart.js';
-import annotationPlugin from 'chartjs-plugin-annotation';
 import { CircularProgressbarWithChildren, buildStyles } from 'react-circular-progressbar';
 import 'react-circular-progressbar/dist/styles.css';
-Chart.register(ArcElement, Tooltip, Legend, CategoryScale, LinearScale, PointElement, LineElement, TimeScale, Filler, BarElement, annotationPlugin);
+Chart.register(ArcElement, Tooltip, Legend, CategoryScale, LinearScale, PointElement, LineElement, TimeScale, Filler, BarElement);
 
 // Define supported currencies
 const SUPPORTED_CURRENCIES = [
@@ -345,16 +344,6 @@ export default function ReceiptUploader({ className, showOnly, onTabChange }) {
       return acc;
     }, {});
     setCategoryTotals(categorySums);
-
-    // Debug logging to verify current month filtering
-    console.log('Current Month Filtering:', {
-      totalReceipts: receipts.length,
-      currentMonthReceipts: currentMonthReceipts.length,
-      currentMonthStart: currentMonthStart.toISOString().split('T')[0],
-      currentMonthEnd: currentMonthEnd.toISOString().split('T')[0],
-      totalExpenses: total,
-      categoryTotals: categorySums
-    });
   }, [receipts]);
 
   useEffect(() => {
@@ -1186,10 +1175,10 @@ export default function ReceiptUploader({ className, showOnly, onTabChange }) {
       canvasRef.current.toBlob((blob) => {
         const capturedFile = new File([blob], 'captured-receipt.jpg', { type: 'image/jpeg' });
         setFile(capturedFile); // Set the file for OCR processing
-      setPreviewImageSrc(canvasRef.current.toDataURL('image/jpeg'));
-      setShowFullScreenPreview(true);
-      setIsCameraOpen(false); // Close the camera modal after capturing
-      stopCamera(); // Stop the camera stream
+        setPreviewImageSrc(canvasRef.current.toDataURL('image/jpeg'));
+        setShowFullScreenPreview(true);
+        setIsCameraOpen(false); // Close the camera modal after capturing
+        stopCamera(); // Stop the camera stream
       }, 'image/jpeg', 0.9);
     }
   };
@@ -1197,7 +1186,7 @@ export default function ReceiptUploader({ className, showOnly, onTabChange }) {
   const handleConfirmPreview = () => {
     setShowFullScreenPreview(false);
     if (file) {
-    processOCR(file);
+      processOCR(file);
     } else {
       // Fallback: if no file object, create one from the preview image
       fetch(previewImageSrc)
@@ -1274,99 +1263,57 @@ export default function ReceiptUploader({ className, showOnly, onTabChange }) {
               content: [
                 {
                   type: "text",
-                  text: `You are an expert receipt analysis system with specialized expertise in date detection and parsing. Analyze this receipt image and extract the following information in JSON format with particular attention to DATE DETECTION.
+                  text: `Analyze this receipt image and extract the following information in JSON format:
+1. Store/Merchant name
+2. Total amount
+3. Subtotal (if present)
+4. Date
+5. Category (choose from: Groceries, Dining, Transportation, Shopping, Bills, Entertainment, Health, Other)
+6. Payment Method (e.g., Cash, Credit Card, Debit Card, Mobile Payment, Bank Transfer, Voucher, Other)
+7. Currency (detect from the receipt, looking for currency symbols or codes like €, $, £, ¥, etc.)
+8. Items (list of items with their prices)
 
-## EXPERT DATE DETECTION INSTRUCTIONS:
+If there are discounts (e.g., 'Discount', 'Rabatt', 'Descuento', 'Remise', 'Sconto', etc.), include each discount as an item in the 'items' array, with a negative price and a clear description (e.g., {"name": "Discount", "price": "-2.00"}). Do not use a separate 'discounts' field.
 
-### 1. DATE LOCATION PRIORITY (in order of preference):
-- **Header/Logo area**: Often contains the most reliable date
-- **Transaction date line**: Usually near the top, labeled "Date:", "Datum:", "Fecha:", "Data:", etc.
-- **Timestamp**: Look for "Time:", "Uhrzeit:", "Hora:", "Ora:", etc. (use date portion)
-- **Footer area**: Sometimes contains date information
-- **Receipt number line**: Often includes date (e.g., "Receipt #12345 - 15/06/2024")
-- **Cashier/terminal info**: May include date stamps
+For subtotal, look for lines or sections labeled 'Subtotal', 'Sous-total', 'Zwischensumme', 'Sub-total', or similar, usually just above the tax or total. Return the value as a string if found, or leave blank/null if not present.
 
-### 2. DATE FORMAT RECOGNITION:
-Recognize and handle these formats intelligently:
-- **European**: DD/MM/YYYY, DD.MM.YYYY, DD-MM-YYYY, DD MM YYYY
-- **American**: MM/DD/YYYY, MM-DD-YYYY, MM.DD.YYYY
-- **ISO**: YYYY-MM-DD, YYYY/MM/DD
-- **Text formats**: "15th June 2024", "June 15, 2024", "15 Jun 2024"
-- **Abbreviated**: "15/06/24", "06/15/24", "15.06.24"
-- **Mixed separators**: "15-06.2024", "15/06-2024"
+For payment method, use all available clues to infer the most probable method, even if not explicitly stated. Look for:
+- Card numbers (e.g., ****1234, VISA, Mastercard, AMEX, Maestro, Discover, UnionPay, Carte Bancaire, etc.)
+- Payment terminal info (POS, EFT, terminal IDs, Auth #, Approval #)
+- Cash indicators ("Paid by cash", "cash tendered", "change given", "amount due: 0.00")
+- Mobile payment ("Apple Pay", "Google Pay", "Samsung Pay", "NFC", "Contactless", "QR code", "WeChat Pay", "Alipay")
+- Bank transfer ("IBAN", "BIC", "Sort code", "Bank name", "SEPA", "Wire transfer")
+- Vouchers/gift cards ("Gift card", "Voucher", "Store credit")
+- Split/multiple payments ("Split payment", "Partial card, partial cash")
+- Payment logos or icons
+- Words like 'CASH', 'CARD', 'DEBIT', 'CREDIT', 'TRANSFER', 'MOBILE', 'CONTACTLESS', etc.
 
-### 3. AMBIGUOUS DATE RESOLUTION:
-- **DD/MM vs MM/DD**: Use context clues (currency, language, store location)
-- **Year ambiguity**: "24" → assume "2024" for recent receipts
-- **Missing year**: Use current year if not specified
-- **Multiple dates**: Choose the transaction date over print date, issue date, etc.
+If multiple payment methods are detected, return the most likely one in 'payment_method', and list alternatives in 'payment_method_alternatives' (array).
+If the method is not explicit, make an educated guess based on these clues and the context. If truly unknown, return 'Other'.
 
-### 4. RELATIVE DATE HANDLING:
-- "Today", "Heute", "Hoy", "Oggi" → current date
-- "Yesterday", "Gestern", "Ayer", "Ieri" → yesterday's date
-- "Last week", "Letzte Woche", "La semana pasada" → calculate relative date
+Also include:
+- 'payment_method_reason': a short explanation of why you chose this method.
+- 'payment_method_confidence': a value from 0 (low) to 1 (high) indicating your confidence in the guess.
 
-### 5. LANGUAGE-SPECIFIC DATE PATTERNS:
-- **German**: "Datum:", "Ausgestellt am:", "Druckdatum:"
-- **Spanish**: "Fecha:", "Fecha de emisión:", "Fecha de impresión:"
-- **French**: "Date:", "Date d'émission:", "Date d'impression:"
-- **Italian**: "Data:", "Data di emissione:", "Data di stampa:"
-- **Portuguese**: "Data:", "Data de emissão:", "Data de impressão:"
-- **Dutch**: "Datum:", "Uitgegeven op:", "Drukdatum:"
+For currency detection, look for:
+- Currency symbols (€, $, £, ¥, etc.)
+- Currency codes (EUR, USD, GBP, JPY, etc.)
+- Regional formats (e.g., €1.234,56 for European format, $1,234.56 for US format)
+- Currency indicators in the header or footer of the receipt
+- Currency mentioned in the payment section
+- Currency symbols next to prices
 
-### 6. EDGE CASES:
-- **Handwritten dates**: Look for clear, legible handwritten dates
-- **Stamped dates**: Often in receipt footer or margins
-- **Thermal print dates**: May be faint or partially printed
-- **Multiple timezones**: Use the local timezone of the receipt
-- **Future dates**: Flag if date appears to be in the future (likely error)
-
-### 7. DATE VALIDATION:
-- Ensure the date is reasonable (not in distant past/future)
-- Check for obvious OCR errors (e.g., "2024" vs "202A")
-- Validate day/month ranges (1-31 for days, 1-12 for months)
-- Handle leap years correctly
-
-## COMPLETE RECEIPT ANALYSIS:
-
-Extract the following information in JSON format:
-
-1. **Store/Merchant name** - The business name
-2. **Total amount** - The final total to be paid
-3. **Subtotal** - Amount before tax (if present)
-4. **Date** - Use expert date detection above (return in YYYY-MM-DD format)
-5. **Category** - Choose from: Groceries, Dining, Transportation, Shopping, Bills, Entertainment, Health, Other
-6. **Payment Method** - Most likely payment method with confidence score
-7. **Currency** - 3-letter currency code (EUR, USD, GBP, etc.)
-8. **Items** - List of items with prices (include discounts as negative items)
-
-## DATE DETECTION CONFIDENCE:
-
-For the date field, also include:
-- **date_confidence**: 0-1 score indicating confidence in date detection
-- **date_source**: Where the date was found (e.g., "header", "transaction_line", "footer")
-- **date_format_detected**: The original format detected (e.g., "DD/MM/YYYY", "MM/DD/YYYY")
-- **date_notes**: Any relevant notes about date detection (e.g., "ambiguous format resolved using currency context")
-
-## RESPONSE FORMAT:
-
-Reply with a JSON object enclosed in triple backticks:
-
-\`\`\`json
+Reply with a JSON object enclosed in triple backticks like this:\n\`\`\`json
 {
   "store": "Store Name",
   "amount": "23.50",
   "subtotal": "20.00",
-  "date": "2024-06-15",
-  "date_confidence": 0.95,
-  "date_source": "transaction_line",
-  "date_format_detected": "DD/MM/YYYY",
-  "date_notes": "Clear date found in transaction line",
-  "category": "Groceries",
+  "date": "13/06/2025",
+  "category": "Category Name",
   "payment_method": "Credit Card",
-  "payment_method_alternatives": ["Cash"],
-  "payment_method_reason": "VISA card number detected",
-  "payment_method_confidence": 0.9,
+  "payment_method_alternatives": ["Cash", "Mobile Pay"],
+  "payment_method_reason": "Found 'VISA' and card number ****1234 on the receipt.",
+  "payment_method_confidence": 0.95,
   "currency": "EUR",
   "items": [
     {"name": "Item 1", "price": "10.00"},
@@ -1376,13 +1323,13 @@ Reply with a JSON object enclosed in triple backticks:
 }
 \`\`\`
 
-**CRITICAL**: Always return the date in YYYY-MM-DD format regardless of how it appears on the receipt. Use your expert date detection skills to handle any format, language, or edge case.`
+Note: For currency, return the standard 3-letter currency code (e.g., EUR, USD, GBP, JPY) based on the detected currency.`
                 },
                 { type: "image_url", image_url: { url: base64 } }
               ]
             }
           ],
-          max_tokens: 800
+          max_tokens: 500
         })
       });
 
@@ -1398,46 +1345,7 @@ Reply with a JSON object enclosed in triple backticks:
 
       const parsedJSON = JSON.parse(jsonMatch[1]);
 
-      // Log date detection details for debugging
-      if (parsedJSON.date_confidence !== undefined) {
-        console.log("Date Detection Details:", {
-          date: parsedJSON.date,
-          confidence: parsedJSON.date_confidence,
-          source: parsedJSON.date_source,
-          format: parsedJSON.date_format_detected,
-          notes: parsedJSON.date_notes
-        });
-      }
-
-      // Enhanced date validation and normalization
-      let normalizedDate = parsedJSON.date;
-      if (normalizedDate) {
-        try {
-          // First try to normalize using the existing function
-          normalizedDate = normalizeDate(normalizedDate);
-          
-          // Additional validation for the normalized date
-          const dateObj = new Date(normalizedDate);
-          if (isNaN(dateObj.getTime())) {
-            console.warn("Invalid date after normalization:", parsedJSON.date, "→", normalizedDate);
-            normalizedDate = new Date().toISOString().split('T')[0]; // Fallback to today
-          } else {
-            // Check if date is reasonable (not too far in past/future)
-            const now = new Date();
-            const diffYears = Math.abs(now.getFullYear() - dateObj.getFullYear());
-            if (diffYears > 10) {
-              console.warn("Date seems unreasonable (too far in past/future):", normalizedDate);
-              // Keep the date but log the warning
-            }
-          }
-        } catch (error) {
-          console.error("Date normalization error:", error);
-          normalizedDate = new Date().toISOString().split('T')[0]; // Fallback to today
-        }
-      } else {
-        normalizedDate = new Date().toISOString().split('T')[0]; // Default to today
-      }
-
+      // Update form data with the extracted information
       // Extra validation: ensure all discount items have negative prices
       const discountKeywords = [
         'discount', 'rabatt', 'descuento', 'remise', 'sconto', 'desconto', 'skonto'
@@ -1460,7 +1368,7 @@ Reply with a JSON object enclosed in triple backticks:
         ...prev,
         merchant: parsedJSON.store || '',
         total: parsedJSON.amount ? parsedJSON.amount.replace(/[^\d.,]/g, '').replace(',', '.') : '',
-        date: normalizedDate,
+        date: parsedJSON.date ? normalizeDate(parsedJSON.date) : new Date().toISOString().split('T')[0],
         category: parsedJSON.category || '',
         paymentMethod: parsedJSON.payment_method || '',
         currency: parsedJSON.currency || 'EUR', // Use detected currency or default to EUR
@@ -1652,12 +1560,26 @@ Reply with a JSON object enclosed in triple backticks:
 
   // --- Date helpers ---
   const today = new Date();
-  const weekStart = new Date(today);
-  weekStart.setHours(0, 0, 0, 0);
-  weekStart.setDate(today.getDate() - today.getDay()); // Sunday (local)
-  const weekEnd = new Date(weekStart);
-  weekEnd.setDate(weekStart.getDate() + 6); // Saturday
-  weekEnd.setHours(23, 59, 59, 999); // End of day
+  let periodStart, periodEnd, periodLabel;
+  if (period === 'week') {
+    periodStart = new Date(today);
+    periodStart.setHours(0, 0, 0, 0);
+    // Start week on Monday (1) instead of Sunday (0)
+    // TODO: Make week start day configurable in user settings (Monday vs Sunday)
+    const dayOfWeek = today.getDay();
+    const daysToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1; // If Sunday, go back 6 days; otherwise go back (dayOfWeek - 1) days
+    periodStart.setDate(today.getDate() - daysToMonday);
+    periodEnd = new Date(periodStart);
+    periodEnd.setDate(periodStart.getDate() + 6); // Monday to Sunday (7 days)
+    periodEnd.setHours(23, 59, 59, 999);
+    const formatShort = d => d.toLocaleDateString(undefined, { day: '2-digit', month: 'short' });
+    periodLabel = `${formatShort(periodStart)} - ${formatShort(periodEnd)}`;
+  } else {
+    periodStart = new Date(today.getFullYear(), today.getMonth(), 1, 0, 0, 0, 0);
+    periodEnd = new Date(today.getFullYear(), today.getMonth() + 1, 0, 23, 59, 59, 999);
+    const formatShort = d => d.toLocaleDateString(undefined, { day: '2-digit', month: 'short' });
+    periodLabel = `${formatShort(periodStart)} - ${formatShort(periodEnd)}`;
+  }
 
   // Helper to robustly normalize a date string/object to local midnight
   const normalizeToLocalMidnight = (d) => {
@@ -1673,16 +1595,174 @@ Reply with a JSON object enclosed in triple backticks:
     return new Date(date.getFullYear(), date.getMonth(), date.getDate());
   };
 
-  // Filter receipts for current week (inclusive)
-  const weekReceipts = receipts.filter(r => {
-    const d = normalizeToLocalMidnight(r.date || r.transactionDate || r.createdAt);
-    return d && d >= weekStart && d <= weekEnd;
+  // Filter receipts for selected period (inclusive)
+  const periodReceipts = receipts.filter(r => {
+    const d = normalizeToLocalMidnight(r.transactionDate || r.date || r.createdAt);
+    return d && d >= periodStart && d <= periodEnd;
   });
 
-  // In ReceiptUploader (parent):
-  const [selectedCategory, setSelectedCategory] = useState(null);
-  const [modalOpen, setModalOpen] = useState(false);
+  const allCategoryColors = {
+    'Groceries': '#3b82f6',
+    'Dining': '#f472b6',
+    'Transportation': '#a78bfa',
+    'Shopping': '#818cf8',
+    'Bills': '#60a5fa',
+    'Entertainment': '#fbbf24',
+    'Health': '#10b981',
+    'Other': '#f59e42',
+    'Uncategorized': '#9ca3af'
+  };
 
+  // --- New Data Structuring for Rich Tooltips ---
+  let dailyData, labelsWithDates;
+
+  if (period === 'week') {
+    const weekDates = Array.from({ length: 7 }, (_, i) => new Date(periodStart.getFullYear(), periodStart.getMonth(), periodStart.getDate() + i));
+    labelsWithDates = weekDates.map(d => ({
+      short: d.toLocaleDateString(undefined, { weekday: 'short' })[0],
+      full: d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric' })
+    }));
+    dailyData = Array.from({ length: 7 }, () => ({ categories: {}, total: 0 }));
+
+    periodReceipts.forEach(r => {
+      const date = normalizeToLocalMidnight(r.date || r.transactionDate || r.createdAt);
+      if (date) {
+        // Calculate day index for Monday-Sunday week (0=Monday, 6=Sunday)
+        const dayIndex = (date.getDay() + 6) % 7; // Convert Sunday=0 to Monday=0
+        if (dayIndex >= 0 && dayIndex < 7) {
+          const category = r.category || 'Uncategorized';
+          const amount = parseFloat(r.total) || 0;
+          dailyData[dayIndex].categories[category] = (dailyData[dayIndex].categories[category] || 0) + amount;
+          dailyData[dayIndex].total += amount;
+        }
+      }
+    });
+  } else { // month
+    const daysInMonth = periodEnd.getDate();
+    labelsWithDates = Array.from({ length: daysInMonth }, (_, i) => {
+      const d = new Date(periodStart.getFullYear(), periodStart.getMonth(), i + 1);
+      return {
+        short: (i + 1).toString(),
+        full: d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric' })
+      };
+    });
+    dailyData = Array.from({ length: daysInMonth }, () => ({ categories: {}, total: 0 }));
+
+    periodReceipts.forEach(r => {
+      const date = normalizeToLocalMidnight(r.date || r.transactionDate || r.createdAt);
+      if (date) {
+        const dayIndex = date.getDate() - 1;
+        if (dayIndex >= 0 && dayIndex < daysInMonth) {
+          const category = r.category || 'Uncategorized';
+          const amount = parseFloat(r.total) || 0;
+          dailyData[dayIndex].categories[category] = (dailyData[dayIndex].categories[category] || 0) + amount;
+          dailyData[dayIndex].total += amount;
+        }
+      }
+    });
+  }
+  
+  const chartTotals = dailyData.map(d => d.total);
+  const expenses = chartTotals.reduce((a, b) => a + b, 0);
+  const spentPerDay = period === 'week' ? expenses / 7 : (chartTotals.length > 0 ? expenses / chartTotals.length : 0);
+  
+  const periodCategoryTotals = periodReceipts.reduce((acc, r) => {
+    const cat = r.category || 'Uncategorized';
+    const amt = parseFloat(r.total) || 0;
+    acc[cat] = (acc[cat] || 0) + amt;
+    return acc;
+  }, {});
+  
+  const total = expenses;
+
+  // Get all unique categories from the period
+  const allCategories = [...new Set(Object.keys(periodCategoryTotals))];
+  
+  // Create stacked bar chart datasets
+  const barDatasets = allCategories.map(category => {
+    const categoryData = dailyData.map(dayData => dayData.categories[category] || 0);
+    return {
+      label: category,
+      data: categoryData,
+      backgroundColor: allCategoryColors[category] || '#9ca3af',
+      borderRadius: 12,
+      barPercentage: 0.6,
+      categoryPercentage: 0.7,
+      borderSkipped: false,
+      stack: 'stack0', // This makes it a stacked bar
+    };
+  });
+
+  // Bar chart data
+  const barData = {
+    labels: labelsWithDates.map(l => l.short),
+    datasets: barDatasets,
+  };
+  
+  // Bar chart options
+  const barOptions = {
+    plugins: {
+      legend: { display: false },
+      tooltip: {
+        enabled: true,
+        mode: 'index',
+        intersect: false,
+        backgroundColor: '#1e293b',
+        titleColor: '#f1f5f9',
+        titleFont: { size: 14, weight: 'bold' },
+        bodyColor: '#cbd5e1',
+        bodyFont: { size: 12 },
+        borderColor: 'rgba(99,102,241,0.5)',
+        borderWidth: 1,
+        displayColors: false,
+        padding: 12,
+        cornerRadius: 8,
+        callbacks: {
+          title: function(context) {
+            if (!context[0]) return '';
+            return labelsWithDates[context[0].dataIndex].full;
+          },
+          label: () => null,
+          beforeBody: function(context) {
+            const dataIndex = context[0].dataIndex;
+            const dayData = dailyData[dataIndex];
+            const sortedCategories = Object.entries(dayData.categories).sort((a, b) => b[1] - a[1]);
+            if (sortedCategories.length === 0) return ['No expenses this day.'];
+            return sortedCategories.map(([name, amount]) => `${name}: ${formatCurrency(amount, settings?.baseCurrency || 'EUR')}`);
+          },
+          footer: function(context) {
+            const totalAmount = context[0].raw;
+            if (totalAmount > 0) {
+              return `\nTotal: ${formatCurrency(totalAmount, settings?.baseCurrency || 'EUR')}`;
+            }
+            return '';
+          },
+        },
+      },
+    },
+    scales: {
+      x: {
+        grid: { drawBorder: false, color: 'rgba(226, 232, 240, 0.1)' },
+        ticks: { color: '#94a3b8', font: { weight: '600' } },
+      },
+      y: {
+        grid: { drawBorder: false, color: 'rgba(226, 232, 240, 0.1)' },
+        ticks: { color: '#94a3b8' },
+        beginAtZero: true,
+        max: Math.max(60, Math.ceil(Math.max(...chartTotals) / 10) * 10),
+      },
+    },
+    responsive: true,
+    maintainAspectRatio: false,
+    animation: { duration: 800, easing: 'easeOutQuart' },
+  };
+  
+  // Category legend with percentages
+  const legend = Object.keys(periodCategoryTotals).map((cat, i) => {
+    const percent = total ? ((periodCategoryTotals[cat] / total) * 100).toFixed(1) : 0;
+    return { name: cat, color: allCategoryColors[cat] || '#9ca3af', percent };
+  });
+  
   return (
     <div className={`relative flex flex-col items-center w-full ${className}`} style={{ touchAction: 'manipulation', overflowX: 'hidden' }}>
       {/* Loading Overlay */}
@@ -1700,7 +1780,7 @@ Reply with a JSON object enclosed in triple backticks:
                 <svg className="absolute left-6 top-6 h-4 w-4 animate-bounce-slow" style={{animationDelay: '0.2s'}} viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="1.5" fill="#fbbf24"/><circle cx="14" cy="4" r="1" fill="#38bdf8"/><circle cx="3" cy="12" r="1.2" fill="#a78bfa"/></svg>
                 <svg className="absolute right-6 top-8 h-3 w-3 animate-bounce-slow-delayed" style={{animationDelay: '0.6s'}} viewBox="0 0 12 12" fill="none"><rect x="6" y="1" width="1.5" height="1.5" rx=".75" fill="#f472b6"/><rect x="10" y="8" width="1" height="1" rx=".5" fill="#fbbf24"/></svg>
                 <svg className="absolute left-8 bottom-6 h-2 w-2 animate-bounce-slow" style={{animationDelay: '1s'}} viewBox="0 0 8 8" fill="none"><circle cx="4" cy="4" r="1" fill="#34d399"/></svg>
-                </div>
+              </div>
               {/* Dancing Receipt with Face */}
               <div className="animate-[wiggle_1.2s_ease-in-out_infinite] drop-shadow-2xl">
                 <svg
@@ -1726,14 +1806,14 @@ Reply with a JSON object enclosed in triple backticks:
                   <path d="M20 48 Q24 52 28 48" stroke="#64748b" strokeWidth="2" fill="none" strokeLinecap="round"/>
                 </svg>
               </div>
-                </div>
+            </div>
             
             {/* Text without a wrapping card/box */}
             <p className="text-xl font-medium text-white" style={{textShadow: '0 2px 8px rgba(0,0,0,0.5)'}}>Processing your receipt...</p>
             <p className="text-lg text-blue-300 animate-pulse" style={{textShadow: '0 2px 8px rgba(0,0,0,0.5)'}}>{currentFunnyMessage} <span role="img" aria-label="fun">🎉</span></p>
           </div>
-          </div>
-        )}
+        </div>
+      )}
 
       {/* Main Content Area */}
       <div
@@ -1847,98 +1927,7 @@ Reply with a JSON object enclosed in triple backticks:
                     </div>
                 ) : (
                   <div className="grid grid-cols-1 gap-4 w-full md:max-h-[400px] md:overflow-y-auto md:overflow-x-hidden mb-12">
-                    {(() => {
-                      // First, sort all receipts by transaction date (newest first) for consistent ordering
-                      const sortedReceipts = [...receipts].sort((a, b) => {
-                        // Prioritize transactionDate over date over createdAt for sorting
-                        const dateA = normalizeToLocalMidnight(a.transactionDate || a.date || a.createdAt);
-                        const dateB = normalizeToLocalMidnight(b.transactionDate || b.date || b.createdAt);
-                        
-                        if (!dateA && !dateB) return 0;
-                        if (!dateA) return 1; // Put receipts without dates at the end
-                        if (!dateB) return -1;
-                        return dateB - dateA; // Newest first
-                      });
-
-                      // Group receipts by month with world-class date handling
-                      const groupedReceipts = sortedReceipts.reduce((groups, receipt) => {
-                        // Use transactionDate for grouping, not upload date
-                        const date = normalizeToLocalMidnight(receipt.transactionDate || receipt.date || receipt.createdAt);
-                        if (!date) return groups;
-                        
-                        const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-                        if (!groups[monthKey]) {
-                          groups[monthKey] = {
-                            month: date.getMonth(),
-                            year: date.getFullYear(),
-                            receipts: []
-                          };
-                        }
-                        groups[monthKey].receipts.push(receipt);
-                        return groups;
-                      }, {});
-
-                      // Sort months in descending order (newest first)
-                      const sortedMonths = Object.keys(groupedReceipts).sort((a, b) => b.localeCompare(a));
-
-                      return sortedMonths.map(monthKey => {
-                        const group = groupedReceipts[monthKey];
-                        const currentMonthLabel = new Date(group.year, group.month).toLocaleDateString(undefined, { 
-                          month: 'short', 
-                          year: 'numeric' 
-                        }).replace(/^[a-z]/, letter => letter.toUpperCase());
-
-                        return (
-                          <div key={monthKey} className="space-y-3">
-                            {/* Month Header - World Class Modern Design */}
-                            <div className="sticky top-0 z-10 bg-gradient-to-r from-blue-900/90 via-slate-800/90 to-blue-900/90 backdrop-blur-md border border-blue-400/20 rounded-xl px-4 py-3 shadow-lg">
-                              <div className="flex items-center justify-between">
-                                <h3 className="text-lg font-bold text-blue-100 tracking-wide">
-                                  {currentMonthLabel}
-                                </h3>
-                                <div className="flex items-center space-x-2">
-                                  {/* Total Spending */}
-                                  <span className="text-sm text-blue-200/90 font-medium bg-blue-800/40 rounded px-2 py-1">
-                                    {formatCurrency(
-                                      group.receipts.reduce((total, receipt) => {
-                                        const amount = parseFloat(receipt.total) || 0;
-                                        return total + amount;
-                                      }, 0),
-                                      'EUR'
-                                    )}
-                                  </span>
-                                  {/* Receipt Count */}
-                                  <div className="flex items-center space-x-1">
-                                    <div className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-pulse"></div>
-                                    <span className="text-xs text-blue-200/80 font-medium">
-                                      {group.receipts.length}
-                                    </span>
-                                  </div>
-                                </div>
-                              </div>
-                              {/* Subtle gradient line */}
-                              <div className="mt-2 h-px bg-gradient-to-r from-transparent via-blue-400/40 to-transparent"></div>
-                            </div>
-                            
-                            {/* Receipts for this month - sorted by transaction date (newest first) */}
-                            <div className="space-y-3 pl-2">
-                              {group.receipts
-                                .sort((a, b) => {
-                                  // Prioritize transactionDate over date over createdAt for sorting
-                                  const dateA = normalizeToLocalMidnight(a.transactionDate || a.date || a.createdAt);
-                                  const dateB = normalizeToLocalMidnight(b.transactionDate || b.date || b.createdAt);
-                                  if (!dateA && !dateB) return 0;
-                                  if (!dateA) return 1; // Put receipts without dates at the end
-                                  if (!dateB) return -1;
-                                  return dateB - dateA; // Newest first
-                                })
-                                .map((receipt) => renderReceiptCard(receipt))
-                              }
-                            </div>
-                          </div>
-                        );
-                      });
-                    })()}
+                    {receipts.map((receipt) => renderReceiptCard(receipt))}
                     </div>
                 )}
             </CardContent>
@@ -2373,72 +2362,14 @@ Reply with a JSON object enclosed in triple backticks:
                   <div>
                     <div className="text-sm font-semibold text-blue-200 mb-1">Recent Receipts</div>
                     <div className="flex flex-col gap-2">
-                      {(() => {
-                        // Get all receipts for this category, sorted by date (newest first)
-                        const categoryReceipts = receipts
-                          .filter(r => (r.category || 'Uncategorized') === selectedCategory.name)
+                      {receipts.filter(r => (r.category || 'Uncategorized') === selectedCategory.name)
                         .sort((a, b) => {
                           const da = new Date(a.transactionDate || a.date || a.createdAt);
                           const db = new Date(b.transactionDate || b.date || b.createdAt);
                           return db - da;
                         })
-                          .slice(0, 10); // Show more receipts since we're grouping
-
-                        // Group receipts by month
-                        const groupedReceipts = [];
-                        let currentMonth = null;
-                        let currentMonthLabel = null;
-                        let currentMonthReceipts = [];
-
-                        categoryReceipts.forEach((receipt, index) => {
-                          const receiptDate = new Date(receipt.transactionDate || receipt.date || receipt.createdAt);
-                          const monthKey = `${receiptDate.getFullYear()}-${receiptDate.getMonth()}`;
-                          const monthLabel = receiptDate.toLocaleDateString(undefined, { 
-                            month: 'long', 
-                            year: 'numeric' 
-                          }).replace(/^[a-z]/, letter => letter.toUpperCase());
-
-                          if (monthKey !== currentMonth) {
-                            // Save previous month's receipts if any
-                            if (currentMonthReceipts.length > 0 && currentMonthLabel) {
-                              groupedReceipts.push({
-                                type: 'month',
-                                label: currentMonthLabel,
-                                receipts: currentMonthReceipts
-                              });
-                            }
-                            // Start new month
-                            currentMonth = monthKey;
-                            currentMonthLabel = monthLabel;
-                            currentMonthReceipts = [receipt];
-                          } else {
-                            // Add to current month
-                            currentMonthReceipts.push(receipt);
-                          }
-                        });
-
-                        // Add the last month's receipts
-                        if (currentMonthReceipts.length > 0 && currentMonthLabel) {
-                          groupedReceipts.push({
-                            type: 'month',
-                            label: currentMonthLabel,
-                            receipts: currentMonthReceipts
-                          });
-                        }
-
-                        return groupedReceipts.map((monthGroup, monthIndex) => (
-                          <div key={monthIndex} className="space-y-2">
-                            {/* Month separator */}
-                            <div className="flex items-center gap-2 py-1">
-                              <div className="flex-1 h-px bg-gradient-to-r from-transparent via-blue-400/30 to-transparent"></div>
-                              <span className="text-xs font-semibold text-blue-300/80 px-2 py-1 bg-blue-400/10 rounded-full">
-                                {monthGroup.label}
-                              </span>
-                              <div className="flex-1 h-px bg-gradient-to-r from-transparent via-blue-400/30 to-transparent"></div>
-                            </div>
-                            
-                            {/* Receipts for this month */}
-                            {monthGroup.receipts.map((r, idx) => {
+                        .slice(0, 5)
+                        .map((r, idx) => {
                           const isExpanded = expandedInCategoryModalId === r.id;
                           return (
                             <div key={r.id || idx} className="bg-slate-800/80 rounded-lg shadow-inner overflow-hidden transition-all duration-300 ease-in-out">
@@ -2465,31 +2396,28 @@ Reply with a JSON object enclosed in triple backticks:
                               {/* Expanded content */}
                               <div
                                 style={{ maxHeight: isExpanded ? '250px' : '0px' }}
-                                    className="transition-all duration-300 ease-in-out"
-                                  >
-                                    <div className="p-3 border-t border-white/10">
-                                      <div className="text-xs text-gray-400 mb-1">Items:</div>
-                                      {r.items && r.items.length > 0 ? (
-                                        <ul className="text-xs text-gray-300 space-y-0.5">
-                                          {r.items.map((item, i) => (
-                                            <li key={i} className="flex justify-between">
-                                              <span>{item.name}</span>
-                                              <span>{formatCurrency(item.price, r.currency || settings?.baseCurrency || 'EUR')}</span>
-                                          </li>
-                                        ))}
-                                      </ul>
-                                      ) : (
-                                        <p className="text-xs text-gray-500">No items listed.</p>
-                                      )}
+                                className="transition-all duration-300 ease-in-out"
+                              >
+                                <div className="p-3 border-t border-white/10">
+                                  <div className="text-xs text-gray-400 mb-1">Items:</div>
+                                  {r.items && r.items.length > 0 ? (
+                                    <ul className="text-xs text-gray-300 space-y-0.5">
+                                      {r.items.map((item, i) => (
+                                        <li key={i} className="flex justify-between">
+                                          <span>{item.name}</span>
+                                          <span>{formatCurrency(item.price, r.currency || settings?.baseCurrency || 'EUR')}</span>
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  ) : (
+                                    <p className="text-xs text-gray-500">No items listed.</p>
+                                  )}
                                 </div>
                               </div>
                             </div>
                           );
                         })}
                     </div>
-                        ));
-                      })()}
-                  </div>
                   </div>
                 </div>
               </ScrollArea>
@@ -2623,10 +2551,6 @@ export function ExpensesDashboard({ totalExpenses, categoryTotals, formatCurrenc
             <div className="text-xs font-semibold text-gray-300 mb-1 tracking-wide overflow-hidden" style={{letterSpacing: 1}}>TOTAL SPENT</div>
             <div className="text-3xl xs:text-4xl md:text-5xl font-extrabold text-indigo-200 mb-1 text-center" style={{overflow: 'hidden', whiteSpace: 'nowrap', maxWidth: '100%', padding: '0 0.5rem'}}>{formatCurrency(totalExpenses, settings?.baseCurrency || 'EUR')}</div>
             <div className="text-xs text-gray-400 overflow-hidden">{categoryLabels.length} categories</div>
-            {/* Current month indicator */}
-            <div className="text-[8px] text-blue-400/60 mt-1 tracking-wider uppercase overflow-hidden" style={{letterSpacing: 1}}>
-              THIS MONTH ONLY
-            </div>
           </div>
         </div>
         {/* Category Cards Grid (mobile-friendly) */}
@@ -2671,31 +2595,6 @@ export function ExpensesDashboard({ totalExpenses, categoryTotals, formatCurrenc
 }
 
 export function ReceiptsList({ receipts, renderReceiptCard, isFirestoreLoading, firestoreError, fetchReceipts, currentFunnyMessage, settings }) {
-  // Helper to robustly normalize a date string/object to local midnight
-  const normalizeToLocalMidnight = (d) => {
-    if (!d) return null;
-    if (typeof d.toDate === 'function') { d = d.toDate(); } // Handle Firestore Timestamps
-    if (typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d)) {
-      // Parse as local date (YYYY-MM-DD)
-      const [year, month, day] = d.split('-').map(Number);
-      return new Date(year, month - 1, day);
-    }
-    const date = new Date(d);
-    if (isNaN(date)) return null;
-    return new Date(date.getFullYear(), date.getMonth(), date.getDate());
-  };
-
-  // Sort receipts by transaction date (newest first) for consistent ordering
-  const sortedReceipts = [...receipts].sort((a, b) => {
-    // Prioritize transactionDate over date over createdAt for sorting
-    const dateA = normalizeToLocalMidnight(a.transactionDate || a.date || a.createdAt);
-    const dateB = normalizeToLocalMidnight(b.transactionDate || b.date || b.createdAt);
-    if (!dateA && !dateB) return 0;
-    if (!dateA) return 1; // Put receipts without dates at the end
-    if (!dateB) return -1;
-    return dateB - dateA; // Newest first
-  });
-
   return (
     <Card className="w-full max-w-sm p-6">
       <CardHeader>
@@ -2716,7 +2615,7 @@ export function ReceiptsList({ receipts, renderReceiptCard, isFirestoreLoading, 
           <p className="text-center text-gray-500">No receipts yet. Upload one to get started!</p>
         ) : (
           <div className="grid grid-cols-1 gap-4 max-h-[400px] overflow-y-auto">
-            {sortedReceipts.map((receipt) => renderReceiptCard(receipt))}
+            {receipts.map((receipt) => renderReceiptCard(receipt))}
           </div>
         )}
       </CardContent>
@@ -2730,24 +2629,23 @@ function InsightsSection({ receipts = [], categoryTotals = {}, formatCurrency, s
   // --- Date helpers ---
   const today = new Date();
   let periodStart, periodEnd, periodLabel;
-  const weekStartsOn = (settings?.weekStartsOn || 'monday').toLowerCase();
   if (period === 'week') {
     periodStart = new Date(today);
     periodStart.setHours(0, 0, 0, 0);
-    // 0 = Sunday, 1 = Monday
-    let dayOfWeek = today.getDay();
-    let offset = weekStartsOn === 'monday' ? (dayOfWeek === 0 ? -6 : 1 - dayOfWeek) : -dayOfWeek;
-    periodStart.setDate(today.getDate() + offset);
+    // Start week on Monday (1) instead of Sunday (0)
+    const dayOfWeek = today.getDay();
+    const daysToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1; // If Sunday, go back 6 days; otherwise go back (dayOfWeek - 1) days
+    periodStart.setDate(today.getDate() - daysToMonday);
     periodEnd = new Date(periodStart);
-    periodEnd.setDate(periodStart.getDate() + 6);
+    periodEnd.setDate(periodStart.getDate() + 6); // Monday to Sunday (7 days)
     periodEnd.setHours(23, 59, 59, 999);
     const formatShort = d => d.toLocaleDateString(undefined, { day: '2-digit', month: 'short' });
-    periodLabel = `${formatShort(periodStart)} - ${formatShort(periodEnd)}`.replace(/\b[a-z]/g, letter => letter.toUpperCase());
+    periodLabel = `${formatShort(periodStart)} - ${formatShort(periodEnd)}`;
   } else {
     periodStart = new Date(today.getFullYear(), today.getMonth(), 1, 0, 0, 0, 0);
     periodEnd = new Date(today.getFullYear(), today.getMonth() + 1, 0, 23, 59, 59, 999);
     const formatShort = d => d.toLocaleDateString(undefined, { day: '2-digit', month: 'short' });
-    periodLabel = `${formatShort(periodStart)} - ${formatShort(periodEnd)}`.replace(/\b[a-z]/g, letter => letter.toUpperCase());
+    periodLabel = `${formatShort(periodStart)} - ${formatShort(periodEnd)}`;
   }
 
   // Helper to robustly normalize a date string/object to local midnight
@@ -2786,30 +2684,19 @@ function InsightsSection({ receipts = [], categoryTotals = {}, formatCurrency, s
   let dailyData, labelsWithDates;
 
   if (period === 'week') {
-    // Calculate the weekday indices for the week (0=Sunday, 1=Monday, ...)
-    let weekDays = [];
-    if (weekStartsOn === 'monday') {
-      weekDays = [1,2,3,4,5,6,0]; // Mon-Sun
-    } else {
-      weekDays = [0,1,2,3,4,5,6]; // Sun-Sat
-    }
-    const weekDates = weekDays.map((weekday, i) => {
-      const d = new Date(periodStart);
-      d.setDate(periodStart.getDate() + i);
-      return d;
-    });
+    const weekDates = Array.from({ length: 7 }, (_, i) => new Date(periodStart.getFullYear(), periodStart.getMonth(), periodStart.getDate() + i));
     labelsWithDates = weekDates.map(d => ({
       short: d.toLocaleDateString(undefined, { weekday: 'short' })[0],
       full: d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric' })
     }));
-    dailyData = weekDays.map(() => ({ categories: {}, total: 0 }));
+    dailyData = Array.from({ length: 7 }, () => ({ categories: {}, total: 0 }));
 
     periodReceipts.forEach(r => {
       const date = normalizeToLocalMidnight(r.date || r.transactionDate || r.createdAt);
       if (date) {
-        // Find the index in weekDates that matches this date
-        const dayIndex = weekDates.findIndex(d => d.getTime() === date.getTime());
-        if (dayIndex !== -1) {
+        // Calculate day index for Monday-Sunday week (0=Monday, 6=Sunday)
+        const dayIndex = (date.getDay() + 6) % 7; // Convert Sunday=0 to Monday=0
+        if (dayIndex >= 0 && dayIndex < 7) {
           const category = r.category || 'Uncategorized';
           const amount = parseFloat(r.total) || 0;
           dailyData[dayIndex].categories[category] = (dailyData[dayIndex].categories[category] || 0) + amount;
@@ -2855,10 +2742,6 @@ function InsightsSection({ receipts = [], categoryTotals = {}, formatCurrency, s
   
   const total = expenses;
 
-  // Calculate dynamic y-axis max value
-  const maxValue = Math.max(...chartTotals);
-  const yAxisMax = maxValue > 0 ? Math.ceil(maxValue * 1.2) : 100; // Add 20% padding, minimum 100
-
   // Get all unique categories from the period
   const allCategories = [...new Set(Object.keys(periodCategoryTotals))];
   
@@ -2869,10 +2752,10 @@ function InsightsSection({ receipts = [], categoryTotals = {}, formatCurrency, s
       label: category,
       data: categoryData,
       backgroundColor: allCategoryColors[category] || '#9ca3af',
-        borderRadius: 12,
-        barPercentage: 0.6,
-        categoryPercentage: 0.7,
-        borderSkipped: false,
+      borderRadius: 12,
+      barPercentage: 0.6,
+      categoryPercentage: 0.7,
+      borderSkipped: false,
       stack: 'stack0', // This makes it a stacked bar
     };
   });
@@ -2923,28 +2806,6 @@ function InsightsSection({ receipts = [], categoryTotals = {}, formatCurrency, s
           },
         },
       },
-      annotation: {
-        annotations: {
-          averageLine: {
-            type: 'line',
-            yMin: spentPerDay,
-            yMax: spentPerDay,
-            borderColor: 'rgba(120,120,120,0.7)',
-            borderWidth: 2,
-            borderDash: [6, 6],
-            label: {
-              display: true,
-              content: 'Average',
-              color: '#888',
-              backgroundColor: 'transparent',
-              font: { weight: 'bold', size: 10 },
-              position: 'right',
-              padding: 0,
-            },
-            z: 10,
-          },
-        },
-      },
     },
     scales: {
       x: {
@@ -2953,18 +2814,9 @@ function InsightsSection({ receipts = [], categoryTotals = {}, formatCurrency, s
       },
       y: {
         grid: { drawBorder: false, color: 'rgba(226, 232, 240, 0.1)' },
+        ticks: { color: '#94a3b8' },
         beginAtZero: true,
-        max: yAxisMax,
-        ticks: {
-          color: '#94a3b8',
-          callback: function(value) {
-            return formatCurrency(Math.round(value), settings?.baseCurrency || 'EUR');
-          },
-          // Dynamic step size based on data range
-          stepSize: maxValue > 1000 ? Math.ceil(maxValue / 5) : 
-                   maxValue > 100 ? Math.ceil(maxValue / 4) : 
-                   maxValue > 10 ? Math.ceil(maxValue / 3) : 1
-        },
+        max: Math.max(60, Math.ceil(Math.max(...chartTotals) / 10) * 10),
       },
     },
     responsive: true,
@@ -3013,9 +2865,6 @@ function InsightsSection({ receipts = [], categoryTotals = {}, formatCurrency, s
               <span className="inline-block w-6 h-3 rounded-full" style={{background: l.color}}></span>
               <span className="text-xs font-semibold text-gray-700">{l.name}</span>
               <span className="text-xs text-gray-400">{l.percent}%</span>
-              <span className="text-xs text-gray-500 font-medium">
-                {formatCurrency(periodCategoryTotals[l.name], settings?.baseCurrency || 'EUR')}
-              </span>
             </div>
           ))}
         </div>

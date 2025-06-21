@@ -1,4 +1,5 @@
 import { AuthProvider, useAuth } from "@/contexts/AuthContext"
+import { LoadingProvider } from "@/contexts/LoadingContext"
 import { useState } from 'react';
 import ReceiptUploader from './components/ReceiptUploader'
 import LandingPage from './components/LandingPage'
@@ -11,18 +12,18 @@ import MobileNavBar from './components/MobileNavBar';
 function ExpensesScreen(props) {
   // This is the summary/dashboard part of ReceiptUploader
   // You may want to extract just the summary/dashboard from ReceiptUploader for a cleaner split
-  return <ReceiptUploader {...props} showOnly="expenses" />;
+  return <ReceiptUploader {...props} showOnly="expenses" onTabChange={props.onTabChange} />;
 }
 
 function ReceiptsScreen(props) {
   // This is the receipts list part of ReceiptUploader
   // You may want to extract just the receipts list from ReceiptUploader for a cleaner split
-  return <ReceiptUploader {...props} showOnly="receipts" />;
+  return <ReceiptUploader {...props} showOnly="receipts" onTabChange={props.onTabChange} />;
 }
 
 function UploadScreen(props) {
   // This is the upload methods part of ReceiptUploader
-  return <ReceiptUploader {...props} showOnly="upload" />;
+  return <ReceiptUploader {...props} showOnly="upload" onTabChange={props.onTabChange} />;
 }
 
 function RootContent() {
@@ -38,11 +39,11 @@ function RootContent() {
   if (!user) {
     mainContent = <LandingPage className="flex-grow" />;
   } else if (currentTab === 'expenses') {
-    mainContent = <ExpensesScreen />;
+    mainContent = <ExpensesScreen onTabChange={setCurrentTab} />;
   } else if (currentTab === 'receipts') {
-    mainContent = <ReceiptsScreen />;
+    mainContent = <ReceiptsScreen onTabChange={setCurrentTab} />;
   } else if (currentTab === 'upload') {
-    mainContent = <UploadScreen />;
+    mainContent = <UploadScreen onTabChange={setCurrentTab} />;
   } else if (currentTab === 'settings') {
     mainContent = <Settings onClose={() => setCurrentTab('expenses')} />;
   }
@@ -67,7 +68,9 @@ function RootContent() {
 function App() {
   return (
     <AuthProvider>
-      <RootContent /> {/* Render the RootContent component inside AuthProvider */}
+      <LoadingProvider>
+        <RootContent /> {/* Render the RootContent component inside AuthProvider */}
+      </LoadingProvider>
     </AuthProvider>
   );
 }

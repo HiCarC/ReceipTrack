@@ -36,7 +36,8 @@ const DEFAULT_SETTINGS = {
     defaultFormat: 'csv',
     includeOriginalAmounts: true,
     includeConvertedAmounts: true
-  }
+  },
+  weekStartsOn: 'monday' // 'monday' or 'sunday'
 };
 
 // Load settings from localStorage

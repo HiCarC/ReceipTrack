@@ -25,10 +25,21 @@ module.exports = {
           "0%, 100%": { transform: "translateY(0) rotate(6deg)" },
           "50%": { transform: "translateY(-20px) rotate(6deg)" },
         },
+        "pulse-ring": {
+          "0%": {
+            transform: "scale(0.8)",
+            opacity: "1",
+          },
+          "80%, 100%": {
+            transform: "scale(2.5)",
+            opacity: "0",
+          }
+        }
       },
       animation: {
         "bounce-slow": "bounce-slow 2s ease-in-out infinite",
         "bounce-slow-delayed": "bounce-slow-delayed 2s ease-in-out infinite 1s",
+        "pulse-ring": "pulse-ring 1.5s cubic-bezier(0.215, 0.61, 0.355, 1) infinite",
       },
       colors: {
         border: "hsl(var(--border))",

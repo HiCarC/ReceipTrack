@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useAuth } from "@/contexts/AuthContext";
+import { useLoading } from "@/contexts/LoadingContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -14,6 +15,7 @@ const EMOJI_OPTIONS = ["😃", "🦄", "🐱", "🐶", "🦊", "🐼", "🐸", "
 
 export default function AuthHeader() {
   const { user, signInWithGoogle, signOutUser, signInWithEmail, signUpWithEmail, sendPasswordReset, sendEmailVerification, updateUserProfile, auth, updateEmail, updateDisplayName } = useAuth();
+  const { isLoading } = useLoading();
   const [showModal, setShowModal] = useState(false);
   const [isSignUp, setIsSignUp] = useState(false);
   const [email, setEmail] = useState("");
@@ -346,6 +348,10 @@ export default function AuthHeader() {
   };
 
   const [showAvatarModal, setShowAvatarModal] = useState(false);
+
+  if (isLoading) {
+    return null;
+  }
 
   return (
     <header className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 w-full overflow-x-hidden overflow-y-hidden ${

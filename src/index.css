@@ -207,5 +207,14 @@ header, .fixed.top-0, .sticky.top-0 {
 }
 
 .animate-content-fade-in {
-  animation: content-fade-in 0.4s ease-out;
+  animation: content-fade-in 0.5s ease-out forwards;
+}
+
+/* Force hide scrollbar utility */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;  /* IE and Edge */
+  scrollbar-width: none;  /* Firefox */
 } 

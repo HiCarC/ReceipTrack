@@ -1,4 +1,5 @@
 import React, { useEffect, useRef } from 'react';
+import { useLoading } from "@/contexts/LoadingContext";
 import { Camera } from 'lucide-react';
 
 // Custom SVGs for premium look
@@ -31,6 +32,8 @@ const ReceiptSVG = ({ className }) => (
 );
 
 export default function MobileNavBar({ currentTab, onTabChange }) {
+  const { isLoading } = useLoading();
+
   // Haptic feedback on tab change
   const handleTabChange = (tab) => {
     if (window.navigator && window.navigator.vibrate) {
@@ -46,6 +49,10 @@ export default function MobileNavBar({ currentTab, onTabChange }) {
       navRef.current.classList.add('animate-fade-slide-up');
     }
   }, []);
+
+  if (isLoading) {
+    return null;
+  }
 
   return (
     <>

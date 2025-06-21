@@ -1,4 +1,3 @@
-import React, { useState, useEffect, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -35,10 +34,9 @@ import {
 } from "./ui/scroll-area";
 import { Doughnut, Line, Pie, Bar } from 'react-chartjs-2';
 import { Chart, ArcElement, Tooltip, Legend, CategoryScale, LinearScale, PointElement, LineElement, TimeScale, Filler, BarElement } from 'chart.js';
-import annotationPlugin from 'chartjs-plugin-annotation';
 import { CircularProgressbarWithChildren, buildStyles } from 'react-circular-progressbar';
 import 'react-circular-progressbar/dist/styles.css';
-Chart.register(ArcElement, Tooltip, Legend, CategoryScale, LinearScale, PointElement, LineElement, TimeScale, Filler, BarElement, annotationPlugin);
+Chart.register(ArcElement, Tooltip, Legend, CategoryScale, LinearScale, PointElement, LineElement, TimeScale, Filler, BarElement);
 
 // Define supported currencies
 const SUPPORTED_CURRENCIES = [
@@ -345,16 +343,6 @@ export default function ReceiptUploader({ className, showOnly, onTabChange }) {
       return acc;
     }, {});
     setCategoryTotals(categorySums);
-
-    // Debug logging to verify current month filtering
-    console.log('Current Month Filtering:', {
-      totalReceipts: receipts.length,
-      currentMonthReceipts: currentMonthReceipts.length,
-      currentMonthStart: currentMonthStart.toISOString().split('T')[0],
-      currentMonthEnd: currentMonthEnd.toISOString().split('T')[0],
-      totalExpenses: total,
-      categoryTotals: categorySums
-    });
   }, [receipts]);
 
   useEffect(() => {
@@ -1186,10 +1174,10 @@ export default function ReceiptUploader({ className, showOnly, onTabChange }) {
       canvasRef.current.toBlob((blob) => {
         const capturedFile = new File([blob], 'captured-receipt.jpg', { type: 'image/jpeg' });
         setFile(capturedFile); // Set the file for OCR processing
-      setPreviewImageSrc(canvasRef.current.toDataURL('image/jpeg'));
-      setShowFullScreenPreview(true);
-      setIsCameraOpen(false); // Close the camera modal after capturing
-      stopCamera(); // Stop the camera stream
+        setPreviewImageSrc(canvasRef.current.toDataURL('image/jpeg'));
+        setShowFullScreenPreview(true);
+        setIsCameraOpen(false); // Close the camera modal after capturing
+        stopCamera(); // Stop the camera stream
       }, 'image/jpeg', 0.9);
     }
   };
@@ -1197,7 +1185,7 @@ export default function ReceiptUploader({ className, showOnly, onTabChange }) {
   const handleConfirmPreview = () => {
     setShowFullScreenPreview(false);
     if (file) {
-    processOCR(file);
+      processOCR(file);
     } else {
       // Fallback: if no file object, create one from the preview image
       fetch(previewImageSrc)
@@ -1274,99 +1262,57 @@ export default function ReceiptUploader({ className, showOnly, onTabChange }) {
               content: [
                 {
                   type: "text",
-                  text: `You are an expert receipt analysis system with specialized expertise in date detection and parsing. Analyze this receipt image and extract the following information in JSON format with particular attention to DATE DETECTION.
+                  text: `Analyze this receipt image and extract the following information in JSON format:
+1. Store/Merchant name
+2. Total amount
+3. Subtotal (if present)
+4. Date
+5. Category (choose from: Groceries, Dining, Transportation, Shopping, Bills, Entertainment, Health, Other)
+6. Payment Method (e.g., Cash, Credit Card, Debit Card, Mobile Payment, Bank Transfer, Voucher, Other)
+7. Currency (detect from the receipt, looking for currency symbols or codes like €, $, £, ¥, etc.)
+8. Items (list of items with their prices)
 
-## EXPERT DATE DETECTION INSTRUCTIONS:
+If there are discounts (e.g., 'Discount', 'Rabatt', 'Descuento', 'Remise', 'Sconto', etc.), include each discount as an item in the 'items' array, with a negative price and a clear description (e.g., {"name": "Discount", "price": "-2.00"}). Do not use a separate 'discounts' field.
 
-### 1. DATE LOCATION PRIORITY (in order of preference):
-- **Header/Logo area**: Often contains the most reliable date
-- **Transaction date line**: Usually near the top, labeled "Date:", "Datum:", "Fecha:", "Data:", etc.
-- **Timestamp**: Look for "Time:", "Uhrzeit:", "Hora:", "Ora:", etc. (use date portion)
-- **Footer area**: Sometimes contains date information
-- **Receipt number line**: Often includes date (e.g., "Receipt #12345 - 15/06/2024")
-- **Cashier/terminal info**: May include date stamps
+For subtotal, look for lines or sections labeled 'Subtotal', 'Sous-total', 'Zwischensumme', 'Sub-total', or similar, usually just above the tax or total. Return the value as a string if found, or leave blank/null if not present.
 
-### 2. DATE FORMAT RECOGNITION:
-Recognize and handle these formats intelligently:
-- **European**: DD/MM/YYYY, DD.MM.YYYY, DD-MM-YYYY, DD MM YYYY
-- **American**: MM/DD/YYYY, MM-DD-YYYY, MM.DD.YYYY
-- **ISO**: YYYY-MM-DD, YYYY/MM/DD
-- **Text formats**: "15th June 2024", "June 15, 2024", "15 Jun 2024"
-- **Abbreviated**: "15/06/24", "06/15/24", "15.06.24"
-- **Mixed separators**: "15-06.2024", "15/06-2024"
+For payment method, use all available clues to infer the most probable method, even if not explicitly stated. Look for:
+- Card numbers (e.g., ****1234, VISA, Mastercard, AMEX, Maestro, Discover, UnionPay, Carte Bancaire, etc.)
+- Payment terminal info (POS, EFT, terminal IDs, Auth #, Approval #)
+- Cash indicators ("Paid by cash", "cash tendered", "change given", "amount due: 0.00")
+- Mobile payment ("Apple Pay", "Google Pay", "Samsung Pay", "NFC", "Contactless", "QR code", "WeChat Pay", "Alipay")
+- Bank transfer ("IBAN", "BIC", "Sort code", "Bank name", "SEPA", "Wire transfer")
+- Vouchers/gift cards ("Gift card", "Voucher", "Store credit")
+- Split/multiple payments ("Split payment", "Partial card, partial cash")
+- Payment logos or icons
+- Words like 'CASH', 'CARD', 'DEBIT', 'CREDIT', 'TRANSFER', 'MOBILE', 'CONTACTLESS', etc.
 
-### 3. AMBIGUOUS DATE RESOLUTION:
-- **DD/MM vs MM/DD**: Use context clues (currency, language, store location)
-- **Year ambiguity**: "24" → assume "2024" for recent receipts
-- **Missing year**: Use current year if not specified
-- **Multiple dates**: Choose the transaction date over print date, issue date, etc.
+If multiple payment methods are detected, return the most likely one in 'payment_method', and list alternatives in 'payment_method_alternatives' (array).
+If the method is not explicit, make an educated guess based on these clues and the context. If truly unknown, return 'Other'.
 
-### 4. RELATIVE DATE HANDLING:
-- "Today", "Heute", "Hoy", "Oggi" → current date
-- "Yesterday", "Gestern", "Ayer", "Ieri" → yesterday's date
-- "Last week", "Letzte Woche", "La semana pasada" → calculate relative date
+Also include:
+- 'payment_method_reason': a short explanation of why you chose this method.
+- 'payment_method_confidence': a value from 0 (low) to 1 (high) indicating your confidence in the guess.
 
-### 5. LANGUAGE-SPECIFIC DATE PATTERNS:
-- **German**: "Datum:", "Ausgestellt am:", "Druckdatum:"
-- **Spanish**: "Fecha:", "Fecha de emisión:", "Fecha de impresión:"
-- **French**: "Date:", "Date d'émission:", "Date d'impression:"
-- **Italian**: "Data:", "Data di emissione:", "Data di stampa:"
-- **Portuguese**: "Data:", "Data de emissão:", "Data de impressão:"
-- **Dutch**: "Datum:", "Uitgegeven op:", "Drukdatum:"
+For currency detection, look for:
+- Currency symbols (€, $, £, ¥, etc.)
+- Currency codes (EUR, USD, GBP, JPY, etc.)
+- Regional formats (e.g., €1.234,56 for European format, $1,234.56 for US format)
+- Currency indicators in the header or footer of the receipt
+- Currency mentioned in the payment section
+- Currency symbols next to prices
 
-### 6. EDGE CASES:
-- **Handwritten dates**: Look for clear, legible handwritten dates
-- **Stamped dates**: Often in receipt footer or margins
-- **Thermal print dates**: May be faint or partially printed
-- **Multiple timezones**: Use the local timezone of the receipt
-- **Future dates**: Flag if date appears to be in the future (likely error)
-
-### 7. DATE VALIDATION:
-- Ensure the date is reasonable (not in distant past/future)
-- Check for obvious OCR errors (e.g., "2024" vs "202A")
-- Validate day/month ranges (1-31 for days, 1-12 for months)
-- Handle leap years correctly
-
-## COMPLETE RECEIPT ANALYSIS:
-
-Extract the following information in JSON format:
-
-1. **Store/Merchant name** - The business name
-2. **Total amount** - The final total to be paid
-3. **Subtotal** - Amount before tax (if present)
-4. **Date** - Use expert date detection above (return in YYYY-MM-DD format)
-5. **Category** - Choose from: Groceries, Dining, Transportation, Shopping, Bills, Entertainment, Health, Other
-6. **Payment Method** - Most likely payment method with confidence score
-7. **Currency** - 3-letter currency code (EUR, USD, GBP, etc.)
-8. **Items** - List of items with prices (include discounts as negative items)
-
-## DATE DETECTION CONFIDENCE:
-
-For the date field, also include:
-- **date_confidence**: 0-1 score indicating confidence in date detection
-- **date_source**: Where the date was found (e.g., "header", "transaction_line", "footer")
-- **date_format_detected**: The original format detected (e.g., "DD/MM/YYYY", "MM/DD/YYYY")
-- **date_notes**: Any relevant notes about date detection (e.g., "ambiguous format resolved using currency context")
-
-## RESPONSE FORMAT:
-
-Reply with a JSON object enclosed in triple backticks:
-
-\`\`\`json
+Reply with a JSON object enclosed in triple backticks like this:\n\`\`\`json
 {
   "store": "Store Name",
   "amount": "23.50",
   "subtotal": "20.00",
-  "date": "2024-06-15",
-  "date_confidence": 0.95,
-  "date_source": "transaction_line",
-  "date_format_detected": "DD/MM/YYYY",
-  "date_notes": "Clear date found in transaction line",
-  "category": "Groceries",
+  "date": "13/06/2025",
+  "category": "Category Name",
   "payment_method": "Credit Card",
-  "payment_method_alternatives": ["Cash"],
-  "payment_method_reason": "VISA card number detected",
-  "payment_method_confidence": 0.9,
+  "payment_method_alternatives": ["Cash", "Mobile Pay"],
+  "payment_method_reason": "Found 'VISA' and card number ****1234 on the receipt.",
+  "payment_method_confidence": 0.95,
   "currency": "EUR",
   "items": [
     {"name": "Item 1", "price": "10.00"},
@@ -1376,13 +1322,13 @@ Reply with a JSON object enclosed in triple backticks:
 }
 \`\`\`
 
-**CRITICAL**: Always return the date in YYYY-MM-DD format regardless of how it appears on the receipt. Use your expert date detection skills to handle any format, language, or edge case.`
+Note: For currency, return the standard 3-letter currency code (e.g., EUR, USD, GBP, JPY) based on the detected currency.`
                 },
                 { type: "image_url", image_url: { url: base64 } }
               ]
             }
           ],
-          max_tokens: 800
+          max_tokens: 500
         })
       });
 
@@ -1398,46 +1344,7 @@ Reply with a JSON object enclosed in triple backticks:
 
       const parsedJSON = JSON.parse(jsonMatch[1]);
 
-      // Log date detection details for debugging
-      if (parsedJSON.date_confidence !== undefined) {
-        console.log("Date Detection Details:", {
-          date: parsedJSON.date,
-          confidence: parsedJSON.date_confidence,
-          source: parsedJSON.date_source,
-          format: parsedJSON.date_format_detected,
-          notes: parsedJSON.date_notes
-        });
-      }
-
-      // Enhanced date validation and normalization
-      let normalizedDate = parsedJSON.date;
-      if (normalizedDate) {
-        try {
-          // First try to normalize using the existing function
-          normalizedDate = normalizeDate(normalizedDate);
-          
-          // Additional validation for the normalized date
-          const dateObj = new Date(normalizedDate);
-          if (isNaN(dateObj.getTime())) {
-            console.warn("Invalid date after normalization:", parsedJSON.date, "→", normalizedDate);
-            normalizedDate = new Date().toISOString().split('T')[0]; // Fallback to today
-          } else {
-            // Check if date is reasonable (not too far in past/future)
-            const now = new Date();
-            const diffYears = Math.abs(now.getFullYear() - dateObj.getFullYear());
-            if (diffYears > 10) {
-              console.warn("Date seems unreasonable (too far in past/future):", normalizedDate);
-              // Keep the date but log the warning
-            }
-          }
-        } catch (error) {
-          console.error("Date normalization error:", error);
-          normalizedDate = new Date().toISOString().split('T')[0]; // Fallback to today
-        }
-      } else {
-        normalizedDate = new Date().toISOString().split('T')[0]; // Default to today
-      }
-
+      // Update form data with the extracted information
       // Extra validation: ensure all discount items have negative prices
       const discountKeywords = [
         'discount', 'rabatt', 'descuento', 'remise', 'sconto', 'desconto', 'skonto'
@@ -1460,7 +1367,7 @@ Reply with a JSON object enclosed in triple backticks:
         ...prev,
         merchant: parsedJSON.store || '',
         total: parsedJSON.amount ? parsedJSON.amount.replace(/[^\d.,]/g, '').replace(',', '.') : '',
-        date: normalizedDate,
+        date: parsedJSON.date ? normalizeDate(parsedJSON.date) : new Date().toISOString().split('T')[0],
         category: parsedJSON.category || '',
         paymentMethod: parsedJSON.payment_method || '',
         currency: parsedJSON.currency || 'EUR', // Use detected currency or default to EUR
@@ -1683,6 +1590,114 @@ Reply with a JSON object enclosed in triple backticks:
   const [selectedCategory, setSelectedCategory] = useState(null);
   const [modalOpen, setModalOpen] = useState(false);
 
+  
+  const externalTooltipHandler = (context) => {
+    const { chart, tooltip } = context;
+    const tooltipEl = getOrCreateTooltip(chart);
+    if (tooltip.opacity === 0) {
+      tooltipEl.style.opacity = 0;
+      return;
+    }
+    const dataIndex = tooltip.dataPoints[0].dataIndex;
+    const hoveredDate = new Date(periodStart);
+    if (period === 'week') {
+      hoveredDate.setDate(periodStart.getDate() + dataIndex);
+    } else {
+      hoveredDate.setDate(dataIndex + 1);
+    }
+    const receiptsForDay = periodReceipts.filter(r => {
+      const d = normalizeToLocalMidnight(r.transactionDate || r.date || r.createdAt);
+      return d && d.getTime() === hoveredDate.getTime();
+    });
+    const categoryTotalsForDay = receiptsForDay.reduce((acc, r) => {
+      const cat = r.category || 'Uncategorized';
+      const amt = parseFloat(r.total) || 0;
+      acc[cat] = (acc[cat] || 0) + amt;
+      return acc;
+    }, {});
+    const sortedCategoriesForDay = Object.entries(categoryTotalsForDay).sort((a, b) => b[1] - a[1]);
+    const totalForDay = tooltip.dataPoints[0].raw;
+    let innerHtml = `
+      <div class="bg-slate-900/80 backdrop-blur-lg text-white rounded-xl shadow-2xl border border-blue-400/20 p-3 text-xs font-sans">
+        <div class="font-bold mb-2 text-center text-blue-200">${hoveredDate.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })}</div>
+        <div class="space-y-1">
+    `;
+    sortedCategoriesForDay.forEach(([cat, amt]) => {
+      const catColor = categoryColors[categoryLabels.indexOf(cat) % categoryColors.length] || '#888';
+      innerHtml += `
+        <div class="flex justify-between items-center gap-2">
+          <div class="flex items-center gap-1.5">
+            <div class="w-2 h-2 rounded-full" style="background-color: ${catColor};"></div>
+            <span class="text-slate-300">${cat}</span>
+          </div>
+          <span class="font-semibold text-white">${formatCurrency(amt, settings?.baseCurrency || 'EUR')}</span>
+        </div>
+      `;
+    });
+    innerHtml += `
+      </div>
+      <div class="border-t border-blue-800/50 my-2"></div>
+      <div class="flex justify-between font-bold text-sm">
+        <span>Total</span>
+        <span>${formatCurrency(totalForDay, settings?.baseCurrency || 'EUR')}</span>
+      </div>
+    </div>
+    `;
+    tooltipEl.innerHTML = innerHtml;
+    const { offsetLeft: chartLeft, offsetTop: chartTop } = chart.canvas;
+    tooltipEl.style.opacity = 1;
+    tooltipEl.style.left = chartLeft + tooltip.caretX + 'px';
+    tooltipEl.style.top = chartTop + tooltip.caretY + 'px';
+    tooltipEl.style.transform = 'translate(-50%, -110%)';
+  };
+  
+  // Bar chart data
+  const barData = {
+    labels: period === 'week' ? weekDays : Array.from({length: dailyTotals.length}, (_, i) => (i+1).toString()),
+    datasets: [
+      {
+        label: 'Expenses',
+        data: dailyTotals,
+        backgroundColor: '#6366f1',
+        borderRadius: 12,
+        barPercentage: 0.6,
+        categoryPercentage: 0.7,
+        borderSkipped: false,
+      },
+    ],
+  };
+  // Bar chart options (unchanged)
+  const barOptions = {
+    plugins: {
+      legend: { display: false },
+      tooltip: {
+        enabled: false,
+        external: externalTooltipHandler,
+        position: 'nearest',
+      },
+    },
+    scales: {
+      x: {
+        grid: { color: '#e5e7eb', drawTicks: false, borderDash: [4, 4] },
+        ticks: { color: '#64748b', font: { size: 14, weight: 'bold' } },
+      },
+      y: {
+        grid: { color: '#e5e7eb', drawTicks: false, borderDash: [4, 4] },
+        ticks: { color: '#64748b', font: { size: 12 }, stepSize: 30 },
+        beginAtZero: true,
+        max: Math.max(60, Math.ceil(Math.max(...dailyTotals) / 10) * 10),
+      },
+    },
+    responsive: true,
+    maintainAspectRatio: false,
+    animation: { duration: 1200, easing: 'easeOutQuart' },
+  };
+  // Category legend with percentages
+  const legend = categoryLabels.map((cat, i) => {
+    const percent = total ? ((periodCategoryTotals[cat] / total) * 100).toFixed(1) : 0;
+    return { name: cat, color: categoryColors[i % categoryColors.length], percent };
+  });
+
   return (
     <div className={`relative flex flex-col items-center w-full ${className}`} style={{ touchAction: 'manipulation', overflowX: 'hidden' }}>
       {/* Loading Overlay */}
@@ -1700,7 +1715,7 @@ Reply with a JSON object enclosed in triple backticks:
                 <svg className="absolute left-6 top-6 h-4 w-4 animate-bounce-slow" style={{animationDelay: '0.2s'}} viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="1.5" fill="#fbbf24"/><circle cx="14" cy="4" r="1" fill="#38bdf8"/><circle cx="3" cy="12" r="1.2" fill="#a78bfa"/></svg>
                 <svg className="absolute right-6 top-8 h-3 w-3 animate-bounce-slow-delayed" style={{animationDelay: '0.6s'}} viewBox="0 0 12 12" fill="none"><rect x="6" y="1" width="1.5" height="1.5" rx=".75" fill="#f472b6"/><rect x="10" y="8" width="1" height="1" rx=".5" fill="#fbbf24"/></svg>
                 <svg className="absolute left-8 bottom-6 h-2 w-2 animate-bounce-slow" style={{animationDelay: '1s'}} viewBox="0 0 8 8" fill="none"><circle cx="4" cy="4" r="1" fill="#34d399"/></svg>
-                </div>
+              </div>
               {/* Dancing Receipt with Face */}
               <div className="animate-[wiggle_1.2s_ease-in-out_infinite] drop-shadow-2xl">
                 <svg
@@ -1726,14 +1741,14 @@ Reply with a JSON object enclosed in triple backticks:
                   <path d="M20 48 Q24 52 28 48" stroke="#64748b" strokeWidth="2" fill="none" strokeLinecap="round"/>
                 </svg>
               </div>
-                </div>
+            </div>
             
             {/* Text without a wrapping card/box */}
             <p className="text-xl font-medium text-white" style={{textShadow: '0 2px 8px rgba(0,0,0,0.5)'}}>Processing your receipt...</p>
             <p className="text-lg text-blue-300 animate-pulse" style={{textShadow: '0 2px 8px rgba(0,0,0,0.5)'}}>{currentFunnyMessage} <span role="img" aria-label="fun">🎉</span></p>
           </div>
-          </div>
-        )}
+        </div>
+      )}
 
       {/* Main Content Area */}
       <div
@@ -1847,98 +1862,7 @@ Reply with a JSON object enclosed in triple backticks:
                     </div>
                 ) : (
                   <div className="grid grid-cols-1 gap-4 w-full md:max-h-[400px] md:overflow-y-auto md:overflow-x-hidden mb-12">
-                    {(() => {
-                      // First, sort all receipts by transaction date (newest first) for consistent ordering
-                      const sortedReceipts = [...receipts].sort((a, b) => {
-                        // Prioritize transactionDate over date over createdAt for sorting
-                        const dateA = normalizeToLocalMidnight(a.transactionDate || a.date || a.createdAt);
-                        const dateB = normalizeToLocalMidnight(b.transactionDate || b.date || b.createdAt);
-                        
-                        if (!dateA && !dateB) return 0;
-                        if (!dateA) return 1; // Put receipts without dates at the end
-                        if (!dateB) return -1;
-                        return dateB - dateA; // Newest first
-                      });
-
-                      // Group receipts by month with world-class date handling
-                      const groupedReceipts = sortedReceipts.reduce((groups, receipt) => {
-                        // Use transactionDate for grouping, not upload date
-                        const date = normalizeToLocalMidnight(receipt.transactionDate || receipt.date || receipt.createdAt);
-                        if (!date) return groups;
-                        
-                        const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-                        if (!groups[monthKey]) {
-                          groups[monthKey] = {
-                            month: date.getMonth(),
-                            year: date.getFullYear(),
-                            receipts: []
-                          };
-                        }
-                        groups[monthKey].receipts.push(receipt);
-                        return groups;
-                      }, {});
-
-                      // Sort months in descending order (newest first)
-                      const sortedMonths = Object.keys(groupedReceipts).sort((a, b) => b.localeCompare(a));
-
-                      return sortedMonths.map(monthKey => {
-                        const group = groupedReceipts[monthKey];
-                        const currentMonthLabel = new Date(group.year, group.month).toLocaleDateString(undefined, { 
-                          month: 'short', 
-                          year: 'numeric' 
-                        }).replace(/^[a-z]/, letter => letter.toUpperCase());
-
-                        return (
-                          <div key={monthKey} className="space-y-3">
-                            {/* Month Header - World Class Modern Design */}
-                            <div className="sticky top-0 z-10 bg-gradient-to-r from-blue-900/90 via-slate-800/90 to-blue-900/90 backdrop-blur-md border border-blue-400/20 rounded-xl px-4 py-3 shadow-lg">
-                              <div className="flex items-center justify-between">
-                                <h3 className="text-lg font-bold text-blue-100 tracking-wide">
-                                  {currentMonthLabel}
-                                </h3>
-                                <div className="flex items-center space-x-2">
-                                  {/* Total Spending */}
-                                  <span className="text-sm text-blue-200/90 font-medium bg-blue-800/40 rounded px-2 py-1">
-                                    {formatCurrency(
-                                      group.receipts.reduce((total, receipt) => {
-                                        const amount = parseFloat(receipt.total) || 0;
-                                        return total + amount;
-                                      }, 0),
-                                      'EUR'
-                                    )}
-                                  </span>
-                                  {/* Receipt Count */}
-                                  <div className="flex items-center space-x-1">
-                                    <div className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-pulse"></div>
-                                    <span className="text-xs text-blue-200/80 font-medium">
-                                      {group.receipts.length}
-                                    </span>
-                                  </div>
-                                </div>
-                              </div>
-                              {/* Subtle gradient line */}
-                              <div className="mt-2 h-px bg-gradient-to-r from-transparent via-blue-400/40 to-transparent"></div>
-                            </div>
-                            
-                            {/* Receipts for this month - sorted by transaction date (newest first) */}
-                            <div className="space-y-3 pl-2">
-                              {group.receipts
-                                .sort((a, b) => {
-                                  // Prioritize transactionDate over date over createdAt for sorting
-                                  const dateA = normalizeToLocalMidnight(a.transactionDate || a.date || a.createdAt);
-                                  const dateB = normalizeToLocalMidnight(b.transactionDate || b.date || b.createdAt);
-                                  if (!dateA && !dateB) return 0;
-                                  if (!dateA) return 1; // Put receipts without dates at the end
-                                  if (!dateB) return -1;
-                                  return dateB - dateA; // Newest first
-                                })
-                                .map((receipt) => renderReceiptCard(receipt))
-                              }
-                            </div>
-                          </div>
-                        );
-                      });
-                    })()}
+                    {receipts.map((receipt) => renderReceiptCard(receipt))}
                     </div>
                 )}
             </CardContent>
@@ -2373,72 +2297,14 @@ Reply with a JSON object enclosed in triple backticks:
                   <div>
                     <div className="text-sm font-semibold text-blue-200 mb-1">Recent Receipts</div>
                     <div className="flex flex-col gap-2">
-                      {(() => {
-                        // Get all receipts for this category, sorted by date (newest first)
-                        const categoryReceipts = receipts
-                          .filter(r => (r.category || 'Uncategorized') === selectedCategory.name)
+                      {receipts.filter(r => (r.category || 'Uncategorized') === selectedCategory.name)
                         .sort((a, b) => {
                           const da = new Date(a.transactionDate || a.date || a.createdAt);
                           const db = new Date(b.transactionDate || b.date || b.createdAt);
                           return db - da;
                         })
-                          .slice(0, 10); // Show more receipts since we're grouping
-
-                        // Group receipts by month
-                        const groupedReceipts = [];
-                        let currentMonth = null;
-                        let currentMonthLabel = null;
-                        let currentMonthReceipts = [];
-
-                        categoryReceipts.forEach((receipt, index) => {
-                          const receiptDate = new Date(receipt.transactionDate || receipt.date || receipt.createdAt);
-                          const monthKey = `${receiptDate.getFullYear()}-${receiptDate.getMonth()}`;
-                          const monthLabel = receiptDate.toLocaleDateString(undefined, { 
-                            month: 'long', 
-                            year: 'numeric' 
-                          }).replace(/^[a-z]/, letter => letter.toUpperCase());
-
-                          if (monthKey !== currentMonth) {
-                            // Save previous month's receipts if any
-                            if (currentMonthReceipts.length > 0 && currentMonthLabel) {
-                              groupedReceipts.push({
-                                type: 'month',
-                                label: currentMonthLabel,
-                                receipts: currentMonthReceipts
-                              });
-                            }
-                            // Start new month
-                            currentMonth = monthKey;
-                            currentMonthLabel = monthLabel;
-                            currentMonthReceipts = [receipt];
-                          } else {
-                            // Add to current month
-                            currentMonthReceipts.push(receipt);
-                          }
-                        });
-
-                        // Add the last month's receipts
-                        if (currentMonthReceipts.length > 0 && currentMonthLabel) {
-                          groupedReceipts.push({
-                            type: 'month',
-                            label: currentMonthLabel,
-                            receipts: currentMonthReceipts
-                          });
-                        }
-
-                        return groupedReceipts.map((monthGroup, monthIndex) => (
-                          <div key={monthIndex} className="space-y-2">
-                            {/* Month separator */}
-                            <div className="flex items-center gap-2 py-1">
-                              <div className="flex-1 h-px bg-gradient-to-r from-transparent via-blue-400/30 to-transparent"></div>
-                              <span className="text-xs font-semibold text-blue-300/80 px-2 py-1 bg-blue-400/10 rounded-full">
-                                {monthGroup.label}
-                              </span>
-                              <div className="flex-1 h-px bg-gradient-to-r from-transparent via-blue-400/30 to-transparent"></div>
-                            </div>
-                            
-                            {/* Receipts for this month */}
-                            {monthGroup.receipts.map((r, idx) => {
+                        .slice(0, 5)
+                        .map((r, idx) => {
                           const isExpanded = expandedInCategoryModalId === r.id;
                           return (
                             <div key={r.id || idx} className="bg-slate-800/80 rounded-lg shadow-inner overflow-hidden transition-all duration-300 ease-in-out">
@@ -2465,37 +2331,67 @@ Reply with a JSON object enclosed in triple backticks:
                               {/* Expanded content */}
                               <div
                                 style={{ maxHeight: isExpanded ? '250px' : '0px' }}
-                                    className="transition-all duration-300 ease-in-out"
-                                  >
-                                    <div className="p-3 border-t border-white/10">
-                                      <div className="text-xs text-gray-400 mb-1">Items:</div>
-                                      {r.items && r.items.length > 0 ? (
-                                        <ul className="text-xs text-gray-300 space-y-0.5">
-                                          {r.items.map((item, i) => (
-                                            <li key={i} className="flex justify-between">
-                                              <span>{item.name}</span>
-                                              <span>{formatCurrency(item.price, r.currency || settings?.baseCurrency || 'EUR')}</span>
+                                className="overflow-hidden transition-all duration-300 ease-in-out"
+                              >
+                                <div className="px-3 pb-3 pt-2 border-t border-slate-700/50">
+                                  {/* Item list */}
+                                  {r.items && r.items.length > 0 && (
+                                    <div className="mb-2">
+                                      <h4 className="text-xs text-blue-200/80 font-semibold mb-1">Items</h4>
+                                      <ul className="space-y-1">
+                                        {r.items.map((item, itemIdx) => (
+                                          <li key={itemIdx} className="flex justify-between text-xs">
+                                            <span className="truncate max-w-[150px]">{item.name}</span>
+                                            <span className="text-gray-400">{formatCurrency(item.price, r.currency)}</span>
                                           </li>
                                         ))}
                                       </ul>
-                                      ) : (
-                                        <p className="text-xs text-gray-500">No items listed.</p>
-                                      )}
+                                    </div>
+                                  )}
+                                  {/* Action Buttons */}
+                                  <div className="flex justify-end gap-2 mt-2">
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      className="border-blue-500 text-blue-400 hover:bg-blue-900/40 hover:text-blue-300 h-8"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setReturnToCategory(selectedCategory);
+                                        handleEditClick(r);
+                                        setModalOpen(false);
+                                      }}
+                                    >
+                                      <Edit className="h-4 w-4 mr-2" />
+                                      Edit
+                                    </Button>
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      className="border-red-500 text-red-400 hover:bg-red-900/40 hover:text-red-300 h-8"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setPendingDeleteId(r.id);
+                                        setShowDeleteModal(true);
+                                      }}
+                                    >
+                                      <Trash2 className="h-4 w-4 mr-2" />
+                                      Delete
+                                    </Button>
+                                  </div>
                                 </div>
                               </div>
                             </div>
                           );
                         })}
+                      {receipts.filter(r => (r.category || 'Uncategorized') === selectedCategory.name).length === 0 && (
+                        <div className="text-xs text-gray-400 italic">No receipts in this category yet.</div>
+                      )}
                     </div>
-                        ));
-                      })()}
                   </div>
-                  </div>
+                  {/* Close button */}
+                  <Button onClick={() => setModalOpen(false)} className="mt-4 w-full bg-blue-700 hover:bg-blue-800 text-white font-bold py-2 rounded-xl shadow-lg">Close</Button>
                 </div>
               </ScrollArea>
-              <DialogFooter className="p-4 border-t border-white/10">
-                <Button onClick={() => setModalOpen(false)}>Close</Button>
-              </DialogFooter>
             </>
           )}
         </DialogContent>
@@ -2503,6 +2399,8 @@ Reply with a JSON object enclosed in triple backticks:
     </div>
   );
 }
+
+// Place these at the very end of the file, after the main ReceiptUploader function:
 
 export function UploadMethodModal({
   file,
@@ -2514,11 +2412,11 @@ export function UploadMethodModal({
   className = '',
 }) {
   return (
-    <Card className={`w-full max-w-sm p-6 ${className}`}>
-      <CardHeader>
-        <CardTitle className="flex items-center"><Upload className="mr-2" /> Upload Receipt</CardTitle>
+    <Card className={`w-full p-4 flex flex-col items-center justify-start gap-4 bg-slate-800/80 text-white shadow-2xl rounded-xl border border-blue-400/20 ${className}`}>
+      <CardHeader className="w-full text-center p-0 mb-4">
+        <CardTitle className="text-xl font-bold text-blue-100">Choose Upload Method</CardTitle>
       </CardHeader>
-      <CardContent className="flex flex-col gap-4">
+      <CardContent className="w-full flex flex-col items-center justify-center gap-4 p-0">
         <input
           type="file"
           id="fileInput"
@@ -2527,14 +2425,26 @@ export function UploadMethodModal({
           accept="image/*"
           className="hidden"
         />
-        <Button onClick={() => document.getElementById('fileInput').click()} className="w-full">
-          <Upload className="mr-2 h-4 w-4" /> Upload File
+        <Button
+          onClick={onUploadFile}
+          className="w-full bg-blue-700 text-white font-semibold py-3 rounded-xl hover:bg-blue-800 transition-all duration-300 ease-in-out transform hover:scale-105 flex items-center justify-center gap-2 shadow-lg overflow-hidden"
+        >
+          <Upload className="h-5 w-5" />
+          Upload File
         </Button>
-        <Button onClick={onTakePhoto} className="w-full">
-          <Camera className="mr-2 h-4 w-4" /> Take Photo
+        <Button
+          onClick={onTakePhoto}
+          className="w-full bg-blue-700 text-white font-semibold py-3 rounded-xl hover:bg-blue-800 transition-all duration-300 ease-in-out transform hover:scale-105 flex items-center justify-center gap-2 shadow-lg overflow-hidden"
+        >
+          <Camera className="h-5 w-5" />
+          Take Photo
         </Button>
-        <Button onClick={onManualEntry} className="w-full">
-          <List className="mr-2 h-4 w-4" /> Enter Manually
+        <Button
+          onClick={onManualEntry}
+          className="w-full bg-blue-700 text-white font-semibold py-3 rounded-xl hover:bg-blue-800 transition-all duration-300 ease-in-out transform hover:scale-105 flex items-center justify-center gap-2 shadow-lg overflow-hidden"
+        >
+          <List className="h-5 w-5" />
+          Enter Manually
         </Button>
       </CardContent>
     </Card>
@@ -2549,11 +2459,11 @@ export function ExpensesDashboard({ totalExpenses, categoryTotals, formatCurrenc
   const categoryColors = [
     '#6366F1', '#22D3EE', '#F472B6', '#FBBF24', '#34D399', '#818CF8', '#F87171', '#A3E635', '#F59E42', '#60A5FA', '#F43F5E', '#10B981', '#EAB308', '#8B5CF6', '#FDE68A', '#FCA5A5', '#6EE7B7', '#F9A8D4', '#FCD34D', '#C7D2FE'
   ];
-
+  
   // Get current month for context
   const currentMonth = new Date().toLocaleDateString('en-US', { month: 'short' });
   const currentYear = new Date().getFullYear();
-
+  
   const doughnutData = {
     labels: categoryLabels,
     datasets: [
@@ -2623,10 +2533,6 @@ export function ExpensesDashboard({ totalExpenses, categoryTotals, formatCurrenc
             <div className="text-xs font-semibold text-gray-300 mb-1 tracking-wide overflow-hidden" style={{letterSpacing: 1}}>TOTAL SPENT</div>
             <div className="text-3xl xs:text-4xl md:text-5xl font-extrabold text-indigo-200 mb-1 text-center" style={{overflow: 'hidden', whiteSpace: 'nowrap', maxWidth: '100%', padding: '0 0.5rem'}}>{formatCurrency(totalExpenses, settings?.baseCurrency || 'EUR')}</div>
             <div className="text-xs text-gray-400 overflow-hidden">{categoryLabels.length} categories</div>
-            {/* Current month indicator */}
-            <div className="text-[8px] text-blue-400/60 mt-1 tracking-wider uppercase overflow-hidden" style={{letterSpacing: 1}}>
-              THIS MONTH ONLY
-            </div>
           </div>
         </div>
         {/* Category Cards Grid (mobile-friendly) */}
@@ -2671,351 +2577,293 @@ export function ExpensesDashboard({ totalExpenses, categoryTotals, formatCurrenc
 }
 
 export function ReceiptsList({ receipts, renderReceiptCard, isFirestoreLoading, firestoreError, fetchReceipts, currentFunnyMessage, settings }) {
-  // Helper to robustly normalize a date string/object to local midnight
-  const normalizeToLocalMidnight = (d) => {
-    if (!d) return null;
-    if (typeof d.toDate === 'function') { d = d.toDate(); } // Handle Firestore Timestamps
-    if (typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d)) {
-      // Parse as local date (YYYY-MM-DD)
-      const [year, month, day] = d.split('-').map(Number);
-      return new Date(year, month - 1, day);
-    }
-    const date = new Date(d);
-    if (isNaN(date)) return null;
-    return new Date(date.getFullYear(), date.getMonth(), date.getDate());
-  };
-
-  // Sort receipts by transaction date (newest first) for consistent ordering
-  const sortedReceipts = [...receipts].sort((a, b) => {
-    // Prioritize transactionDate over date over createdAt for sorting
-    const dateA = normalizeToLocalMidnight(a.transactionDate || a.date || a.createdAt);
-    const dateB = normalizeToLocalMidnight(b.transactionDate || b.date || b.createdAt);
-    if (!dateA && !dateB) return 0;
-    if (!dateA) return 1; // Put receipts without dates at the end
-    if (!dateB) return -1;
-    return dateB - dateA; // Newest first
-  });
-
   return (
-    <Card className="w-full max-w-sm p-6">
-      <CardHeader>
-        <CardTitle>Your Receipts</CardTitle>
-      </CardHeader>
-      <CardContent>
+    <div className="w-full max-w-2xl mx-auto mt-4 mb-4 px-2">
+      <div className="bg-slate-800/80 text-white shadow-2xl rounded-xl border border-blue-400/20 p-6 flex flex-col items-center">
+        <h2 className="text-xl font-bold text-blue-100 mb-4">Your Receipts</h2>
         {isFirestoreLoading ? (
-          <div className="flex items-center justify-center text-gray-500">
-            <Loader2 className="h-8 w-8 animate-spin mr-2" />
+          <div className="flex flex-col items-center justify-center text-gray-400">
+            <Loader2 className="h-8 w-8 animate-spin mb-2" />
             <p>{currentFunnyMessage}</p>
           </div>
         ) : firestoreError ? (
-          <div className="text-center text-red-500">
+          <div className="text-center text-red-400">
+            <XCircle className="h-8 w-8 mx-auto mb-2" />
             <p>{firestoreError}</p>
             <Button onClick={fetchReceipts} className="mt-4">Try Again</Button>
           </div>
         ) : receipts.length === 0 ? (
-          <p className="text-center text-gray-500">No receipts yet. Upload one to get started!</p>
+          <div className="text-center">
+            <p className="text-xl text-slate-400 font-semibold mb-2">No receipts yet!</p>
+            <p className="text-md text-slate-500">
+              It's a blank canvas for your financial journey. <br />
+              Start by <span className="text-blue-400 font-medium">uploading your first receipt</span> or <span className="text-blue-400 font-medium">adding one manually</span>.
+            </p>
+          </div>
         ) : (
-          <div className="grid grid-cols-1 gap-4 max-h-[400px] overflow-y-auto">
-            {sortedReceipts.map((receipt) => renderReceiptCard(receipt))}
+          <div className="grid grid-cols-1 gap-4 w-full max-h-[400px] overflow-y-auto overflow-x-hidden mb-4">
+            {receipts.map((receipt) => renderReceiptCard(receipt))}
           </div>
         )}
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   );
 }
 
-function InsightsSection({ receipts = [], categoryTotals = {}, formatCurrency, settings }) {
-  const [period, setPeriod] = useState('week');
-
-  // --- Date helpers ---
-  const today = new Date();
-  let periodStart, periodEnd, periodLabel;
-  const weekStartsOn = (settings?.weekStartsOn || 'monday').toLowerCase();
-  if (period === 'week') {
-    periodStart = new Date(today);
-    periodStart.setHours(0, 0, 0, 0);
-    // 0 = Sunday, 1 = Monday
-    let dayOfWeek = today.getDay();
-    let offset = weekStartsOn === 'monday' ? (dayOfWeek === 0 ? -6 : 1 - dayOfWeek) : -dayOfWeek;
-    periodStart.setDate(today.getDate() + offset);
-    periodEnd = new Date(periodStart);
-    periodEnd.setDate(periodStart.getDate() + 6);
-    periodEnd.setHours(23, 59, 59, 999);
-    const formatShort = d => d.toLocaleDateString(undefined, { day: '2-digit', month: 'short' });
-    periodLabel = `${formatShort(periodStart)} - ${formatShort(periodEnd)}`.replace(/\b[a-z]/g, letter => letter.toUpperCase());
-  } else {
-    periodStart = new Date(today.getFullYear(), today.getMonth(), 1, 0, 0, 0, 0);
-    periodEnd = new Date(today.getFullYear(), today.getMonth() + 1, 0, 23, 59, 59, 999);
-    const formatShort = d => d.toLocaleDateString(undefined, { day: '2-digit', month: 'short' });
-    periodLabel = `${formatShort(periodStart)} - ${formatShort(periodEnd)}`.replace(/\b[a-z]/g, letter => letter.toUpperCase());
+// Helper to create the custom HTML tooltip
+const getOrCreateTooltip = (chart) => {
+  let tooltipEl = chart.canvas.parentNode.querySelector('div#chartjs-tooltip');
+  if (!tooltipEl) {
+    tooltipEl = document.createElement('div');
+    tooltipEl.id = 'chartjs-tooltip';
+    tooltipEl.style.opacity = 0;
+    tooltipEl.style.pointerEvents = 'none';
+    tooltipEl.style.position = 'absolute';
+    tooltipEl.style.transition = 'opacity 0.2s ease, transform 0.2s ease';
+    tooltipEl.style.minWidth = '150px';
+    chart.canvas.parentNode.appendChild(tooltipEl);
   }
+  return tooltipEl;
+};
 
-  // Helper to robustly normalize a date string/object to local midnight
+function InsightsSection({ receipts = [], categoryTotals = {}, formatCurrency, settings }) {
+  const [period, setPeriod] = useState('month'); // 'week' or 'month'
+
+  const today = new Date();
+  let periodStart, periodEnd;
+  const dataLabels = [];
+  const dailyTotals = [];
+
   const normalizeToLocalMidnight = (d) => {
     if (!d) return null;
     if (typeof d.toDate === 'function') { d = d.toDate(); } // Handle Firestore Timestamps
-    if (typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d)) {
-      // Parse as local date (YYYY-MM-DD)
-      const [year, month, day] = d.split('-').map(Number);
-      return new Date(year, month - 1, day);
-    }
     const date = new Date(d);
-    if (isNaN(date)) return null;
+    if (isNaN(date)) { // Check for invalid date strings
+      if (typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d)) {
+        const [year, month, day] = d.split('-').map(Number);
+        return new Date(year, month - 1, day);
+      }
+      return null;
+    }
     return new Date(date.getFullYear(), date.getMonth(), date.getDate());
   };
 
-  // Filter receipts for selected period (inclusive)
+  if (period === 'week') {
+    periodStart = new Date(today.getFullYear(), today.getMonth(), today.getDate() - today.getDay());
+    periodEnd = new Date(today.getFullYear(), today.getMonth(), today.getDate() + (6 - today.getDay()));
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(periodStart);
+      d.setDate(periodStart.getDate() + i);
+      dataLabels.push(d.toLocaleDateString(undefined, { weekday: 'short' }));
+      dailyTotals.push(0);
+    }
+  } else { // month
+    periodStart = new Date(today.getFullYear(), today.getMonth(), 1);
+    periodEnd = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+    for (let i = 1; i <= periodEnd.getDate(); i++) {
+      dataLabels.push(i.toString());
+      dailyTotals.push(0);
+    }
+  }
+  periodEnd.setHours(23, 59, 59, 999);
+
   const periodReceipts = receipts.filter(r => {
     const d = normalizeToLocalMidnight(r.transactionDate || r.date || r.createdAt);
     return d && d >= periodStart && d <= periodEnd;
   });
 
-  const allCategoryColors = {
-    'Groceries': '#3b82f6',
-    'Dining': '#f472b6',
-    'Transportation': '#a78bfa',
-    'Shopping': '#818cf8',
-    'Bills': '#60a5fa',
-    'Entertainment': '#fbbf24',
-    'Health': '#10b981',
-    'Other': '#f59e42',
-    'Uncategorized': '#9ca3af'
-  };
-
-  // --- New Data Structuring for Rich Tooltips ---
-  let dailyData, labelsWithDates;
-
-  if (period === 'week') {
-    // Calculate the weekday indices for the week (0=Sunday, 1=Monday, ...)
-    let weekDays = [];
-    if (weekStartsOn === 'monday') {
-      weekDays = [1,2,3,4,5,6,0]; // Mon-Sun
-    } else {
-      weekDays = [0,1,2,3,4,5,6]; // Sun-Sat
+  periodReceipts.forEach(r => {
+    const d = normalizeToLocalMidnight(r.transactionDate || r.date || r.createdAt);
+    if (d) {
+      let index;
+      if (period === 'week') {
+        index = Math.floor((d.getTime() - periodStart.getTime()) / (1000 * 60 * 60 * 24));
+      } else { // month
+        index = d.getDate() - 1;
+      }
+      if (index >= 0 && index < dailyTotals.length) {
+        dailyTotals[index] += parseFloat(r.total) || 0;
+      }
     }
-    const weekDates = weekDays.map((weekday, i) => {
-      const d = new Date(periodStart);
-      d.setDate(periodStart.getDate() + i);
-      return d;
-    });
-    labelsWithDates = weekDates.map(d => ({
-      short: d.toLocaleDateString(undefined, { weekday: 'short' })[0],
-      full: d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric' })
-    }));
-    dailyData = weekDays.map(() => ({ categories: {}, total: 0 }));
-
-    periodReceipts.forEach(r => {
-      const date = normalizeToLocalMidnight(r.date || r.transactionDate || r.createdAt);
-      if (date) {
-        // Find the index in weekDates that matches this date
-        const dayIndex = weekDates.findIndex(d => d.getTime() === date.getTime());
-        if (dayIndex !== -1) {
-          const category = r.category || 'Uncategorized';
-          const amount = parseFloat(r.total) || 0;
-          dailyData[dayIndex].categories[category] = (dailyData[dayIndex].categories[category] || 0) + amount;
-          dailyData[dayIndex].total += amount;
-        }
-      }
-    });
-  } else { // month
-    const daysInMonth = periodEnd.getDate();
-    labelsWithDates = Array.from({ length: daysInMonth }, (_, i) => {
-      const d = new Date(periodStart.getFullYear(), periodStart.getMonth(), i + 1);
-      return {
-        short: (i + 1).toString(),
-        full: d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric' })
-      };
-    });
-    dailyData = Array.from({ length: daysInMonth }, () => ({ categories: {}, total: 0 }));
-
-    periodReceipts.forEach(r => {
-      const date = normalizeToLocalMidnight(r.date || r.transactionDate || r.createdAt);
-      if (date) {
-        const dayIndex = date.getDate() - 1;
-        if (dayIndex >= 0 && dayIndex < daysInMonth) {
-          const category = r.category || 'Uncategorized';
-          const amount = parseFloat(r.total) || 0;
-          dailyData[dayIndex].categories[category] = (dailyData[dayIndex].categories[category] || 0) + amount;
-          dailyData[dayIndex].total += amount;
-        }
-      }
-    });
-  }
-  
-  const chartTotals = dailyData.map(d => d.total);
-  const expenses = chartTotals.reduce((a, b) => a + b, 0);
-  const spentPerDay = period === 'week' ? expenses / 7 : (chartTotals.length > 0 ? expenses / chartTotals.length : 0);
-  
-  const periodCategoryTotals = periodReceipts.reduce((acc, r) => {
-    const cat = r.category || 'Uncategorized';
-    const amt = parseFloat(r.total) || 0;
-    acc[cat] = (acc[cat] || 0) + amt;
-    return acc;
-  }, {});
-  
-  const total = expenses;
-
-  // Calculate dynamic y-axis max value
-  const maxValue = Math.max(...chartTotals);
-  const yAxisMax = maxValue > 0 ? Math.ceil(maxValue * 1.2) : 100; // Add 20% padding, minimum 100
-
-  // Get all unique categories from the period
-  const allCategories = [...new Set(Object.keys(periodCategoryTotals))];
-  
-  // Create stacked bar chart datasets
-  const barDatasets = allCategories.map(category => {
-    const categoryData = dailyData.map(dayData => dayData.categories[category] || 0);
-    return {
-      label: category,
-      data: categoryData,
-      backgroundColor: allCategoryColors[category] || '#9ca3af',
-        borderRadius: 12,
-        barPercentage: 0.6,
-        categoryPercentage: 0.7,
-        borderSkipped: false,
-      stack: 'stack0', // This makes it a stacked bar
-    };
   });
 
-  // Bar chart data
-  const barData = {
-    labels: labelsWithDates.map(l => l.short),
-    datasets: barDatasets,
+  const total = periodReceipts.reduce((sum, receipt) => sum + (parseFloat(receipt.total) || 0), 0);
+  const periodCategoryTotals = periodReceipts.reduce((acc, receipt) => {
+    const cat = receipt.category || 'Uncategorized';
+    const amount = parseFloat(receipt.total) || 0;
+    acc[cat] = (acc[cat] || 0) + amount;
+    return acc;
+  }, {});
+
+  const sortedCategories = Object.entries(periodCategoryTotals)
+    .sort(([, a], [, b]) => b - a)
+    .map(([name, total]) => ({
+      name,
+      total,
+      color: categoryColors[name] || categoryColors['Uncategorized'],
+    }));
+
+  const categoryLabels = sortedCategories.map(c => c.name);
+  const categoryColorsFromMap = sortedCategories.map(c => c.color);
+
+  const externalTooltipHandler = (context) => {
+    const { chart, tooltip } = context;
+    const tooltipEl = getOrCreateTooltip(chart);
+    if (tooltip.opacity === 0) {
+      tooltipEl.style.opacity = 0;
+      return;
+    }
+    const dataIndex = tooltip.dataPoints[0].dataIndex;
+    const hoveredDate = new Date(periodStart);
+    if (period === 'week') {
+      hoveredDate.setDate(periodStart.getDate() + dataIndex);
+    } else {
+      hoveredDate.setDate(dataIndex + 1);
+    }
+    const receiptsForDay = periodReceipts.filter(r => {
+      const d = normalizeToLocalMidnight(r.transactionDate || r.date || r.createdAt);
+      return d && d.getTime() === hoveredDate.getTime();
+    });
+    const categoryTotalsForDay = receiptsForDay.reduce((acc, r) => {
+      const cat = r.category || 'Uncategorized';
+      const amt = parseFloat(r.total) || 0;
+      acc[cat] = (acc[cat] || 0) + amt;
+      return acc;
+    }, {});
+    const sortedCategoriesForDay = Object.entries(categoryTotalsForDay).sort((a, b) => b[1] - a[1]);
+    const totalForDay = tooltip.dataPoints[0].raw;
+    let innerHtml = `
+      <div class="bg-slate-900/80 backdrop-blur-lg text-white rounded-xl shadow-2xl border border-blue-400/20 p-3 text-xs font-sans">
+        <div class="font-bold mb-2 text-center text-blue-200">${hoveredDate.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })}</div>
+        <div class="space-y-1">
+    `;
+    sortedCategoriesForDay.forEach(([cat, amt]) => {
+      const catIndex = categoryLabels.indexOf(cat);
+      const catColor = catIndex !== -1 ? categoryColorsFromMap[catIndex] : '#888';
+      innerHtml += `
+        <div class="flex justify-between items-center gap-2">
+          <div class="flex items-center gap-1.5">
+            <div class="w-2 h-2 rounded-full" style="background-color: ${catColor.replace('border-', 'bg-')};"></div>
+            <span class="text-slate-300">${cat}</span>
+          </div>
+          <span class="font-semibold text-white">${formatCurrency(amt, settings?.baseCurrency || 'EUR')}</span>
+        </div>
+      `;
+    });
+    innerHtml += `
+      </div>
+      <div class="border-t border-blue-800/50 my-2"></div>
+      <div class="flex justify-between font-bold text-sm">
+        <span>Total</span>
+        <span>${formatCurrency(totalForDay, settings?.baseCurrency || 'EUR')}</span>
+      </div>
+    </div>
+    `;
+    tooltipEl.innerHTML = innerHtml;
+    const { offsetLeft: chartLeft, offsetTop: chartTop } = chart.canvas;
+    tooltipEl.style.opacity = 1;
+    tooltipEl.style.left = chartLeft + tooltip.caretX + 'px';
+    tooltipEl.style.top = chartTop + tooltip.caretY + 'px';
+    tooltipEl.style.transform = 'translate(-50%, -110%)';
   };
-  
-  // Bar chart options
+
+  const barData = {
+    labels: dataLabels,
+    datasets: [
+      {
+        label: 'Daily Spend',
+        data: dailyTotals,
+        backgroundColor: 'rgba(59, 130, 246, 0.6)',
+        borderColor: 'rgba(59, 130, 246, 1)',
+        borderWidth: 2,
+        borderRadius: 8,
+        hoverBackgroundColor: 'rgba(59, 130, 246, 0.9)',
+      },
+    ],
+  };
+
   const barOptions = {
     plugins: {
       legend: { display: false },
       tooltip: {
-        enabled: true,
-        mode: 'index',
-        intersect: false,
-        backgroundColor: '#1e293b',
-        titleColor: '#f1f5f9',
-        titleFont: { size: 14, weight: 'bold' },
-        bodyColor: '#cbd5e1',
-        bodyFont: { size: 12 },
-        borderColor: 'rgba(99,102,241,0.5)',
-        borderWidth: 1,
-        displayColors: false,
-        padding: 12,
-        cornerRadius: 8,
-        callbacks: {
-          title: function(context) {
-            if (!context[0]) return '';
-            return labelsWithDates[context[0].dataIndex].full;
-          },
-          label: () => null,
-          beforeBody: function(context) {
-            const dataIndex = context[0].dataIndex;
-            const dayData = dailyData[dataIndex];
-            const sortedCategories = Object.entries(dayData.categories).sort((a, b) => b[1] - a[1]);
-            if (sortedCategories.length === 0) return ['No expenses this day.'];
-            return sortedCategories.map(([name, amount]) => `${name}: ${formatCurrency(amount, settings?.baseCurrency || 'EUR')}`);
-          },
-          footer: function(context) {
-            const totalAmount = context[0].raw;
-            if (totalAmount > 0) {
-              return `\nTotal: ${formatCurrency(totalAmount, settings?.baseCurrency || 'EUR')}`;
-            }
-            return '';
-          },
-        },
-      },
-      annotation: {
-        annotations: {
-          averageLine: {
-            type: 'line',
-            yMin: spentPerDay,
-            yMax: spentPerDay,
-            borderColor: 'rgba(120,120,120,0.7)',
-            borderWidth: 2,
-            borderDash: [6, 6],
-            label: {
-              display: true,
-              content: 'Average',
-              color: '#888',
-              backgroundColor: 'transparent',
-              font: { weight: 'bold', size: 10 },
-              position: 'right',
-              padding: 0,
-            },
-            z: 10,
-          },
-        },
+        enabled: false,
+        external: externalTooltipHandler,
+        position: 'nearest',
       },
     },
     scales: {
       x: {
-        grid: { drawBorder: false, color: 'rgba(226, 232, 240, 0.1)' },
-        ticks: { color: '#94a3b8', font: { weight: '600' } },
+        grid: { color: 'rgba(255, 255, 255, 0.1)', drawTicks: false, borderDash: [2, 3] },
+        ticks: { color: '#94a3b8', font: { size: 10 } },
       },
       y: {
-        grid: { drawBorder: false, color: 'rgba(226, 232, 240, 0.1)' },
-        beginAtZero: true,
-        max: yAxisMax,
+        grid: { color: 'rgba(255, 255, 255, 0.1)', drawTicks: false, borderDash: [2, 3] },
         ticks: {
           color: '#94a3b8',
-          callback: function(value) {
-            return formatCurrency(Math.round(value), settings?.baseCurrency || 'EUR');
-          },
-          // Dynamic step size based on data range
-          stepSize: maxValue > 1000 ? Math.ceil(maxValue / 5) : 
-                   maxValue > 100 ? Math.ceil(maxValue / 4) : 
-                   maxValue > 10 ? Math.ceil(maxValue / 3) : 1
+          font: { size: 10 },
+          callback: (value) => formatCurrency(value, settings?.baseCurrency || 'EUR').replace(/\.00$/, ''),
         },
+        beginAtZero: true,
       },
     },
     responsive: true,
     maintainAspectRatio: false,
     animation: { duration: 800, easing: 'easeOutQuart' },
   };
-  
-  // Category legend with percentages
-  const legend = Object.keys(periodCategoryTotals).map((cat, i) => {
+
+  const legend = categoryLabels.map((cat, i) => {
     const percent = total ? ((periodCategoryTotals[cat] / total) * 100).toFixed(1) : 0;
-    return { name: cat, color: allCategoryColors[cat] || '#9ca3af', percent };
+    return { name: cat, color: categoryColorsFromMap[i % categoryColorsFromMap.length], percent };
   });
-  
+
   return (
-    <div className="w-full max-w-2xl mx-auto mt-2 mb-4 px-2">
-      <div className="bg-white/90 text-gray-900 shadow-xl rounded-2xl border border-gray-200 p-6 flex flex-col items-center">
-        {/* Header */}
-        <div className="w-full flex flex-row items-center justify-between mb-2">
-          <div className="text-lg font-bold">Expense Insights</div>
-          <select
-            className="bg-gray-100 rounded-lg px-2 py-1 text-sm font-semibold border border-gray-200 focus:outline-none"
-            value={period}
-            onChange={e => setPeriod(e.target.value)}
+    <div className="bg-slate-800/80 p-4 rounded-2xl shadow-lg w-full max-w-4xl mx-auto my-4 border border-blue-400/20">
+      <div className="flex justify-between items-center mb-4">
+        <h3 className="text-lg font-bold text-blue-100">Expense Insights</h3>
+        <div className="flex items-center bg-slate-700/80 rounded-full p-1 text-xs">
+          <button
+            onClick={() => setPeriod('week')}
+            className={`px-3 py-1 rounded-full transition-colors ${period === 'week' ? 'bg-blue-600 text-white' : 'text-gray-300'}`}
           >
-            <option value="week">week</option>
-            <option value="month">month</option>
-          </select>
+            Week
+          </button>
+          <button
+            onClick={() => setPeriod('month')}
+            className={`px-3 py-1 rounded-full transition-colors ${period === 'month' ? 'bg-blue-600 text-white' : 'text-gray-300'}`}
+          >
+            Month
+          </button>
         </div>
-        {/* Date range and stats */}
-        <div className="w-full flex flex-row items-center justify-between mb-2 text-xs font-semibold text-gray-500">
-          <span>{periodLabel}</span>
-          <span>SPENT/DAY</span>
-        </div>
-        <div className="w-full flex flex-row items-center justify-between mb-4">
-          <span className="text-2xl font-bold text-red-500">{formatCurrency(expenses, settings?.baseCurrency || 'EUR')}</span>
-          <span className="text-2xl font-bold text-gray-900">{formatCurrency(spentPerDay, settings?.baseCurrency || 'EUR')}</span>
-        </div>
-        {/* Bar Chart */}
-        <div className="w-full h-40 md:h-48 mb-2">
+      </div>
+
+      <div className="h-48 mb-4">
+        {periodReceipts.length > 0 ? (
           <Bar data={barData} options={barOptions} />
+        ) : (
+          <div className="flex items-center justify-center h-full text-gray-400">
+            No data for this period.
+          </div>
+        )}
+      </div>
+
+      <div>
+        <div className="flex justify-between items-baseline mb-2">
+          <p className="font-semibold text-blue-200">Top Categories</p>
+          <p className="text-sm text-gray-400">
+            Total: <span className="font-bold text-white">{formatCurrency(total, settings?.baseCurrency || 'EUR')}</span>
+          </p>
         </div>
-        {/* Category Legend */}
-        <div className="flex flex-row flex-wrap items-center justify-center gap-4 mt-2 w-full">
-          {legend.map(l => (
-            <div key={l.name} className="flex items-center gap-2">
-              <span className="inline-block w-6 h-3 rounded-full" style={{background: l.color}}></span>
-              <span className="text-xs font-semibold text-gray-700">{l.name}</span>
-              <span className="text-xs text-gray-400">{l.percent}%</span>
-              <span className="text-xs text-gray-500 font-medium">
-                {formatCurrency(periodCategoryTotals[l.name], settings?.baseCurrency || 'EUR')}
-              </span>
+        <div className="space-y-2">
+          {legend.slice(0, 3).map((item, i) => (
+            <div key={i} className="flex items-center justify-between text-sm">
+              <div className="flex items-center gap-2">
+                <div
+                  className="w-2.5 h-2.5 rounded-full"
+                  style={{ backgroundColor: item.color.replace('border-', 'bg-') }}
+                ></div>
+                <span className="text-gray-200">{item.name}</span>
+              </div>
+              <div className="text-gray-300">{item.percent}%</div>
             </div>
           ))}
         </div>
