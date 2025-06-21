@@ -3,7 +3,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Upload, Plus, Trash2, DollarSign, Calendar, Store, Tag, CreditCard, List, X, Camera, CheckCircle, XCircle, PlusCircle, Save, Edit, Mail, LineChart, Lock, Loader2, MinusCircle } from 'lucide-react';
+import { Upload, Plus, Trash2, DollarSign, Calendar, Store, Tag, CreditCard, List, X, Camera, CheckCircle, XCircle, PlusCircle, Save, Edit, Mail, LineChart, Lock, Loader2, MinusCircle, ChevronDown, ChevronUp } from 'lucide-react';
 import {
   Select,
   SelectContent,
@@ -204,6 +204,8 @@ export default function ReceiptUploader({ className }) {
   const [currentNewItem, setCurrentNewItem] = useState({ name: '', price: '' }); // For adding/editing items in the edit form
   const [currentEditingItemIndex, setCurrentEditingItemIndex] = useState(null); // Index for editing items in the edit form
   const [expandedReceiptId, setExpandedReceiptId] = useState(null); // New state to manage expanded receipt
+  const [expandedInCategoryModalId, setExpandedInCategoryModalId] = useState(null);
+  const [returnToCategory, setReturnToCategory] = useState(null);
 
   // State for form data
   const [formData, setFormData] = useState({
@@ -664,6 +666,24 @@ export default function ReceiptUploader({ className }) {
     }
   };
 
+  const handleCloseReceiptForm = () => {
+    if (returnToCategory) {
+      // If we came from a category modal, return to it
+      setSelectedCategory(returnToCategory);
+      setModalOpen(true);
+      setReturnToCategory(null);
+    } else {
+      // Otherwise, go back to the main view
+      setCurrentStep('upload_options');
+    }
+    // Reset all form states
+    setEditingReceipt(null);
+    setIsEditing(false);
+    resetFormData();
+    setFile(null);
+    setPreviewImageSrc(null);
+  };
+
   // Update the `handleEditSave` for existing receipts
   const handleEditSaveSubmit = async (event) => {
     event.preventDefault(); // Prevent default form submission
@@ -916,7 +936,7 @@ export default function ReceiptUploader({ className }) {
     return (
       <div
         className="relative w-full overflow-x-hidden" // Add overflow-x-hidden here
-        style={{ touchAction: 'manipulation' }}
+        style={{ touchAction: 'pan-y' }} // Allow vertical scrolling, prevent horizontal pan
         onTouchStart={e => handleTouchStart(receipt.id, e)}
         onTouchMove={e => handleTouchMove(receipt.id, e)}
         onTouchEnd={() => handleTouchEnd(receipt.id)}
@@ -1239,7 +1259,27 @@ For currency detection, look for:
 - Currency mentioned in the payment section
 - Currency symbols next to prices
 
-Reply with a JSON object enclosed in triple backticks like this:\n\`\`\`json\n{\n  \"store\": \"Store Name\",\n  \"amount\": \"23.50\",\n  \"subtotal\": \"20.00\",\n  \"date\": \"13/06/2025\",\n  \"category\": \"Category Name\",\n  \"payment_method\": \"Credit Card\",\n  \"payment_method_alternatives\": [\"Cash\", \"Mobile Pay\"],\n  \"payment_method_reason\": \"Found 'VISA' and card number ****1234 on the receipt.\",\n  \"payment_method_confidence\": 0.95,\n  \"currency\": \"EUR\",\n  \"items\": [\n    {\"name\": \"Item 1\", \"price\": \"10.00\"},\n    {\"name\": \"Discount\", \"price\": "-2.00\"},\n    {\"name\": \"Item 2\", \"price\": \"13.50\"}\n  ]\n}\n\`\`\`\n\nNote: For currency, return the standard 3-letter currency code (e.g., EUR, USD, GBP, JPY) based on the detected currency.`
+Reply with a JSON object enclosed in triple backticks like this:\n\`\`\`json
+{
+  "store": "Store Name",
+  "amount": "23.50",
+  "subtotal": "20.00",
+  "date": "13/06/2025",
+  "category": "Category Name",
+  "payment_method": "Credit Card",
+  "payment_method_alternatives": ["Cash", "Mobile Pay"],
+  "payment_method_reason": "Found 'VISA' and card number ****1234 on the receipt.",
+  "payment_method_confidence": 0.95,
+  "currency": "EUR",
+  "items": [
+    {"name": "Item 1", "price": "10.00"},
+    {"name": "Discount", "price": "-2.00"},
+    {"name": "Item 2", "price": "13.50"}
+  ]
+}
+\`\`\`
+
+Note: For currency, return the standard 3-letter currency code (e.g., EUR, USD, GBP, JPY) based on the detected currency.`
                 },
                 { type: "image_url", image_url: { url: base64 } }
               ]
@@ -1397,16 +1437,22 @@ Reply with a JSON object enclosed in triple backticks like this:\n\`\`\`json\n{\
 
   // Add swipe handlers:
   const handleTouchStart = (id, e) => {
-    e.preventDefault();
-    e.stopPropagation();
+    // Don't prevent default here to allow vertical scrolling
     setSwipeStartX(prev => ({ ...prev, [id]: e.touches[0].clientX }));
+    setSwipeStartY(prev => ({ ...prev, [id]: e.touches[0].clientY }));
   };
   const handleTouchMove = (id, e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (swipeStartX[id] == null) return;
+    if (swipeStartX[id] == null || swipeStartY[id] == null) return;
+    
     const dx = e.touches[0].clientX - swipeStartX[id];
-    setSwipeOffset(prev => ({ ...prev, [id]: dx }));
+    const dy = e.touches[0].clientY - swipeStartY[id];
+    
+    // Only handle horizontal swipes, ignore vertical movement
+    if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 10) {
+      e.preventDefault(); // Only prevent default for horizontal swipes
+      e.stopPropagation();
+      setSwipeOffset(prev => ({ ...prev, [id]: dx }));
+    }
   };
   const handleTouchEnd = (id) => {
     const offset = swipeOffset[id] || 0;
@@ -1418,6 +1464,7 @@ Reply with a JSON object enclosed in triple backticks like this:\n\`\`\`json\n{\
       setTimeout(() => {
         setSwipeOffset(prev => ({ ...prev, [id]: 0 }));
         setSwipeStartX(prev => ({ ...prev, [id]: undefined }));
+        setSwipeStartY(prev => ({ ...prev, [id]: undefined }));
         handleEditClick(receipts.find(r => r.id === id));
       }, 150);
     } else if (offset < -threshold) {
@@ -1425,12 +1472,14 @@ Reply with a JSON object enclosed in triple backticks like this:\n\`\`\`json\n{\
       setTimeout(() => {
         setSwipeOffset(prev => ({ ...prev, [id]: 0 }));
         setSwipeStartX(prev => ({ ...prev, [id]: undefined }));
+        setSwipeStartY(prev => ({ ...prev, [id]: undefined }));
         setPendingDeleteId(id);
         setShowDeleteModal(true);
       }, 150);
       } else {
       setSwipeOffset(prev => ({ ...prev, [id]: 0 }));
       setSwipeStartX(prev => ({ ...prev, [id]: undefined }));
+      setSwipeStartY(prev => ({ ...prev, [id]: undefined }));
     }
   };
 
@@ -1451,6 +1500,7 @@ Reply with a JSON object enclosed in triple backticks like this:\n\`\`\`json\n{\
   // Add these hooks for swipe gesture state
   const [swipeOffset, setSwipeOffset] = useState({});
   const [swipeStartX, setSwipeStartX] = useState({});
+  const [swipeStartY, setSwipeStartY] = useState({});
 
   // --- Date helpers ---
   const today = new Date();
@@ -1623,7 +1673,7 @@ Reply with a JSON object enclosed in triple backticks like this:\n\`\`\`json\n{\
                       </p>
                     </div>
                 ) : (
-                  <div className="grid grid-cols-1 gap-4 w-full max-h-[400px] overflow-y-auto overflow-x-hidden mb-12">
+                  <div className="grid grid-cols-1 gap-4 w-full md:max-h-[400px] md:overflow-y-auto md:overflow-x-hidden mb-12">
                     {receipts.map((receipt) => renderReceiptCard(receipt))}
                     </div>
                 )}
@@ -1637,12 +1687,7 @@ Reply with a JSON object enclosed in triple backticks like this:\n\`\`\`json\n{\
           open={currentStep === 'receipt_form' || currentStep === 'manual_entry'} 
           onOpenChange={(open) => {
           if (!open) {
-              setCurrentStep('upload_options');
-              setEditingReceipt(null);
-            setFormData({ date: '', merchant: '', total: '', tax: '', subtotal: '', paymentMethod: '', currency: 'EUR', items: [], category: '' });
-            setNewItem({ name: '', price: '' });
-              setFile(null);
-              setPreviewImageSrc(null);
+              handleCloseReceiptForm();
             }
           }}
         >
@@ -1881,12 +1926,7 @@ Reply with a JSON object enclosed in triple backticks like this:\n\`\`\`json\n{\
                 <Button
                     type="button" 
                     variant="secondary" 
-                    onClick={() => {
-                      setCurrentStep('upload_options');
-                      setEditingReceipt(null);
-                  setIsEditing(false);
-                  resetFormData();
-                    }} 
+                    onClick={handleCloseReceiptForm}
                 className="bg-slate-700/90 hover:bg-blue-900 text-white text-base py-3 rounded-xl shadow-md transition-all duration-150 ease-in-out px-4 md:px-8"
                   >
                     Cancel
@@ -2010,7 +2050,7 @@ Reply with a JSON object enclosed in triple backticks like this:\n\`\`\`json\n{\
           {selectedCategory && (
             <>
               <DialogHeader className="p-6 pb-4 flex-shrink-0 border-b border-white/10">
-                <DialogTitle className="flex items-center gap-3 text-2xl font-bold text-indigo-200 tracking-tight">
+                <DialogTitle className="flex items-center gap-3 text-2xl font-bold text-indigo-200 tracking-tight overflow-hidden">
                   <span className="text-3xl flex-shrink-0">{selectedCategory.emoji}</span>
                   <span className="truncate min-w-0">{selectedCategory.name}</span>
                 </DialogTitle>
@@ -2020,7 +2060,7 @@ Reply with a JSON object enclosed in triple backticks like this:\n\`\`\`json\n{\
               </DialogHeader>
 
               <ScrollArea className="flex-1">
-                <div className="p-6 flex flex-col gap-4">
+                <div className="p-6 flex flex-col gap-4 overflow-x-hidden">
                   {/* Amount and percent */}
                   <div className="flex flex-row items-center justify-between mb-2">
                     <div>
@@ -2048,9 +2088,9 @@ Reply with a JSON object enclosed in triple backticks like this:\n\`\`\`json\n{\
                         });
                         const maxVal = Math.max(...dayTotals, 1);
                         return (
-                          <div className="flex items-end gap-1 w-full h-full">
+                          <div className="flex items-end w-full h-full">
                             {dayTotals.map((val, i) => (
-                              <div key={i} className="flex flex-col items-center justify-end h-full">
+                              <div key={i} className="flex-1 flex flex-col items-center justify-end h-full">
                                 <div
                                   className="rounded-full"
                                   style={{
@@ -2072,7 +2112,7 @@ Reply with a JSON object enclosed in triple backticks like this:\n\`\`\`json\n{\
                   {/* Recent receipts for this category */}
                   <div>
                     <div className="text-sm font-semibold text-blue-200 mb-1">Recent Receipts</div>
-                    <div className="max-h-40 overflow-y-auto flex flex-col gap-2 pr-1">
+                    <div className="flex flex-col gap-2">
                       {receipts.filter(r => (r.category || 'Uncategorized') === selectedCategory.name)
                         .sort((a, b) => {
                           const da = new Date(a.transactionDate || a.date || a.createdAt);
@@ -2080,18 +2120,85 @@ Reply with a JSON object enclosed in triple backticks like this:\n\`\`\`json\n{\
                           return db - da;
                         })
                         .slice(0, 5)
-                        .map((r, idx) => (
-                          <div key={r.id || idx} className="flex flex-row items-center justify-between bg-slate-800/80 rounded-lg px-3 py-2 shadow-inner">
-                            <div className="flex flex-col">
-                              <span className="font-medium text-white text-sm truncate max-w-[120px]">{r.merchant || 'Unknown'}</span>
-                              <span className="text-xs text-gray-400">{formatCurrency(r.total, r.currency || settings?.baseCurrency || 'EUR')}</span>
+                        .map((r, idx) => {
+                          const isExpanded = expandedInCategoryModalId === r.id;
+                          return (
+                            <div key={r.id || idx} className="bg-slate-800/80 rounded-lg shadow-inner overflow-hidden transition-all duration-300 ease-in-out">
+                              <button
+                                className="w-full grid grid-cols-[1fr_auto] items-center gap-x-2 px-3 py-2 text-left"
+                                onClick={() => setExpandedInCategoryModalId(isExpanded ? null : r.id)}
+                              >
+                                {/* Left side: Merchant and Amount */}
+                                <div className="flex flex-col overflow-hidden">
+                                  <span className="font-medium text-white text-sm truncate">{r.merchant || 'Unknown'}</span>
+                                  <span className="text-xs text-gray-400">{formatCurrency(r.total, r.currency || settings?.baseCurrency || 'EUR')}</span>
+                                </div>
+                                {/* Right side: Date and Icon */}
+                                <div className="flex items-center gap-3 text-right whitespace-nowrap">
+                                  <div className="flex flex-col items-end">
+                                    <span className="text-xs text-blue-200">{r.transactionDate ? new Date(r.transactionDate).toLocaleDateString() : ''}</span>
+                                    <span className="text-xs text-gray-400">{r.paymentMethod || ''}</span>
+                                  </div>
+                                  <div className="transition-transform duration-300" style={{ transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)' }}>
+                                    <ChevronDown className="h-5 w-5 text-blue-400 flex-shrink-0" />
+                                  </div>
+                                </div>
+                              </button>
+                              {/* Expanded content */}
+                              <div
+                                style={{ maxHeight: isExpanded ? '250px' : '0px' }}
+                                className="overflow-hidden transition-all duration-300 ease-in-out"
+                              >
+                                <div className="px-3 pb-3 pt-2 border-t border-slate-700/50">
+                                  {/* Item list */}
+                                  {r.items && r.items.length > 0 && (
+                                    <div className="mb-2">
+                                      <h4 className="text-xs text-blue-200/80 font-semibold mb-1">Items</h4>
+                                      <ul className="space-y-1">
+                                        {r.items.map((item, itemIdx) => (
+                                          <li key={itemIdx} className="flex justify-between text-xs">
+                                            <span className="truncate max-w-[150px]">{item.name}</span>
+                                            <span className="text-gray-400">{formatCurrency(item.price, r.currency)}</span>
+                                          </li>
+                                        ))}
+                                      </ul>
+                                    </div>
+                                  )}
+                                  {/* Action Buttons */}
+                                  <div className="flex justify-end gap-2 mt-2">
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      className="border-blue-500 text-blue-400 hover:bg-blue-900/40 hover:text-blue-300 h-8"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setReturnToCategory(selectedCategory);
+                                        handleEditClick(r);
+                                        setModalOpen(false);
+                                      }}
+                                    >
+                                      <Edit className="h-4 w-4 mr-2" />
+                                      Edit
+                                    </Button>
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      className="border-red-500 text-red-400 hover:bg-red-900/40 hover:text-red-300 h-8"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setPendingDeleteId(r.id);
+                                        setShowDeleteModal(true);
+                                      }}
+                                    >
+                                      <Trash2 className="h-4 w-4 mr-2" />
+                                      Delete
+                                    </Button>
+                                  </div>
+                                </div>
+                              </div>
                             </div>
-                            <div className="flex flex-col items-end">
-                              <span className="text-xs text-blue-200">{r.transactionDate ? new Date(r.transactionDate).toLocaleDateString() : ''}</span>
-                              <span className="text-xs text-gray-400">{r.paymentMethod || ''}</span>
-                            </div>
-                          </div>
-                        ))}
+                          );
+                        })}
                       {receipts.filter(r => (r.category || 'Uncategorized') === selectedCategory.name).length === 0 && (
                         <div className="text-xs text-gray-400 italic">No receipts in this category yet.</div>
                       )}
@@ -2182,7 +2289,7 @@ export function ExpensesDashboard({ totalExpenses, categoryTotals, formatCurrenc
   // --- UI ---
   return (
     <div className="w-full max-w-2xl mx-auto mt-4 mb-4 px-2">
-      <div className="bg-slate-800/60 backdrop-blur-lg shadow-2xl rounded-3xl border border-blue-400/20 p-6 flex flex-col items-center glass-card" style={{overflow: 'hidden', minHeight: 380, maxHeight: 420, background: 'rgba(30,41,59,0.65)', boxShadow: '0 8px 32px 0 rgba(31, 38, 135, 0.18)', border: '1.5px solid rgba(99,102,241,0.12)', backdropFilter: 'blur(18px)'}}>
+      <div className="bg-slate-800/60 backdrop-blur-lg shadow-2xl rounded-3xl border border-blue-400/20 p-6 flex flex-col items-center glass-card" style={{overflow: 'hidden', background: 'rgba(30,41,59,0.65)', boxShadow: '0 8px 32px 0 rgba(31, 38, 135, 0.18)', border: '1.5px solid rgba(99,102,241,0.12)', backdropFilter: 'blur(18px)'}}>
         {/* Modern Semi-Circle Doughnut Chart (restored) */}
         <div className="w-full flex flex-col items-center justify-center mb-6 relative group" style={{height: 140, overflow: 'hidden', maxHeight: 180, transition: 'transform 0.3s cubic-bezier(.4,2,.3,1)', willChange: 'transform'}}>
           <Doughnut
