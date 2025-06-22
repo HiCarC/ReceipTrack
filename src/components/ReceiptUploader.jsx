@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/select";
 import { useToast } from "@/components/ui/use-toast";
 import { db } from '@/firebase'; // Import your Firebase db instance
-import { collection, addDoc, getDocs, deleteDoc, doc, serverTimestamp, updateDoc } from "firebase/firestore"; // Import Firestore functions
+import { collection, addDoc, getDocs, deleteDoc, doc, serverTimestamp, updateDoc, query, where, onSnapshot } from "firebase/firestore"; // Import Firestore functions
 import {
   fetchExchangeRates,
   convertToBaseCurrency,
@@ -145,7 +145,7 @@ const categoryColors = {
 };
 const getCategoryColor = (cat) => categoryColors[cat] || categoryColors['Uncategorized'];
 
-export default function ReceiptUploader({ className, showOnly, onTabChange }) {
+export default function ReceiptUploader({ className, showOnly, onTabChange, groupId, defaultStep, uploadOnly }) {
   const { toast } = useToast();
   const authContext = useAuth();
   const user = authContext ? authContext.user : null;
@@ -199,7 +199,7 @@ export default function ReceiptUploader({ className, showOnly, onTabChange }) {
   const [showFullScreenPreview, setShowFullScreenPreview] = useState(false);
   const [previewImageSrc, setPreviewImageSrc] = useState(null);
   const [isEditing, setIsEditing] = useState(false);
-  const [currentStep, setCurrentStep] = useState('upload_options'); // Changed initial state
+  const [currentStep, setCurrentStep] = useState(defaultStep || 'upload_options'); // Use defaultStep if provided
 
   // New states for the "Edit Receipt Form" section's item management
   const [currentReceipt, setCurrentReceipt] = useState(null); // Holds the receipt being edited
@@ -504,7 +504,7 @@ export default function ReceiptUploader({ className, showOnly, onTabChange }) {
       const reader = new FileReader();
       reader.onload = (event) => {
         setPreviewImageSrc(event.target.result);
-        setShowFullScreenPreview(true);
+        setShowFullScreenPreview(true); // Show preview modal or section
       };
       reader.readAsDataURL(selectedFile);
       // Clear the input value to allow re-uploading the same file
@@ -639,8 +639,8 @@ export default function ReceiptUploader({ className, showOnly, onTabChange }) {
     const receiptData = {
       userId: user.uid,
       merchant: activeFormData.merchant,
-      date: serverTimestamp(), // Use server timestamp for consistency
-      transactionDate: activeFormData.date, // Keep original date string for display
+      date: serverTimestamp(),
+      transactionDate: activeFormData.date,
       total: parseFloat(activeFormData.total),
       subtotal: parseFloat(activeFormData.subtotal),
       tax: calculatedTax,
@@ -648,8 +648,9 @@ export default function ReceiptUploader({ className, showOnly, onTabChange }) {
       currency: activeFormData.currency,
       items: cleanedItems,
       imageUrl: activeFormData.imageUrl || '',
-      category: activeFormData.category || 'Uncategorized', // Ensure category is never undefined
-      createdAt: serverTimestamp()
+      category: activeFormData.category || 'Uncategorized',
+      createdAt: serverTimestamp(),
+      ...(groupId ? { groupId } : {}) // <-- Ensures group receipts are tagged
     };
 
     console.log("Receipt data being sent to Firestore:", receiptData);
@@ -1683,6 +1684,98 @@ Reply with a JSON object enclosed in triple backticks:
   const [selectedCategory, setSelectedCategory] = useState(null);
   const [modalOpen, setModalOpen] = useState(false);
 
+  const [groups, setGroups] = useState([]);
+  const [selectedGroup, setSelectedGroup] = useState("personal");
+
+  // Fetch groups where the user is a member
+  useEffect(() => {
+    if (!user) return;
+    const q = query(
+      collection(db, "groups"),
+      where("members", "array-contains", user.email)
+    );
+    const unsub = onSnapshot(q, (snap) => {
+      setGroups(snap.docs.map((doc) => doc.data()));
+    });
+    return () => unsub();
+  }, [user]);
+
+  // --- 1. Extract the upload method selector as a child component ---
+  function UploadMethodSelector({ onUploadFile, onTakePhoto, onManualEntry }) {
+    return (
+      <div className="flex flex-col items-center justify-center gap-4 p-4">
+        <h2 className="text-xl font-bold mb-4 text-blue-100">Choose Upload Method</h2>
+        <Button
+          className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-bold py-2 rounded-lg shadow hover:from-blue-700 hover:to-indigo-700 transition"
+          onClick={() => fileInputRef.current && fileInputRef.current.click()}
+        >
+          <Upload className="inline-block mr-2" /> Upload File
+        </Button>
+        <input
+          type="file"
+          accept="image/*"
+          style={{ display: "none" }}
+          ref={fileInputRef}
+          onChange={handleImageChange}
+        />
+        <Button
+          className="w-full bg-gradient-to-r from-purple-500 to-indigo-500 text-white font-bold py-2 rounded-lg shadow hover:from-purple-600 hover:to-indigo-600 transition"
+          onClick={onTakePhoto}
+        >
+          <Camera className="inline-block mr-2" /> Take Photo
+        </Button>
+        <Button
+          className="w-full bg-gradient-to-r from-green-500 to-teal-500 text-white font-bold py-2 rounded-lg shadow hover:from-green-600 hover:to-teal-600 transition"
+          onClick={onManualEntry}
+        >
+          <List className="inline-block mr-2" /> Enter Manually
+        </Button>
+      </div>
+    );
+  }
+
+  // --- 2. Use this function in both places ---
+  if (uploadOnly) {
+    // Show preview if a file is selected and previewImageSrc is set
+    if (previewImageSrc && showFullScreenPreview) {
+      return (
+        <div className="flex flex-col items-center justify-center gap-4 p-4">
+          <h2 className="text-xl font-bold mb-4 text-blue-100">Preview</h2>
+          <img src={previewImageSrc} alt="Receipt Preview" className="rounded-lg max-w-full max-h-80 mb-4" />
+          <div className="flex gap-2 w-full">
+            <Button
+              onClick={() => {
+                setShowFullScreenPreview(false);
+                setFile(null);
+                setPreviewImageSrc(null);
+              }}
+              className="w-1/2 bg-gradient-to-r from-red-500 to-pink-500 text-white"
+              variant="secondary"
+            >
+              Retake
+            </Button>
+            <Button
+              onClick={() => {
+                setShowFullScreenPreview(false);
+                // Optionally: setCurrentStep('form') or trigger OCR, etc.
+              }}
+              className="w-1/2 bg-gradient-to-r from-blue-600 to-indigo-600 text-white"
+            >
+              Use Photo
+            </Button>
+          </div>
+        </div>
+      );
+    }
+    return (
+      <UploadMethodSelector
+        onUploadFile={() => fileInputRef.current && fileInputRef.current.click()}
+        onTakePhoto={() => setIsCameraOpen(true)}
+        onManualEntry={handleManualEntry}
+      />
+    );
+  }
+
   return (
     <div className={`relative flex flex-col items-center w-full ${className}`} style={{ touchAction: 'manipulation', overflowX: 'hidden' }}>
       {/* Loading Overlay */}
@@ -2500,44 +2593,43 @@ Reply with a JSON object enclosed in triple backticks:
           )}
         </DialogContent>
       </Dialog>
-    </div>
-  );
-}
-
-export function UploadMethodModal({
-  file,
-  fileInputRef,
-  handleImageChange,
-  onUploadFile,
-  onTakePhoto,
-  onManualEntry,
-  className = '',
-}) {
-  return (
-    <Card className={`w-full max-w-sm p-6 ${className}`}>
-      <CardHeader>
-        <CardTitle className="flex items-center"><Upload className="mr-2" /> Upload Receipt</CardTitle>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-4">
-        <input
-          type="file"
-          id="fileInput"
-          ref={fileInputRef}
-          onChange={handleImageChange}
-          accept="image/*"
-          className="hidden"
+      {currentStep === 'upload_options' && (
+        <UploadMethodSelector
+          onUploadFile={() => fileInputRef.current && fileInputRef.current.click()}
+          onTakePhoto={() => setIsCameraOpen(true)}
+          onManualEntry={handleManualEntry}
         />
-        <Button onClick={() => document.getElementById('fileInput').click()} className="w-full">
-          <Upload className="mr-2 h-4 w-4" /> Upload File
+      )}
+      {/* Show preview if a file is selected and previewImageSrc is set */}
+      {previewImageSrc && showFullScreenPreview && (
+        <div className="flex flex-col items-center justify-center gap-4 p-4">
+          <h2 className="text-xl font-bold mb-4 text-blue-100">Preview</h2>
+          <img src={previewImageSrc} alt="Receipt Preview" className="rounded-lg max-w-full max-h-80 mb-4" />
+          <div className="flex gap-2 w-full">
+        <Button
+              onClick={() => {
+                setShowFullScreenPreview(false);
+                setFile(null);
+                setPreviewImageSrc(null);
+              }}
+              className="w-1/2 bg-gradient-to-r from-red-500 to-pink-500 text-white"
+              variant="secondary"
+            >
+              Retake
         </Button>
-        <Button onClick={onTakePhoto} className="w-full">
-          <Camera className="mr-2 h-4 w-4" /> Take Photo
+        <Button
+              onClick={() => {
+                setShowFullScreenPreview(false);
+                // Optionally: setCurrentStep('form') or trigger OCR, etc.
+              }}
+              className="w-1/2 bg-gradient-to-r from-blue-600 to-indigo-600 text-white"
+            >
+              Use Photo
         </Button>
-        <Button onClick={onManualEntry} className="w-full">
-          <List className="mr-2 h-4 w-4" /> Enter Manually
-        </Button>
-      </CardContent>
-    </Card>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -3022,4 +3114,28 @@ function InsightsSection({ receipts = [], categoryTotals = {}, formatCurrency, s
       </div>
     </div>
   );
+}
+
+import { getAuth, sendSignInLinkToEmail, fetchSignInMethodsForEmail } from "firebase/auth";
+
+async function checkUserExistsByEmail(email) {
+  const auth = getAuth();
+  try {
+    const methods = await fetchSignInMethodsForEmail(auth, email);
+    return methods.length > 0;
+  } catch (e) {
+    // If email enumeration protection is enabled, always return false (always send invite)
+    return false;
+  }
+}
+
+async function sendInviteEmailWithFirebase(email, groupName, inviterName) {
+  const auth = getAuth();
+  const actionCodeSettings = {
+    url: `https://receip-track.vercel.app/register?groupInvite=1&groupName=${encodeURIComponent(groupName)}`,
+    handleCodeInApp: true,
+  };
+  await sendSignInLinkToEmail(auth, email, actionCodeSettings);
+  window.localStorage.setItem('emailForSignIn', email);
+  alert(`Invite sent! 🚀\n\n${email} will receive a magic link to join "${groupName}".`);
 }

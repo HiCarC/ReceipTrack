@@ -7,6 +7,10 @@ import { Toaster } from "@/components/ui/toaster"
 import AuthHeader from "@/components/AuthHeader"
 import { Settings } from './components/Settings';
 import MobileNavBar from './components/MobileNavBar';
+import { Routes, Route } from "react-router-dom";
+import GroupsDashboard from "./components/groups/GroupsDashboard";
+import GroupPage from "./components/groups/GroupPage";
+import JoinGroupPage from "./components/groups/JoinGroupPage";
 
 // Create a RootContent component that will consume the AuthContext
 function ExpensesScreen(props) {
@@ -66,10 +70,18 @@ function RootContent() {
 }
 
 function App() {
+  const { user } = useAuth ? useAuth() : { user: null };
+
   return (
     <AuthProvider>
       <LoadingProvider>
-      <RootContent /> {/* Render the RootContent component inside AuthProvider */}
+        <Routes>
+          <Route path="/" element={<RootContent />} />
+          <Route path="/groups" element={<GroupsDashboard user={user} />} />
+          <Route path="/groups/:groupId" element={<GroupPage user={user} />} />
+          <Route path="/groups/join/:groupId" element={<JoinGroupPage />} />
+          <Route path="/upload" element={<ReceiptUploader />} />
+        </Routes>
       </LoadingProvider>
     </AuthProvider>
   );

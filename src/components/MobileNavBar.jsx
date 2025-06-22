@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { useLoading } from "@/contexts/LoadingContext";
-import { Camera } from 'lucide-react';
+import { Camera, Users } from 'lucide-react';
+import { useNavigate } from "react-router-dom";
 
 // Custom SVGs for premium look
 const WalletSVG = ({ className }) => (
@@ -33,6 +34,7 @@ const ReceiptSVG = ({ className }) => (
 
 export default function MobileNavBar({ currentTab, onTabChange }) {
   const { isLoading } = useLoading();
+  const navigate = useNavigate();
 
   // Haptic feedback on tab change
   const handleTabChange = (tab) => {
@@ -99,6 +101,15 @@ export default function MobileNavBar({ currentTab, onTabChange }) {
           style={{ touchAction: 'manipulation', zIndex: 2 }}
         >
           <ReceiptSVG className="h-8 w-8" />
+        </button>
+
+        {/* Groups (new tab) */}
+        <button
+          className="flex flex-col items-center justify-center text-blue-300 hover:text-blue-500 transition"
+          onClick={() => navigate('/groups')}
+        >
+          <Users className="h-6 w-6" />
+          <span className="text-xs">Groups</span>
         </button>
 
         {/* Animations */}
