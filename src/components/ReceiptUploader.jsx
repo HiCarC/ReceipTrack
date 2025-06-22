@@ -330,7 +330,7 @@ export default function ReceiptUploader({ className, showOnly, onTabChange }) {
     
     // Filter receipts for current month
     const currentMonthReceipts = receipts.filter(receipt => {
-      const receiptDate = normalizeToLocalMidnight(receipt.transactionDate || receipt.date || receipt.createdAt);
+      const receiptDate = normalizeToLocalMidnight(receipt.transactionDate || receipt.date);
       return receiptDate && receiptDate >= currentMonthStart && receiptDate <= currentMonthEnd;
     });
     
@@ -1675,7 +1675,7 @@ Reply with a JSON object enclosed in triple backticks:
 
   // Filter receipts for current week (inclusive)
   const weekReceipts = receipts.filter(r => {
-    const d = normalizeToLocalMidnight(r.date || r.transactionDate || r.createdAt);
+    const d = normalizeToLocalMidnight(r.transactionDate || r.date);
     return d && d >= weekStart && d <= weekEnd;
   });
 
@@ -1851,8 +1851,8 @@ Reply with a JSON object enclosed in triple backticks:
                       // First, sort all receipts by transaction date (newest first) for consistent ordering
                       const sortedReceipts = [...receipts].sort((a, b) => {
                         // Prioritize transactionDate over date over createdAt for sorting
-                        const dateA = normalizeToLocalMidnight(a.transactionDate || a.date || a.createdAt);
-                        const dateB = normalizeToLocalMidnight(b.transactionDate || b.date || b.createdAt);
+                        const dateA = normalizeToLocalMidnight(a.transactionDate || a.date);
+                        const dateB = normalizeToLocalMidnight(b.transactionDate || b.date);
                         
                         if (!dateA && !dateB) return 0;
                         if (!dateA) return 1; // Put receipts without dates at the end
@@ -1863,7 +1863,7 @@ Reply with a JSON object enclosed in triple backticks:
                       // Group receipts by month with world-class date handling
                       const groupedReceipts = sortedReceipts.reduce((groups, receipt) => {
                         // Use transactionDate for grouping, not upload date
-                        const date = normalizeToLocalMidnight(receipt.transactionDate || receipt.date || receipt.createdAt);
+                        const date = normalizeToLocalMidnight(receipt.transactionDate || receipt.date);
                         if (!date) return groups;
                         
                         const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
@@ -1925,8 +1925,8 @@ Reply with a JSON object enclosed in triple backticks:
                               {group.receipts
                                 .sort((a, b) => {
                                   // Prioritize transactionDate over date over createdAt for sorting
-                                  const dateA = normalizeToLocalMidnight(a.transactionDate || a.date || a.createdAt);
-                                  const dateB = normalizeToLocalMidnight(b.transactionDate || b.date || b.createdAt);
+                                  const dateA = normalizeToLocalMidnight(a.transactionDate || a.date);
+                                  const dateB = normalizeToLocalMidnight(b.transactionDate || b.date);
                                   if (!dateA && !dateB) return 0;
                                   if (!dateA) return 1; // Put receipts without dates at the end
                                   if (!dateB) return -1;
@@ -2211,7 +2211,7 @@ Reply with a JSON object enclosed in triple backticks:
       {showFullScreenPreview && (
         <div className="fixed inset-0 z-[100] bg-black flex flex-col animate-fade-in">
           <img src={previewImageSrc} alt="Preview" className="flex-1 object-contain" />
-          <div className="absolute bottom-0 left-0 right-0 flex justify-center items-center gap-4 p-4 bg-gradient-to-t from-black/80 to-transparent pb-24">
+          <div className="absolute bottom-12 left-0 right-0 flex justify-center items-center gap-4 p-4 bg-gradient-to-t from-black/80 to-transparent pb-36">
             <Button
               onClick={handleRetakePreview}
               variant="outline"
@@ -2319,7 +2319,7 @@ Reply with a JSON object enclosed in triple backticks:
                 </DialogDescription>
               </DialogHeader>
 
-              <ScrollArea className="flex-1">
+              <ScrollArea className="flex-1 max-h-[70vh] overflow-y-auto">
                 <div className="p-6 flex flex-col gap-4 overflow-x-hidden">
                   {/* Amount and percent */}
                   <div className="flex flex-row items-center justify-between mb-2">
@@ -2378,8 +2378,8 @@ Reply with a JSON object enclosed in triple backticks:
                         const categoryReceipts = receipts
                           .filter(r => (r.category || 'Uncategorized') === selectedCategory.name)
                         .sort((a, b) => {
-                          const da = new Date(a.transactionDate || a.date || a.createdAt);
-                          const db = new Date(b.transactionDate || b.date || b.createdAt);
+                          const da = new Date(a.transactionDate || a.date);
+                          const db = new Date(b.transactionDate || b.date);
                           return db - da;
                         })
                           .slice(0, 10); // Show more receipts since we're grouping
@@ -2391,7 +2391,7 @@ Reply with a JSON object enclosed in triple backticks:
                         let currentMonthReceipts = [];
 
                         categoryReceipts.forEach((receipt, index) => {
-                          const receiptDate = new Date(receipt.transactionDate || receipt.date || receipt.createdAt);
+                          const receiptDate = new Date(receipt.transactionDate || receipt.date);
                           const monthKey = `${receiptDate.getFullYear()}-${receiptDate.getMonth()}`;
                           const monthLabel = receiptDate.toLocaleDateString(undefined, { 
                             month: 'long', 
@@ -2466,7 +2466,7 @@ Reply with a JSON object enclosed in triple backticks:
                               <div
                                 style={{ maxHeight: isExpanded ? '250px' : '0px' }}
                                     className="transition-all duration-300 ease-in-out"
-                                  >
+                              >
                                     <div className="p-3 border-t border-white/10">
                                       <div className="text-xs text-gray-400 mb-1">Items:</div>
                                       {r.items && r.items.length > 0 ? (
@@ -2688,8 +2688,8 @@ export function ReceiptsList({ receipts, renderReceiptCard, isFirestoreLoading, 
   // Sort receipts by transaction date (newest first) for consistent ordering
   const sortedReceipts = [...receipts].sort((a, b) => {
     // Prioritize transactionDate over date over createdAt for sorting
-    const dateA = normalizeToLocalMidnight(a.transactionDate || a.date || a.createdAt);
-    const dateB = normalizeToLocalMidnight(b.transactionDate || b.date || b.createdAt);
+    const dateA = normalizeToLocalMidnight(a.transactionDate || a.date);
+    const dateB = normalizeToLocalMidnight(b.transactionDate || b.date);
     if (!dateA && !dateB) return 0;
     if (!dateA) return 1; // Put receipts without dates at the end
     if (!dateB) return -1;
@@ -2715,7 +2715,7 @@ export function ReceiptsList({ receipts, renderReceiptCard, isFirestoreLoading, 
         ) : receipts.length === 0 ? (
           <p className="text-center text-gray-500">No receipts yet. Upload one to get started!</p>
         ) : (
-          <div className="grid grid-cols-1 gap-4 max-h-[400px] overflow-y-auto">
+          <div className="grid grid-cols-1 gap-4 w-full md:max-h-[400px] overflow-y-auto">
             {sortedReceipts.map((receipt) => renderReceiptCard(receipt))}
           </div>
         )}
@@ -2766,7 +2766,7 @@ function InsightsSection({ receipts = [], categoryTotals = {}, formatCurrency, s
 
   // Filter receipts for selected period (inclusive)
   const periodReceipts = receipts.filter(r => {
-    const d = normalizeToLocalMidnight(r.transactionDate || r.date || r.createdAt);
+    const d = normalizeToLocalMidnight(r.transactionDate || r.date);
     return d && d >= periodStart && d <= periodEnd;
   });
 
@@ -2805,7 +2805,7 @@ function InsightsSection({ receipts = [], categoryTotals = {}, formatCurrency, s
     dailyData = weekDays.map(() => ({ categories: {}, total: 0 }));
 
     periodReceipts.forEach(r => {
-      const date = normalizeToLocalMidnight(r.date || r.transactionDate || r.createdAt);
+      const date = normalizeToLocalMidnight(r.transactionDate || r.date);
       if (date) {
         // Find the index in weekDates that matches this date
         const dayIndex = weekDates.findIndex(d => d.getTime() === date.getTime());

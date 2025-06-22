@@ -69,7 +69,7 @@ function App() {
   return (
     <AuthProvider>
       <LoadingProvider>
-        <RootContent /> {/* Render the RootContent component inside AuthProvider */}
+      <RootContent /> {/* Render the RootContent component inside AuthProvider */}
       </LoadingProvider>
     </AuthProvider>
   );
