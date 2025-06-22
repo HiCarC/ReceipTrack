@@ -118,6 +118,56 @@ export default function AuthHeader() {
     return () => window.removeEventListener('open-email-auth-modal', handleOpenModal);
   }, []);
 
+  const [autoGoogleSignIn, setAutoGoogleSignIn] = useState(false);
+  const [justSignedInWithGoogle, setJustSignedInWithGoogle] = useState(false);
+
+  useEffect(() => {
+    // Listen for Google Auth modal event from landing page
+    const handleOpenGoogleAuth = () => {
+      setShowModal(true);
+      setIsSignUp(false);
+      setAutoGoogleSignIn(true);
+    };
+    window.addEventListener('open-google-auth-modal', handleOpenGoogleAuth);
+    return () => window.removeEventListener('open-google-auth-modal', handleOpenGoogleAuth);
+  }, []);
+
+  useEffect(() => {
+    if (showModal && autoGoogleSignIn) {
+      setTimeout(async () => {
+        try {
+          await signInWithGoogle();
+          setJustSignedInWithGoogle(true);
+        } catch (err) {
+          setError(err.message || "Failed to sign in with Google.");
+        } finally {
+          setAutoGoogleSignIn(false);
+        }
+      }, 200);
+    }
+  }, [showModal, autoGoogleSignIn, signInWithGoogle]);
+
+  useEffect(() => {
+    if (user) {
+      setShowModal(false);
+      setAutoGoogleSignIn(false);
+      setError("");
+    }
+  }, [user]);
+
+  useEffect(() => {
+    if (user && justSignedInWithGoogle) {
+      toast({
+        title: "🎉 Welcome to ExpenseApp! 🎉",
+        description: "You signed in with Google. Let the magic (and savings) begin! 🪄✨",
+        variant: "success",
+        duration: 5000,
+        style: { background: 'linear-gradient(90deg, #38ef7d 0%, #11998e 100%)', color: '#fff', fontWeight: 'bold', fontSize: '1.1rem', boxShadow: '0 4px 24px 0 rgba(56,239,125,0.15)' }
+      });
+      setJustSignedInWithGoogle(false);
+    }
+  }, [user, justSignedInWithGoogle, toast]);
+
   const handleEmailAuth = async () => {
     setLoading(true);
     setError("");
@@ -250,6 +300,10 @@ export default function AuthHeader() {
     }
     try {
       await updateUserProfile({ displayName: onboardingName, photoURL: onboardingAvatar });
+      // Send verification email immediately after profile is set
+      if (user && user.emailVerified === false) {
+        await sendEmailVerification();
+      }
       setShowOnboarding(false);
       setOnboardingName("");
       setOnboardingAvatar("");
@@ -257,13 +311,22 @@ export default function AuthHeader() {
       if (user && user.emailVerified === false) {
         setShowVerify(true);
       }
+      // Show confetti and welcome message on first entry
       toast({
-        title: "Welcome to ExpenseApp!",
-        description: "Your profile is all set! Let the magic begin! ✨",
+        title: "🎉 Welcome to ExpenseApp! 🎉",
+        description: "Your profile is all set! Let the magic begin!",
         variant: "success",
-        duration: 3000,
+        duration: 5000,
         style: { background: 'linear-gradient(90deg, #38ef7d 0%, #11998e 100%)', color: '#fff', fontWeight: 'bold', fontSize: '1.1rem', boxShadow: '0 4px 24px 0 rgba(56,239,125,0.15)' }
       });
+      // Optionally, trigger a confetti animation here if you have a confetti component or library
+      if (window && window.confetti) {
+        window.confetti({
+          particleCount: 120,
+          spread: 90,
+          origin: { y: 0.6 }
+        });
+      }
     } catch (err) {
       setVerifyMessage("Error: " + err.message);
       toast({
