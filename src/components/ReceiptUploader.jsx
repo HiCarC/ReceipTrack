@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/select";
 import { useToast } from "@/components/ui/use-toast";
 import { db } from '@/firebase'; // Import your Firebase db instance
-import { collection, addDoc, getDocs, deleteDoc, doc, serverTimestamp, updateDoc } from "firebase/firestore"; // Import Firestore functions
+import { collection, addDoc, getDocs, deleteDoc, doc, serverTimestamp, updateDoc, Timestamp } from "firebase/firestore"; // Import Firestore functions
 import {
   fetchExchangeRates,
   convertToBaseCurrency,
@@ -226,6 +226,7 @@ export default function ReceiptUploader({ className, showOnly, onTabChange }) {
   const [isBusy, setIsBusy] = useState(false);
   const [message, setMessage] = useState(null);
   const [currentFunnyMessage, setCurrentFunnyMessage] = useState('');
+  const [showSuccessState, setShowSuccessState] = useState(false);
 
   // Combine isLoading and isFirestoreLoading for a global busy state
   const isBusyGlobal = isFirestoreLoading;
@@ -473,7 +474,7 @@ export default function ReceiptUploader({ className, showOnly, onTabChange }) {
       return;
     }
     try {
-      await deleteDoc(doc(db, "receipts", id));
+      await deleteDoc(doc(db, "users", user.uid, "receipts", id));
       setReceipts(receipts.filter((receipt) => receipt.id !== id));
       toast({
         title: "Receipt Deleted! 🗑️",
@@ -630,11 +631,23 @@ export default function ReceiptUploader({ className, showOnly, onTabChange }) {
       if (isNaN(calculatedTax) || calculatedTax < 0) calculatedTax = 0; // Ensure non-negative tax
     }
 
+    // Convert transactionDate to Firestore Timestamp if it's a string
+    let transactionDateValue;
+    if (activeFormData.date) {
+      // If already a Date object, use as is; otherwise, parse
+      const dateObj = (activeFormData.date instanceof Date)
+        ? activeFormData.date
+        : new Date(activeFormData.date);
+      transactionDateValue = Timestamp.fromDate(dateObj);
+    } else {
+      transactionDateValue = serverTimestamp();
+    }
+
     const receiptData = {
       userId: user.uid,
       merchant: activeFormData.merchant,
       date: serverTimestamp(), // Use server timestamp for consistency
-      transactionDate: activeFormData.date, // Keep original date string for display
+      transactionDate: transactionDateValue, // Now always a Firestore Timestamp
       total: parseFloat(activeFormData.total),
       subtotal: parseFloat(activeFormData.subtotal),
       tax: calculatedTax,
@@ -646,7 +659,7 @@ export default function ReceiptUploader({ className, showOnly, onTabChange }) {
       createdAt: serverTimestamp()
     };
 
-    console.log("Receipt data being sent to Firestore:", receiptData);
+    console.log("Receipt data being sent to Firestore:", JSON.stringify(receiptData, null, 2));
 
     try {
       if (editingReceipt) {
@@ -798,7 +811,9 @@ export default function ReceiptUploader({ className, showOnly, onTabChange }) {
         total: parsedTotal, // Store as number
         subtotal: parsedSubtotal ? parsedSubtotal : undefined, // Store as number
         tax: parseFloat(taxAmount), // Store as number
-        transactionDate: editForm.date, // Use transactionDate for consistency
+        transactionDate: editForm.date
+          ? Timestamp.fromDate(new Date(editForm.date))
+          : serverTimestamp(), // Use Firestore Timestamp
         category: editForm.category,
         paymentMethod: editForm.payment_method,
         currency: editForm.currency || editingReceipt.currency || settings.baseCurrency,
@@ -974,8 +989,9 @@ export default function ReceiptUploader({ className, showOnly, onTabChange }) {
     const { progress, dir } = getSwipeProgress(receipt.id);
     return (
       <div
-        className="relative w-full overflow-x-hidden" // Add overflow-x-hidden here
-        style={{ touchAction: 'pan-y' }} // Allow vertical scrolling, prevent horizontal pan
+        key={receipt.id}
+        className="relative w-full overflow-x-hidden"
+        style={{ touchAction: 'pan-y' }}
         onTouchStart={e => handleTouchStart(receipt.id, e)}
         onTouchMove={e => handleTouchMove(receipt.id, e)}
         onTouchEnd={() => handleTouchEnd(receipt.id)}
@@ -1016,64 +1032,61 @@ export default function ReceiptUploader({ className, showOnly, onTabChange }) {
         </div>
         <Card
           id={`receipt-card-${receipt.id}`}
-          key={receipt.id || receipt._id || receipt.date+receipt.merchant+receipt.total}
           style={{
             minHeight: 96,
-            transform: `translateX(${swipeOffset[receipt.id] || 0}px)`, // Only Card moves
-            transition: swipeOffset[receipt.id] ? 'none' : 'transform 0.5s cubic-bezier(0.22,1,0.36,1)', // springy
+            transform: `translateX(${swipeOffset[receipt.id] || 0}px)`,
+            transition: swipeOffset[receipt.id] ? 'none' : 'transform 0.5s cubic-bezier(0.22,1,0.36,1)',
           }}
-          className={`relative bg-slate-800/90 p-5 pl-4 rounded-2xl shadow-xl text-white border border-blue-900/30 border-l-4 ${catColor} transition-all duration-300 ease-in-out animate-fade-in-up ${isExpanded ? 'ring-2 ring-blue-500/50 scale-[1.01] shadow-2xl' : 'hover:shadow-2xl hover:-translate-y-1 active:scale-[0.98]'}`}
+          className={`relative bg-slate-800/90 p-5 pl-4 rounded-2xl shadow-xl text-white border border-blue-900/30 border-l-4 ${catColor} transition-all duration-300 ease-in-out animate-fade-in-up ${isExpanded ? 'ring-2 ring-blue-500/50 scale-[1.01] shadow-2xl' : 'hover:shadow-2xl hover:-translate-y-1 active:scale-90'}`}
           onClick={() => setExpandedReceiptId(isExpanded ? null : receipt.id)}
           aria-label={`Receipt for ${receipt.merchant}`}
         >
-          <div className="flex items-center justify-between gap-2 w-full">
-            <div className="flex flex-col flex-1 min-w-0">
-              <div className="flex items-center gap-2 min-w-0">
-                <span className="text-lg font-extrabold text-blue-200 truncate max-w-[120px] md:max-w-[200px] tracking-tight" title={receipt.merchant}>{receipt.merchant}</span>
-                <span className="text-xs text-blue-200/80 font-medium whitespace-nowrap">{formatDateSafely(receipt.transactionDate, 'DD MMM')}</span>
-              </div>
-              <div className="flex items-baseline gap-1 mt-1">
-                <span className={`text-2xl font-extrabold ${isNegative ? 'text-red-400' : 'text-blue-100'}`}>{isNegative ? '0.00' : amount.toFixed(2)}</span>
-                <span className="text-sm text-blue-200/80 ml-1">{receipt.currency}</span>
-              </div>
-            </div>
-            <div className="flex flex-col gap-2 items-end ml-2">
-          <Button
-                onClick={e => { e.stopPropagation(); handleEditClick(receipt); }}
-            variant="ghost"
-            size="icon"
-                className="text-blue-400 hover:bg-blue-900/40 hover:text-blue-300 transition-transform duration-150 ease-in-out active:scale-90"
-                aria-label="Edit receipt"
-          >
-                <Edit className="h-5 w-5" />
-          </Button>
-          <Button
-                onClick={e => { e.stopPropagation(); handleDeleteReceipt(receipt.id); }}
-            variant="ghost"
-            size="icon"
-                className="text-red-400 hover:bg-blue-900/40 hover:text-red-300 transition-transform duration-150 ease-in-out active:scale-90"
-                aria-label="Delete receipt"
-          >
-                <Trash2 className="h-5 w-5" />
-          </Button>
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="text-lg font-extrabold text-blue-200 truncate max-w-[120px] md:max-w-[200px] tracking-tight" title={receipt.merchant}>{receipt.merchant}</span>
+            <span className="text-xs text-blue-200/80 font-medium whitespace-nowrap">
+              {receipt.transactionDate && receipt.transactionDate.toDate ? receipt.transactionDate.toDate().toLocaleDateString() : ''}
+            </span>
           </div>
+          <div className="flex items-baseline gap-1 mt-1">
+            <span className={`text-2xl font-extrabold ${isNegative ? 'text-red-400' : 'text-blue-100'}`}>{isNegative ? '0.00' : amount.toFixed(2)}</span>
+            <span className="text-sm text-blue-200/80 ml-1">{receipt.currency}</span>
+          </div>
+          <div className="flex flex-col gap-2 items-end ml-2">
+            <Button
+              onClick={e => { e.stopPropagation(); handleEditClick(receipt); }}
+              variant="ghost"
+              size="icon"
+              className="text-blue-400 hover:bg-blue-900/40 hover:text-blue-300 transition-transform duration-150 ease-in-out active:scale-90"
+              aria-label="Edit receipt"
+            >
+              <Edit className="h-5 w-5" />
+            </Button>
+            <Button
+              onClick={e => handleBinIconClick(e, receipt.id)}
+              variant="ghost"
+              size="icon"
+              className="text-red-400 hover:bg-blue-900/40 hover:text-red-300 transition-transform duration-150 ease-in-out active:scale-90"
+              aria-label="Delete receipt"
+            >
+              <Trash2 className="h-5 w-5" />
+            </Button>
           </div>
           {isExpanded && (
             <CardContent className="pt-4">
               <div className="grid grid-cols-2 gap-4 mb-4">
-          <div>
+                <div>
                   <p className="text-xs text-blue-200/70">Subtotal</p>
                   <p className="text-base">{receipt.subtotal ? parseFloat(receipt.subtotal).toFixed(2) : '-'}</p>
-          </div>
-          <div>
+                </div>
+                <div>
                   <p className="text-xs text-blue-200/70">Tax</p>
                   <p className="text-base">{receipt.tax ? parseFloat(receipt.tax).toFixed(2) : '-'}</p>
-        </div>
-          <div>
+                </div>
+                <div>
                   <p className="text-xs text-blue-200/70">Payment</p>
                   <p className="text-base">{receipt.paymentMethod || 'Not specified'}</p>
-          </div>
-          <div>
+                </div>
+                <div>
                   <p className="text-xs text-blue-200/70">Category</p>
                   <p className="text-base flex items-center gap-1">{receipt.category || 'Uncategorized'}
                     <span className={`inline-block w-2 h-2 rounded-full ml-1 ${catColor.replace('border-l-4', 'bg-')}`}></span>
@@ -1081,25 +1094,25 @@ export default function ReceiptUploader({ className, showOnly, onTabChange }) {
                 </div>
                 <div>
                   <p className="text-xs text-blue-200/70">Date</p>
-                  <p className="text-base">{formatDateSafely(receipt.transactionDate, 'DD MMM YYYY')}</p>
-          </div>
-        </div>
-        {receipt.items && receipt.items.length > 0 && (
+                  <p className="text-base">{receipt.transactionDate && receipt.transactionDate.toDate ? receipt.transactionDate.toDate().toLocaleDateString() : ''}</p>
+                </div>
+              </div>
+              {receipt.items && receipt.items.length > 0 && (
                 <div className="mt-2">
                   <p className="text-xs text-blue-200/70 mb-1">Items</p>
                   <ul className="space-y-1 list-disc list-inside">
-              {receipt.items.map((item, index) => (
-                <li key={index} className="flex justify-between text-sm">
+                    {receipt.items.map((item, index) => (
+                      <li key={index} className="flex justify-between text-sm">
                         <span className="truncate max-w-[100px]">{item.name}</span>
                         <span>{parseFloat(item.price).toFixed(2)} {receipt.currency}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-      </CardContent>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </CardContent>
           )}
-    </Card>
+        </Card>
       </div>
     );
   };
@@ -1245,6 +1258,84 @@ export default function ReceiptUploader({ className, showOnly, onTabChange }) {
     setIsEditing(true);
     setCurrentStep('receipt_form'); // Open the receipt form modal for editing
     setReturnToCategory(selectedCategory); // Save the category context
+  };
+
+  // Add auto-save function for streamlined UX
+  const autoSaveReceipt = async (ocrData) => {
+    if (!user) {
+      toast({
+        title: "Authentication Required",
+        description: "Please sign in to save receipts.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsBusy(true);
+
+    try {
+      // Prepare receipt data from OCR results
+      const receiptData = {
+        userId: user.uid,
+        merchant: ocrData.merchant || '',
+        date: serverTimestamp(),
+        transactionDate: ocrData.date ? Timestamp.fromDate(new Date(ocrData.date)) : serverTimestamp(),
+        total: parseFloat(ocrData.total) || 0,
+        subtotal: parseFloat(ocrData.subtotal) || 0,
+        tax: parseFloat(ocrData.tax) || 0,
+        paymentMethod: ocrData.paymentMethod || 'Other',
+        currency: ocrData.currency || 'EUR',
+        items: (ocrData.items || []).filter(item => item.name && !isNaN(parseFloat(item.price))).map(item => ({
+          name: item.name,
+          price: parseFloat(item.price)
+        })),
+        imageUrl: '', // No image URL for auto-saved receipts
+        category: ocrData.category || 'Uncategorized',
+        createdAt: serverTimestamp()
+      };
+
+      // Save to Firestore
+      await addDoc(collection(db, "users", user.uid, "receipts"), receiptData);
+      
+      // Show success feedback with enhanced message
+      toast({
+        title: "Receipt Saved! 🎉",
+        description: `Successfully saved receipt from ${ocrData.merchant || 'Unknown Store'} for ${formatCurrency(parseFloat(ocrData.total) || 0, ocrData.currency || 'EUR')}`,
+      });
+
+      // Brief success state before navigation
+      setIsLoading(false);
+      setIsOcrProcessing(false);
+      
+      // Show success overlay for 1.5 seconds
+      setShowSuccessState(true);
+      setTimeout(() => {
+        setShowSuccessState(false);
+        
+        // Reset states and navigate to dashboard
+        setFile(null);
+        setPreviewImageSrc(null);
+        setCurrentStep('upload_options');
+        fetchReceipts();
+        
+        // Navigate to expenses tab to show the updated financial overview
+        if (onTabChange) {
+          onTabChange('expenses');
+        }
+      }, 1500);
+
+    } catch (error) {
+      console.error("Error auto-saving receipt:", error);
+      toast({
+        title: "Error Saving Receipt 😥",
+        description: `There was an issue saving your receipt: ${error.message}`,
+        variant: "destructive",
+      });
+      setIsLoading(false);
+      setIsOcrProcessing(false);
+    } finally {
+      setIsBusy(false);
+    }
   };
 
   const processOCR = async (file) => {
@@ -1450,18 +1541,23 @@ Reply with a JSON object enclosed in triple backticks:
         }
         return { ...item, price };
       });
-      setFormData(prev => ({
-        ...prev,
+
+      // Prepare OCR data for auto-save
+      const ocrData = {
         merchant: parsedJSON.store || '',
         total: parsedJSON.amount ? parsedJSON.amount.replace(/[^\d.,]/g, '').replace(',', '.') : '',
         date: normalizedDate,
         category: parsedJSON.category || '',
         paymentMethod: parsedJSON.payment_method || '',
-        currency: parsedJSON.currency || 'EUR', // Use detected currency or default to EUR
-        items: normalizedItems
-      }));
+        currency: parsedJSON.currency || 'EUR',
+        items: normalizedItems,
+        subtotal: parsedJSON.subtotal ? parsedJSON.subtotal.replace(/[^\d.,]/g, '').replace(',', '.') : '',
+        tax: 0 // Will be calculated as total - subtotal if needed
+      };
 
-      setCurrentStep('receipt_form');
+      // Auto-save the receipt instead of showing verification window
+      await autoSaveReceipt(ocrData);
+
     } catch (error) {
       console.error('OCR error:', error);
       setOcrError('Failed to process receipt. Please try again or enter manually.');
@@ -1677,57 +1773,89 @@ Reply with a JSON object enclosed in triple backticks:
   const [selectedCategory, setSelectedCategory] = useState(null);
   const [modalOpen, setModalOpen] = useState(false);
 
+  // Add a function to handle bin icon clicks with confirmation
+  const handleBinIconClick = (e, receiptId) => {
+    e.stopPropagation();
+    setPendingDeleteId(receiptId);
+    setShowDeleteModal(true);
+  };
+
   return (
     <div className={`relative flex flex-col items-center w-full ${className}`} style={{ touchAction: 'manipulation', overflowX: 'hidden' }}>
-      {/* Loading Overlay */}
-      {isLoading && (
-        <div className="fixed inset-0 z-[100000] bg-black/80 backdrop-blur-sm grid place-items-center overflow-hidden">
-          <div className="flex flex-col items-center justify-center text-center">
-            {/* Final Animation: Contained, Clipped, and now with no-scrollbar class */}
-            <div className="relative mb-8 flex h-32 w-32 items-center justify-center no-scrollbar">
-              {/* Soft radial glow */}
-              <div className="absolute inset-0 rounded-full" style={{background: 'radial-gradient(circle, rgba(99,102,241,0.15) 0%, rgba(30,41,59,0) 70%)'}}></div>
-              {/* Pulsing rings (box-shadow) */}
-              <div className="absolute h-16 w-16 animate-pulse-ring rounded-full"></div>
-              {/* Clipped container for confetti to prevent overflow */}
-              <div className="absolute inset-0 rounded-full overflow-hidden">
-                <svg className="absolute left-6 top-6 h-4 w-4 animate-bounce-slow" style={{animationDelay: '0.2s'}} viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="1.5" fill="#fbbf24"/><circle cx="14" cy="4" r="1" fill="#38bdf8"/><circle cx="3" cy="12" r="1.2" fill="#a78bfa"/></svg>
-                <svg className="absolute right-6 top-8 h-3 w-3 animate-bounce-slow-delayed" style={{animationDelay: '0.6s'}} viewBox="0 0 12 12" fill="none"><rect x="6" y="1" width="1.5" height="1.5" rx=".75" fill="#f472b6"/><rect x="10" y="8" width="1" height="1" rx=".5" fill="#fbbf24"/></svg>
-                <svg className="absolute left-8 bottom-6 h-2 w-2 animate-bounce-slow" style={{animationDelay: '1s'}} viewBox="0 0 8 8" fill="none"><circle cx="4" cy="4" r="1" fill="#34d399"/></svg>
+      {/* Success State Overlay */}
+      {showSuccessState && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center">
+          <div className="bg-slate-800/90 backdrop-blur-md rounded-2xl p-8 md:p-12 max-w-md mx-4 text-center border border-green-400/20 shadow-2xl animate-in fade-in duration-300">
+            {/* Success Icon */}
+            <div className="mb-6 flex justify-center">
+              <div className="relative">
+                <div className="w-16 h-16 bg-green-500 rounded-full flex items-center justify-center animate-pulse">
+                  <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"></path>
+                  </svg>
                 </div>
-              {/* Dancing Receipt with Face */}
-              <div className="animate-[wiggle_1.2s_ease-in-out_infinite] drop-shadow-2xl">
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  className="h-16 w-16 text-blue-100"
-                  fill="none"
-                  viewBox="0 0 48 64"
-                >
-                  {/* Paper shape */}
-                  <rect x="4" y="4" width="40" height="56" rx="6" fill="#fff" stroke="#c7d2fe" strokeWidth="2"/>
-                  {/* Lines for text */}
-                  <rect x="12" y="14" width="24" height="3" rx="1.5" fill="#c7d2fe"/>
-                  <rect x="12" y="22" width="18" height="3" rx="1.5" fill="#c7d2fe"/>
-                  <rect x="12" y="30" width="20" height="3" rx="1.5" fill="#c7d2fe"/>
-                  {/* Face: Eyes (animated blink) */}
-                  <ellipse cx="18" cy="44" rx="2" ry="2.2" fill="#64748b">
-                    <animate attributeName="ry" values="2.2;0.5;2.2" keyTimes="0;0.5;1" dur="2s" repeatCount="indefinite"/>
-                  </ellipse>
-                  <ellipse cx="30" cy="44" rx="2" ry="2.2" fill="#64748b">
-                    <animate attributeName="ry" values="2.2;2.2;0.5;2.2" keyTimes="0;0.3;0.5;1" dur="2s" repeatCount="indefinite"/>
-                  </ellipse>
-                  {/* Smile */}
-                  <path d="M20 48 Q24 52 28 48" stroke="#64748b" strokeWidth="2" fill="none" strokeLinecap="round"/>
-                </svg>
+                {/* Ripple effect */}
+                <div className="absolute inset-0 w-16 h-16 bg-green-400 rounded-full animate-ping opacity-20"></div>
               </div>
-                </div>
+            </div>
             
-            {/* Text without a wrapping card/box */}
-            <p className="text-xl font-medium text-white" style={{textShadow: '0 2px 8px rgba(0,0,0,0.5)'}}>Processing your receipt...</p>
-            <p className="text-lg text-blue-300 animate-pulse" style={{textShadow: '0 2px 8px rgba(0,0,0,0.5)'}}>{currentFunnyMessage} <span role="img" aria-label="fun">🎉</span></p>
+            {/* Success Message */}
+            <div className="space-y-2">
+              <p className="text-2xl font-bold text-green-400">Receipt Saved!</p>
+              <p className="text-lg text-white">Your expense has been successfully recorded.</p>
+              <p className="text-sm text-gray-400">Redirecting to dashboard...</p>
+            </div>
           </div>
+        </div>
+      )}
+
+      {/* Loading Overlay */}
+      {isLoading && !showSuccessState && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center">
+          <div className="bg-slate-800/90 backdrop-blur-md rounded-2xl p-8 md:p-12 max-w-md mx-4 text-center border border-blue-400/20 shadow-2xl">
+            {/* Animated Loading Icon */}
+            <div className="mb-6 flex justify-center">
+              <svg width="60" height="60" viewBox="0 0 60 60" className="animate-pulse">
+                {/* Receipt Icon */}
+                <rect x="10" y="5" width="40" height="50" rx="3" fill="none" stroke="#3b82f6" strokeWidth="2"/>
+                <line x1="15" y1="15" x2="45" y2="15" stroke="#3b82f6" strokeWidth="1"/>
+                <line x1="15" y1="20" x2="45" y2="20" stroke="#3b82f6" strokeWidth="1"/>
+                <line x1="15" y1="25" x2="35" y2="25" stroke="#3b82f6" strokeWidth="1"/>
+                <line x1="15" y1="30" x2="40" y2="30" stroke="#3b82f6" strokeWidth="1"/>
+                <line x1="15" y1="35" x2="30" y2="35" stroke="#3b82f6" strokeWidth="1"/>
+                
+                {/* Processing Animation */}
+                <circle cx="30" cy="30" r="25" fill="none" stroke="#1e40af" strokeWidth="2" strokeDasharray="157" strokeDashoffset="157">
+                  <animate attributeName="stroke-dashoffset" values="157;0;157" dur="2s" repeatCount="indefinite"/>
+                </circle>
+                
+                {/* Smiling Face on Receipt */}
+                <ellipse cx="20" cy="45" rx="2" ry="2" fill="#64748b">
+                  <animate attributeName="ry" values="2;0.5;2" keyTimes="0;0.5;1" dur="2s" repeatCount="indefinite"/>
+                </ellipse>
+                <ellipse cx="40" cy="45" rx="2" ry="2" fill="#64748b">
+                  <animate attributeName="ry" values="2;2;0.5;2" keyTimes="0;0.3;0.5;1" dur="2s" repeatCount="indefinite"/>
+                </ellipse>
+                {/* Happy Smile */}
+                <path d="M18 48 Q30 54 42 48" stroke="#64748b" strokeWidth="2" fill="none" strokeLinecap="round"/>
+              </svg>
+            </div>
+            
+            {/* Dynamic Loading Messages with Funny Content */}
+            <div className="space-y-2">
+              <p className="text-xl font-medium text-white" style={{textShadow: '0 2px 8px rgba(0,0,0,0.5)'}}>
+                {isOcrProcessing ? "Processing your receipt..." : "Saving receipt..."}
+              </p>
+              <p className="text-lg text-blue-300 animate-pulse" style={{textShadow: '0 2px 8px rgba(0,0,0,0.5)'}}>
+                {isOcrProcessing ? currentFunnyMessage : "Almost done..."} <span role="img" aria-label="fun">🎉</span>
+              </p>
+              <p className="text-sm text-gray-400 mt-2">
+                {isOcrProcessing ? "AI is analyzing your receipt..." : "Updating your expense dashboard..."}
+              </p>
+            </div>
           </div>
-        )}
+        </div>
+      )}
 
       {/* Main Content Area */}
       <div
@@ -1755,7 +1883,7 @@ Reply with a JSON object enclosed in triple backticks:
           <div className={`w-full md:w-1/3 flex-col items-center mb-8 md:mb-0 ${showOnly === 'upload' ? 'flex' : !showOnly ? 'flex' : 'hidden'} md:flex`}>
             <Card className="w-full p-4 md:p-6 flex flex-col items-center justify-start gap-4 bg-slate-800/80 text-white shadow-2xl rounded-xl border border-blue-400/20">
             <CardHeader className="w-full text-center p-0 mb-4">
-                <CardTitle className="text-xl md:text-2xl font-bold text-blue-100">Choose Upload Method</CardTitle>
+                <CardTitle className="text-xl md:text-2xl font-bold text-blue-100">Add Receipt</CardTitle>
             </CardHeader>
             <CardContent className="w-full flex flex-col items-center justify-center gap-4 p-0">
                   <input
@@ -1771,7 +1899,7 @@ Reply with a JSON object enclosed in triple backticks:
                   className="w-full bg-blue-700 text-white font-semibold py-3 rounded-xl hover:bg-blue-800 transition-all duration-300 ease-in-out transform hover:scale-105 flex items-center justify-center gap-2 shadow-lg overflow-hidden"
                 >
                 <Upload className="h-5 w-5" />
-                Upload File
+                Upload & Process
                 </Button>
               <Button
                   onClick={() => setIsCameraOpen(true)}
@@ -1926,7 +2054,9 @@ Reply with a JSON object enclosed in triple backticks:
                                   if (!dateB) return -1;
                                   return dateB - dateA; // Newest first
                                 })
-                                .map((receipt) => renderReceiptCard(receipt))
+                                .map((receipt) => (
+                                  <div key={receipt.id}>{renderReceiptCard(receipt)}</div>
+                                ))
                               }
                             </div>
                           </div>
@@ -2219,7 +2349,7 @@ Reply with a JSON object enclosed in triple backticks:
               className="text-lg py-3 px-6 bg-blue-600/80 hover:bg-blue-500 text-white backdrop-blur-sm"
             >
               <CheckCircle className="h-5 w-5 mr-2" />
-              Use Photo
+              Process & Save
             </Button>
           </div>
         </div>
@@ -2236,7 +2366,7 @@ Reply with a JSON object enclosed in triple backticks:
           <DialogHeader className="mb-4">
             <DialogTitle className="text-2xl font-bold text-gray-100">Take Photo</DialogTitle>
             <DialogDescription className="text-gray-400">
-              Position your receipt within the frame and click capture.
+              Position your receipt within the frame and click capture. Your receipt will be automatically processed and saved.
             </DialogDescription>
           </DialogHeader>
           <div className="relative w-full max-w-[560px] h-[420px] bg-gray-900 rounded-lg overflow-hidden flex items-center justify-center">
@@ -2337,7 +2467,10 @@ Reply with a JSON object enclosed in triple backticks:
                           const dStr = d.toISOString().split('T')[0];
                           return receipts.filter(r =>
                             (r.category || 'Uncategorized') === selectedCategory.name &&
-                            (r.transactionDate === dStr || (r.transactionDate && r.transactionDate.startsWith(dStr)))
+                            (
+                              (typeof r.transactionDate === 'string' && (r.transactionDate === dStr || r.transactionDate.startsWith(dStr))) ||
+                              (r.transactionDate && r.transactionDate.toDate && r.transactionDate.toDate().toISOString().startsWith(dStr))
+                            )
                           ).reduce((sum, r) => sum + (parseFloat(r.total) || 0), 0);
                         });
                         const maxVal = Math.max(...dayTotals, 1);
@@ -2448,7 +2581,7 @@ Reply with a JSON object enclosed in triple backticks:
                                 {/* Right side: Date and Icon */}
                                 <div className="flex items-center gap-3 text-right whitespace-nowrap">
                                   <div className="flex flex-col items-end">
-                                    <span className="text-xs text-blue-200">{r.transactionDate ? new Date(r.transactionDate).toLocaleDateString() : ''}</span>
+                                    <span className="text-xs text-blue-200">{r.transactionDate && r.transactionDate.toDate ? r.transactionDate.toDate().toLocaleDateString() : ''}</span>
                                     <span className="text-xs text-gray-400">{r.paymentMethod || ''}</span>
                                   </div>
                                   <div className="transition-transform duration-300" style={{ transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)' }}>

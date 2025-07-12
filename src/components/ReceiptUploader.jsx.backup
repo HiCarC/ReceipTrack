@@ -267,7 +267,7 @@ export default function ReceiptUploader({ className, showOnly, onTabChange }) {
     "Other"
   ];
 
-  const receiptsCollectionRef = collection(db, "receipts");
+  const receiptsCollectionRef = user ? collection(db, "users", user.uid, "receipts") : null;
 
   const fetchReceipts = async () => {
     if (!user) {
@@ -278,18 +278,11 @@ export default function ReceiptUploader({ className, showOnly, onTabChange }) {
     setIsFirestoreLoading(true);
     setFirestoreError(null);
     try {
-      const data = await getDocs(receiptsCollectionRef);
+      // Use the per-user receipts subcollection
+      const data = await getDocs(collection(db, "users", user.uid, "receipts"));
       const receiptsList = data.docs.map((doc) => ({ ...doc.data(), id: doc.id }));
-      console.log("fetchReceipts: All fetched receipts (before filter):", receiptsList);
-      // Only show receipts for the current user
-      const userReceipts = receiptsList.filter(r => {
-        const isMatch = r.userId === user.uid; // Corrected field name from user_id to userId
-        console.log(`Receipt ID: ${r.id}, Receipt userId: ${r.userId}, Current User UID: ${user.uid}, Match: ${isMatch}`);
-        return isMatch;
-      });
-      console.log("fetchReceipts: Filtered user receipts:", userReceipts);
-      // Sort receipts by last updated timestamp (or created_at if not updated)
-      const sortedReceipts = userReceipts.sort((a, b) => {
+      // No need to filter by userId anymore, all are for this user
+      const sortedReceipts = receiptsList.sort((a, b) => {
         const dateA = (a.updated_at?.toDate?.() || a.createdAt?.toDate?.() || new Date(0));
         const dateB = (b.updated_at?.toDate?.() || b.createdAt?.toDate?.() || new Date(0));
         return dateB - dateA; // Sort in descending order (newest first)
@@ -644,19 +637,19 @@ export default function ReceiptUploader({ className, showOnly, onTabChange }) {
 
     try {
       if (editingReceipt) {
-        // Update existing receipt
-        await updateDoc(doc(db, "receipts", editingReceipt.id), receiptData);
+        // Update existing receipt in the user's subcollection
+        await updateDoc(doc(db, "users", user.uid, "receipts", editingReceipt.id), receiptData);
         toast({
           title: "Receipt Updated! 🚀",
           description: "Your receipt has been successfully updated.",
         });
       } else {
-        // Create new receipt
-      await addDoc(collection(db, "receipts"), receiptData);
-      toast({
-        title: "Receipt Saved! 🎉",
-        description: "Your expense has been successfully recorded.",
-      });
+        // Create new receipt in the user's subcollection
+        await addDoc(collection(db, "users", user.uid, "receipts"), receiptData);
+        toast({
+          title: "Receipt Saved! 🎉",
+          description: "Your expense has been successfully recorded.",
+        });
       }
       // Reset form and close modal
       setFormData({ // Ensure formData is reset for next new entry
@@ -803,7 +796,7 @@ export default function ReceiptUploader({ className, showOnly, onTabChange }) {
         updated_at: serverTimestamp()
       };
 
-      await updateDoc(doc(db, "receipts", editingReceipt.id), updatedReceiptData);
+      await updateDoc(doc(db, "users", user.uid, "receipts", editingReceipt.id), updatedReceiptData);
       toast({
         title: "Receipt Updated! 🚀",
         description: "Your receipt has been successfully updated.",
