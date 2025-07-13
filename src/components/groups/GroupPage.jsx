@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { db } from "../../firebase";
-import { doc, getDoc, collection, query, where, onSnapshot, updateDoc } from "firebase/firestore";
+import { doc, getDoc, collection, query, where, onSnapshot, updateDoc, addDoc } from "firebase/firestore";
 import { Button } from "../ui/button";
 import { useAuth } from "../../contexts/AuthContext";
 import { QRCodeCanvas } from "qrcode.react";
@@ -9,7 +9,8 @@ import { saveAs } from "file-saver";
 import MobileNavBar from "../MobileNavBar";
 import AuthHeader from "../AuthHeader";
 import ReceiptUploader from "../ReceiptUploader";
-import { Dialog, DialogContent } from "../ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "../ui/dialog";
+import AssignItemsModal from './AssignItemsModal';
 
 function getInitials(email) {
   return email[0].toUpperCase();
@@ -32,6 +33,9 @@ export default function GroupPage() {
   const [filterMember, setFilterMember] = useState("all");
   const [filterCategory, setFilterCategory] = useState("all");
   const [showUploadModal, setShowUploadModal] = useState(false);
+  const [ocrItems, setOcrItems] = useState([]); // Items extracted from OCR
+  const [showAssignModal, setShowAssignModal] = useState(false);
+  const [pendingReceipt, setPendingReceipt] = useState(null); // Store receipt data before assignment
 
   useEffect(() => {
     if (!groupId) return;
@@ -39,7 +43,7 @@ export default function GroupPage() {
     getDoc(groupRef).then((snap) => {
       if (snap.exists()) setGroup(snap.data());
     });
-
+    // For group receipts: always query root receipts collection with groupId
     const q = query(
       collection(db, "receipts"),
       where("groupId", "==", groupId)
@@ -160,6 +164,39 @@ export default function GroupPage() {
       }
     });
   });
+
+  // Handler to be passed to ReceiptUploader for OCR result
+  const handleOcrExtracted = (ocrData) => {
+    if (ocrData && ocrData.items && ocrData.items.length > 0) {
+      setOcrItems(ocrData.items.map((item, idx) => ({ id: idx + '', ...item })));
+      setPendingReceipt(ocrData);
+      setShowAssignModal(true);
+    }
+  };
+
+  // Handler when assignments are done
+  const handleAssignDone = async (assignments) => {
+    setShowAssignModal(false);
+    if (!pendingReceipt) return;
+    // For group receipts: always set groupId, uploadedBy (user.email), and do NOT set userId
+    const splitWith = Object.values(assignments).flat().filter((v, i, arr) => arr.indexOf(v) === i);
+    const paidBy = pendingReceipt.paidBy || (user.email || user.uid);
+    const receiptData = {
+      ...pendingReceipt,
+      groupId, // group context
+      paidBy,
+      splitWith,
+      items: ocrItems,
+      uploadedBy: user.email || user.uid,
+      createdAt: new Date().toISOString(),
+    };
+    // Remove userId if present (should not be on group receipts)
+    delete receiptData.userId;
+    // Save to Firestore root receipts collection
+    await addDoc(collection(db, 'receipts'), receiptData);
+    setPendingReceipt(null);
+    setOcrItems([]);
+  };
 
   return (
     <div className="min-h-screen flex flex-col bg-gradient-to-b from-slate-900 via-indigo-900 to-blue-900">
@@ -301,15 +338,29 @@ export default function GroupPage() {
       {/* Upload Receipt Modal */}
       <Dialog open={showUploadModal} onOpenChange={setShowUploadModal}>
         <DialogContent className="max-w-lg w-full bg-gradient-to-br from-slate-800 via-indigo-900 to-blue-900 rounded-2xl shadow-2xl border border-blue-200/20">
+          <DialogHeader>
+            <DialogTitle>Upload Group Receipt</DialogTitle>
+            <DialogDescription>
+              Take a photo or upload a receipt to split with your group. Assign items after OCR for a world-class, simple experience.
+            </DialogDescription>
+          </DialogHeader>
           <ReceiptUploader
             groupId={groupId}
             onTabChange={() => setShowUploadModal(false)}
             defaultStep="upload_options"
             uploadOnly
+            onOcrExtracted={handleOcrExtracted}
           />
         </DialogContent>
       </Dialog>
-
+      {/* Assign Items Modal */}
+      <AssignItemsModal
+        open={showAssignModal}
+        onClose={() => setShowAssignModal(false)}
+        items={ocrItems}
+        members={group.members.map(m => ({ id: m.email || m, name: m.displayName || m.email || m, avatar: m.photoURL || '/public/google-icon.svg' }))}
+        onAssignDone={handleAssignDone}
+      />
       {/* Nav bar always at the bottom */}
       <MobileNavBar />
     </div>

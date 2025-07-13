@@ -292,34 +292,45 @@ export default function ReceiptUploader({ className, showOnly, onTabChange, grou
     "Other"
   ];
 
-  const receiptsCollectionRef = user ? collection(db, "users", user.uid, "receipts") : null;
-
-  const fetchReceipts = async () => {
-    if (!user) {
-      return;
+  // Helper to get the correct collection ref for receipts
+  const getReceiptsCollectionRef = () => {
+    if (groupId || (selectedGroup && selectedGroup !== 'personal')) {
+      // Group context: use global receipts collection
+      return collection(db, 'receipts');
+    } else {
+      // Personal context: use per-user subcollection
+      return collection(db, 'users', user.uid, 'receipts');
     }
-    // User authenticated, fetching receipts
+  };
+
+  // Update fetchReceipts to use the correct collection
+  const fetchReceipts = async () => {
+    if (!user) return;
     setIsFirestoreLoading(true);
     setFirestoreError(null);
     try {
-      // Use the per-user receipts subcollection or global collection
-      const data = await getDocs(collection(db, "receipts"));
+      const colRef = getReceiptsCollectionRef();
+      let q = colRef;
+      if (groupId || (selectedGroup && selectedGroup !== 'personal')) {
+        // Only fetch receipts for this group
+        q = query(colRef, where('groupId', '==', groupId || selectedGroup));
+      }
+      const data = await getDocs(q);
       const receiptsList = data.docs.map((doc) => ({ ...doc.data(), id: doc.id }));
-      // Only show receipts for the current user and group
-      const userReceipts = receiptsList.filter(r => {
-        const userMatch = r.userId === user.uid;
-        const groupMatch = groupId ? r.groupId === groupId : (selectedGroup === 'personal' ? !r.groupId : r.groupId === selectedGroup);
-        return userMatch && groupMatch;
-      });
-      const sortedReceipts = userReceipts.sort((a, b) => {
+      // For group: filter by groupId; for personal: all are for this user
+      let filtered = receiptsList;
+      if (groupId || (selectedGroup && selectedGroup !== 'personal')) {
+        filtered = receiptsList.filter(r => r.groupId === (groupId || selectedGroup));
+      }
+      const sortedReceipts = filtered.sort((a, b) => {
         const dateA = (a.updated_at?.toDate?.() || a.createdAt?.toDate?.() || new Date(0));
         const dateB = (b.updated_at?.toDate?.() || b.createdAt?.toDate?.() || new Date(0));
         return dateB - dateA;
       });
       setReceipts(sortedReceipts);
     } catch (error) {
-      console.error("Error fetching receipts:", error);
-      setFirestoreError("Failed to load receipts. Please try again.");
+      console.error('Error fetching receipts:', error);
+      setFirestoreError('Failed to load receipts. Please try again.');
     } finally {
       setIsFirestoreLoading(false);
     }
@@ -620,30 +631,21 @@ export default function ReceiptUploader({ className, showOnly, onTabChange, grou
     return formattedAmount;
   };
 
+  // Update add, update, delete to use getReceiptsCollectionRef
   const handleDeleteReceipt = async (id) => {
     if (!user) {
-      toast({
-        title: "Authentication Required",
-        description: "Please sign in to delete receipts.",
-        variant: "destructive",
-      });
+      toast({ title: 'Authentication Required', description: 'Please sign in to delete receipts.', variant: 'destructive' });
       return;
     }
     try {
-      await deleteDoc(doc(db, "users", user.uid, "receipts", id));
+      const colRef = getReceiptsCollectionRef();
+      await deleteDoc(doc(colRef, id));
       setReceipts(receipts.filter((receipt) => receipt.id !== id));
-      toast({
-        title: "Receipt Deleted! 🗑️",
-        description: "The receipt has been successfully removed.",
-      });
+      toast({ title: 'Receipt Deleted! 🗑️', description: 'The receipt has been successfully removed.' });
       await fetchReceipts();
     } catch (error) {
-      console.error("Error deleting receipt:", error);
-      toast({
-        title: "Error Deleting Receipt 😥",
-        description: `There was an issue deleting the receipt: ${error.message}`,
-        variant: "destructive",
-      });
+      console.error('Error deleting receipt:', error);
+      toast({ title: 'Error Deleting Receipt 😥', description: `There was an issue deleting the receipt: ${error.message}`, variant: 'destructive' });
     }
   };
 
@@ -821,14 +823,14 @@ export default function ReceiptUploader({ className, showOnly, onTabChange, grou
     try {
       if (editingReceipt) {
         // Update existing receipt in the user's subcollection
-        await updateDoc(doc(db, "users", user.uid, "receipts", editingReceipt.id), receiptData);
+        await updateDoc(doc(getReceiptsCollectionRef(), editingReceipt.id), receiptData);
         toast({
           title: "Receipt Updated! 🚀",
           description: "Your receipt has been successfully updated.",
         });
       } else {
         // Create new receipt in the user's subcollection
-        await addDoc(collection(db, "users", user.uid, "receipts"), receiptData);
+        await addDoc(getReceiptsCollectionRef(), receiptData);
       toast({
         title: "Receipt Saved! 🎉",
         description: "Your expense has been successfully recorded.",
@@ -981,7 +983,7 @@ export default function ReceiptUploader({ className, showOnly, onTabChange, grou
         updated_at: serverTimestamp()
       };
 
-      await updateDoc(doc(db, "users", user.uid, "receipts", editingReceipt.id), updatedReceiptData);
+      await updateDoc(doc(getReceiptsCollectionRef(), editingReceipt.id), updatedReceiptData);
       toast({
         title: "Receipt Updated! 🚀",
         description: "Your receipt has been successfully updated.",
@@ -1229,41 +1231,41 @@ export default function ReceiptUploader({ className, showOnly, onTabChange, grou
           onClick={() => setExpandedReceiptId(isExpanded ? null : receipt.id)}
           aria-label={`Receipt for ${receipt.merchant}`}
         >
-          <div className="flex items-center gap-2 min-w-0">
-            <span className="text-lg font-extrabold text-blue-200 truncate max-w-[120px] md:max-w-[200px] tracking-tight" title={receipt.merchant}>{receipt.merchant}</span>
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="text-lg font-extrabold text-blue-200 truncate max-w-[120px] md:max-w-[200px] tracking-tight" title={receipt.merchant}>{receipt.merchant}</span>
             <span className="text-xs text-blue-200/80 font-medium whitespace-nowrap">
               {receipt.transactionDate && receipt.transactionDate.toDate ? receipt.transactionDate.toDate().toLocaleDateString() : ''}
             </span>
-          </div>
-          <div className="flex items-baseline gap-1 mt-1">
-            <span className={`text-2xl font-extrabold ${isNegative ? 'text-red-400' : 'text-blue-100'}`}>{isNegative ? '0.00' : amount.toFixed(2)}</span>
-            <span className="text-sm text-blue-200/80 ml-1">{receipt.currency}</span>
+              </div>
+              <div className="flex items-baseline gap-1 mt-1">
+                <span className={`text-2xl font-extrabold ${isNegative ? 'text-red-400' : 'text-blue-100'}`}>{isNegative ? '0.00' : amount.toFixed(2)}</span>
+                <span className="text-sm text-blue-200/80 ml-1">{receipt.currency}</span>
             {isLoadingConversion && (
               <span className="text-xs text-blue-300/80 ml-2">Converting...</span>
             )}
             {!isLoadingConversion && baseCurrencyEquivalent && (
               <span className="text-xs text-blue-300/80 ml-2">≈ {formatCurrency(baseCurrencyEquivalent, settings?.baseCurrency || 'EUR')}</span>
             )}
-          </div>
-          <div className="flex flex-col gap-2 items-end ml-2">
-            <Button
-              onClick={e => { e.stopPropagation(); handleEditClick(receipt); }}
-              variant="ghost"
-              size="icon"
-              className="text-blue-400 hover:bg-blue-900/40 hover:text-blue-300 transition-transform duration-150 ease-in-out active:scale-90"
-              aria-label="Edit receipt"
-            >
-              <Edit className="h-5 w-5" />
-            </Button>
-            <Button
+            </div>
+            <div className="flex flex-col gap-2 items-end ml-2">
+          <Button
+                onClick={e => { e.stopPropagation(); handleEditClick(receipt); }}
+            variant="ghost"
+            size="icon"
+                className="text-blue-400 hover:bg-blue-900/40 hover:text-blue-300 transition-transform duration-150 ease-in-out active:scale-90"
+                aria-label="Edit receipt"
+          >
+                <Edit className="h-5 w-5" />
+          </Button>
+          <Button
               onClick={e => handleBinIconClick(e, receipt.id)}
-              variant="ghost"
-              size="icon"
-              className="text-red-400 hover:bg-blue-900/40 hover:text-red-300 transition-transform duration-150 ease-in-out active:scale-90"
-              aria-label="Delete receipt"
-            >
-              <Trash2 className="h-5 w-5" />
-            </Button>
+            variant="ghost"
+            size="icon"
+                className="text-red-400 hover:bg-blue-900/40 hover:text-red-300 transition-transform duration-150 ease-in-out active:scale-90"
+                aria-label="Delete receipt"
+          >
+                <Trash2 className="h-5 w-5" />
+          </Button>
           </div>
           {isExpanded && (
             <CardContent className="pt-4">
@@ -1344,7 +1346,7 @@ export default function ReceiptUploader({ className, showOnly, onTabChange, grou
         )}
       </CardContent>
           )}
-        </Card>
+    </Card>
       </div>
     );
   };
@@ -1564,7 +1566,7 @@ export default function ReceiptUploader({ className, showOnly, onTabChange, grou
       };
 
       // Save to Firestore
-      await addDoc(collection(db, "users", user.uid, "receipts"), receiptData);
+      await addDoc(getReceiptsCollectionRef(), receiptData);
       
       // Show success feedback with enhanced message
       toast({
@@ -2056,7 +2058,7 @@ Reply with a JSON object enclosed in triple backticks:
 
   // --- 1. Extract the upload method selector as a child component ---
   function UploadMethodSelector({ onUploadFile, onTakePhoto, onManualEntry }) {
-    return (
+  return (
       <div className="flex flex-col items-center justify-center gap-4 p-4">
         <h2 className="text-xl font-bold mb-4 text-blue-100">Choose Upload Method</h2>
         <Button
@@ -2084,7 +2086,7 @@ Reply with a JSON object enclosed in triple backticks:
         >
           <List className="inline-block mr-2" /> Enter Manually
         </Button>
-      </div>
+                </div>
     );
   }
 
@@ -2109,10 +2111,7 @@ Reply with a JSON object enclosed in triple backticks:
               Retake
             </Button>
             <Button
-              onClick={() => {
-                setShowFullScreenPreview(false);
-                // Optionally: setCurrentStep('form') or trigger OCR, etc.
-              }}
+              onClick={handleConfirmPreview}
               className="w-1/2 bg-gradient-to-r from-blue-600 to-indigo-600 text-white"
             >
               Use Photo
@@ -2129,6 +2128,55 @@ Reply with a JSON object enclosed in triple backticks:
       />
     );
   }
+
+  // Add at the top-level of the component:
+  const [calculatedTotals, setCalculatedTotals] = useState({
+    totalExpenses: 0,
+    categoryTotals: {},
+    monthlyTotals: {}
+  });
+
+  // Calculate totals in base currency for insights and monthly grouping
+  useEffect(() => {
+    const calculateTotals = async () => {
+      try {
+        let totalExpenses = 0;
+        const categoryTotals = {};
+        const monthlyTotals = {};
+        for (const receipt of receipts) {
+          const date = new Date(receipt.transactionDate || receipt.date);
+          if (!date) continue;
+          const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+          // Use original amount for now (replace with base currency conversion if needed)
+          const amount = parseFloat(receipt.total) || 0;
+          totalExpenses += amount;
+          // Category totals
+          const category = receipt.category || 'Uncategorized';
+          if (!categoryTotals[category]) categoryTotals[category] = 0;
+          categoryTotals[category] += amount;
+          // Monthly totals
+          if (!monthlyTotals[monthKey]) {
+            monthlyTotals[monthKey] = {
+              total: 0,
+              count: 0,
+              month: date.getMonth(),
+              year: date.getFullYear()
+            };
+          }
+          monthlyTotals[monthKey].total += amount;
+          monthlyTotals[monthKey].count += 1;
+        }
+        setCalculatedTotals({
+          totalExpenses,
+          categoryTotals,
+          monthlyTotals
+        });
+      } catch (error) {
+        setCalculatedTotals({ totalExpenses: 0, categoryTotals: {}, monthlyTotals: {} });
+      }
+    };
+    calculateTotals();
+  }, [receipts, settings?.baseCurrency]);
 
   return (
     <div className={`relative flex flex-col items-center w-full ${className}`} style={{ touchAction: 'manipulation', overflowX: 'hidden' }}>
