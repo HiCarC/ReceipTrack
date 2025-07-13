@@ -42,6 +42,7 @@ import { Chart, ArcElement, Tooltip, Legend, CategoryScale, LinearScale, PointEl
 import annotationPlugin from 'chartjs-plugin-annotation';
 import { CircularProgressbarWithChildren, buildStyles } from 'react-circular-progressbar';
 import 'react-circular-progressbar/dist/styles.css';
+import { useSwipeable } from 'react-swipeable';
 Chart.register(ArcElement, Tooltip, Legend, CategoryScale, LinearScale, PointElement, LineElement, TimeScale, Filler, BarElement, annotationPlugin);
 
 // Define supported currencies
@@ -396,7 +397,7 @@ export default function ReceiptUploader({ className, showOnly, onTabChange }) {
       try {
         const rates = await initializeExchangeRates();
         if (isMounted && rates) {
-          setExchangeRates(rates);
+      setExchangeRates(rates);
         }
         
         // Test exchange rate calculation
@@ -444,7 +445,7 @@ export default function ReceiptUploader({ className, showOnly, onTabChange }) {
       try {
         const rates = await fetchExchangeRates();
         if (rates) {
-          setExchangeRates(rates);
+        setExchangeRates(rates);
         }
       } catch (error) {
         // Silently handle periodic update errors
@@ -823,10 +824,10 @@ export default function ReceiptUploader({ className, showOnly, onTabChange }) {
       } else {
         // Create new receipt in the user's subcollection
         await addDoc(collection(db, "users", user.uid, "receipts"), receiptData);
-        toast({
-          title: "Receipt Saved! 🎉",
-          description: "Your expense has been successfully recorded.",
-        });
+      toast({
+        title: "Receipt Saved! 🎉",
+        description: "Your expense has been successfully recorded.",
+      });
       }
       // Reset form and close modal
       setFormData({ // Ensure formData is reset for next new entry
@@ -1138,83 +1139,86 @@ export default function ReceiptUploader({ className, showOnly, onTabChange }) {
     const amount = parseFloat(receipt.total);
     const isNegative = isNaN(amount) || amount < 0;
     const catColor = getCategoryBorderClass(receipt.category);
-    const isSwiped = swipedId === receipt.id;
-    const { progress, dir } = getSwipeProgress(receipt.id);
-    
-    // Load base currency equivalent on mount
-    useEffect(() => {
-      const loadBaseCurrencyEquivalent = async () => {
-        const baseCurrency = settings?.baseCurrency || 'EUR';
-        if (receipt.currency === baseCurrency) {
-          setBaseCurrencyEquivalent(null);
-          return;
+
+    // --- Swipe animation state ---
+    const [swipeOffset, setSwipeOffset] = useState(0);
+    const [swipeDir, setSwipeDir] = useState(null); // 'left' or 'right'
+    const swipeThreshold = 80; // px, minimum to trigger action
+    const animating = useRef(false);
+
+    const handlers = useSwipeable({
+      onSwiping: (eventData) => {
+        // Only allow horizontal swipes
+        if (Math.abs(eventData.deltaX) > Math.abs(eventData.deltaY)) {
+          setSwipeOffset(eventData.deltaX);
+          setSwipeDir(eventData.deltaX > 0 ? 'right' : 'left');
         }
-        
-        setIsLoadingConversion(true);
-        try {
-          const date = normalizeToLocalMidnight(receipt.transactionDate || receipt.date);
-          const equivalent = await getBaseCurrencyEquivalent(amount, receipt.currency, date);
-          setBaseCurrencyEquivalent(equivalent);
-        } catch (error) {
-          console.error('Error loading base currency equivalent:', error);
-          setBaseCurrencyEquivalent(null);
-        } finally {
-          setIsLoadingConversion(false);
+      },
+      onSwiped: (eventData) => {
+        animating.current = true;
+        if (eventData.absX > swipeThreshold) {
+          // Trigger action and animate out
+          setSwipeOffset(eventData.deltaX > 0 ? 500 : -500); // animate out
+          setTimeout(() => {
+            setSwipeOffset(0);
+            animating.current = false;
+            if (eventData.deltaX > 0) {
+              handleEditClick(receipt);
+            } else {
+              setPendingDeleteId(receipt.id);
+              setShowDeleteModal(true);
+            }
+          }, 200);
+        } else {
+          // Snap back
+          setSwipeOffset(0);
+          setSwipeDir(null);
+          setTimeout(() => { animating.current = false; }, 200);
         }
-      };
-      
-      loadBaseCurrencyEquivalent();
-    }, [receipt, amount, settings?.baseCurrency]);
-    
+      },
+      onSwipedLeft: () => {}, // handled in onSwiped
+      onSwipedRight: () => {}, // handled in onSwiped
+      delta: 10,
+      preventScrollOnSwipe: true,
+      trackTouch: true,
+      trackMouse: false,
+    });
+
+    // Background color and icon
+    let bgColor = 'transparent';
+    let icon = null;
+    if (swipeOffset < 0) {
+      bgColor = `rgba(220,38,38,${Math.min(Math.abs(swipeOffset) / 100, 0.8)})`; // red
+      icon = <Trash2 className="h-7 w-7 text-white" style={{ opacity: Math.min(Math.abs(swipeOffset) / swipeThreshold, 1), transform: `scale(${0.8 + 0.4 * Math.min(Math.abs(swipeOffset) / swipeThreshold, 1)})` }} />;
+    } else if (swipeOffset > 0) {
+      bgColor = `rgba(37,99,235,${Math.min(Math.abs(swipeOffset) / 100, 0.8)})`; // blue
+      icon = <Edit className="h-7 w-7 text-white" style={{ opacity: Math.min(Math.abs(swipeOffset) / swipeThreshold, 1), transform: `scale(${0.8 + 0.4 * Math.min(Math.abs(swipeOffset) / swipeThreshold, 1)})` }} />;
+    }
+
     return (
       <div
         key={receipt.id}
         className="relative w-full overflow-x-hidden"
         style={{ touchAction: 'pan-y' }}
-        onTouchStart={e => handleTouchStart(receipt.id, e)}
-        onTouchMove={e => handleTouchMove(receipt.id, e)}
-        onTouchEnd={() => handleTouchEnd(receipt.id)}
+        {...handlers}
       >
-        {/* Swipe backgrounds with animated icon */}
+        {/* Animated swipe background */}
         <div
-          className={`absolute inset-0 z-0 flex items-center transition-all duration-200 ${dir === 'left' ? 'justify-end pr-8' : dir === 'right' ? 'justify-start pl-8' : ''}`}
+          className={`absolute inset-0 z-0 flex items-center transition-all duration-200 ${swipeDir === 'left' ? 'justify-end pr-8' : swipeDir === 'right' ? 'justify-start pl-8' : ''}`}
           style={{
-            background: dir === 'left'
-              ? `rgba(220,38,38,${progress * 0.8})` // red-600
-              : dir === 'right'
-              ? `rgba(37,99,235,${progress * 0.8})` // blue-600
-              : 'transparent',
+            background: bgColor,
             borderRadius: '1rem',
             pointerEvents: 'none',
           }}
         >
-          {dir === 'left' && (
-            <Trash2
-              className="h-7 w-7 text-white"
-              style={{
-                opacity: progress,
-                transform: `scale(${0.8 + 0.4 * progress})`,
-                transition: 'all 0.2s',
-              }}
-            />
-          )}
-          {dir === 'right' && (
-            <Edit
-              className="h-7 w-7 text-white"
-              style={{
-                opacity: progress,
-                transform: `scale(${0.8 + 0.4 * progress})`,
-                transition: 'all 0.2s',
-              }}
-            />
-          )}
+          {icon}
         </div>
         <Card
           id={`receipt-card-${receipt.id}`}
           style={{
             minHeight: 96,
-            transform: `translateX(${swipeOffset[receipt.id] || 0}px)`,
-            transition: swipeOffset[receipt.id] ? 'none' : 'transform 0.5s cubic-bezier(0.22,1,0.36,1)',
+            transform: `translateX(${swipeOffset}px)`,
+            transition: animating.current ? 'transform 0.2s cubic-bezier(0.22,1,0.36,1)' : 'transform 0.1s',
           }}
           className={`relative bg-slate-800/90 p-5 pl-4 rounded-2xl shadow-xl text-white border border-blue-900/30 border-l-4 ${catColor} transition-all duration-300 ease-in-out animate-fade-in-up ${isExpanded ? 'ring-2 ring-blue-500/50 scale-[1.01] shadow-2xl' : 'hover:shadow-2xl hover:-translate-y-1 active:scale-90'}`}
           onClick={() => setExpandedReceiptId(isExpanded ? null : receipt.id)}
@@ -1227,19 +1231,13 @@ export default function ReceiptUploader({ className, showOnly, onTabChange }) {
             </span>
           </div>
           <div className="flex items-baseline gap-1 mt-1">
-            <span className={`text-2xl font-extrabold ${isNegative ? 'text-red-400' : 'text-blue-100'}`}>
-              {isNegative ? '0.00' : amount.toFixed(2)}
-            </span>
+            <span className={`text-2xl font-extrabold ${isNegative ? 'text-red-400' : 'text-blue-100'}`}>{isNegative ? '0.00' : amount.toFixed(2)}</span>
             <span className="text-sm text-blue-200/80 ml-1">{receipt.currency}</span>
             {isLoadingConversion && (
-              <span className="text-xs text-blue-300/80 ml-2">
-                Converting...
-              </span>
+              <span className="text-xs text-blue-300/80 ml-2">Converting...</span>
             )}
             {!isLoadingConversion && baseCurrencyEquivalent && (
-              <span className="text-xs text-blue-300/80 ml-2">
-                ≈ {formatCurrency(baseCurrencyEquivalent, settings?.baseCurrency || 'EUR')}
-              </span>
+              <span className="text-xs text-blue-300/80 ml-2">≈ {formatCurrency(baseCurrencyEquivalent, settings?.baseCurrency || 'EUR')}</span>
             )}
           </div>
           <div className="flex flex-col gap-2 items-end ml-2">
@@ -1265,7 +1263,7 @@ export default function ReceiptUploader({ className, showOnly, onTabChange }) {
           {isExpanded && (
             <CardContent className="pt-4">
               <div className="grid grid-cols-2 gap-4 mb-4">
-                <div>
+          <div>
                   <p className="text-xs text-blue-200/70">Subtotal</p>
                   <p className="text-base">
                     {receipt.subtotal && !isNaN(parseFloat(receipt.subtotal)) ? parseFloat(receipt.subtotal).toFixed(2) : '-'}
@@ -1277,8 +1275,8 @@ export default function ReceiptUploader({ className, showOnly, onTabChange }) {
                       />
                     )}
                   </p>
-                </div>
-                <div>
+          </div>
+          <div>
                   <p className="text-xs text-blue-200/70">Tax</p>
                   <p className="text-base">
                     {receipt.tax && !isNaN(parseFloat(receipt.tax)) ? parseFloat(receipt.tax).toFixed(2) : '-'}
@@ -1290,12 +1288,12 @@ export default function ReceiptUploader({ className, showOnly, onTabChange }) {
                       />
                     )}
                   </p>
-                </div>
-                <div>
+        </div>
+          <div>
                   <p className="text-xs text-blue-200/70">Payment</p>
                   <p className="text-base">{receipt.paymentMethod || 'Not specified'}</p>
-                </div>
-                <div>
+          </div>
+          <div>
                   <p className="text-xs text-blue-200/70">Category</p>
                   <p className="text-base flex items-center gap-1">{receipt.category || 'Uncategorized'}
                     <span className={`inline-block w-2 h-2 rounded-full ml-1 ${catColor.replace('border-l-4', 'bg-')}`}></span>
@@ -1315,14 +1313,14 @@ export default function ReceiptUploader({ className, showOnly, onTabChange }) {
                       </span>
                     )}
                   </p>
-                </div>
-              </div>
-              {receipt.items && receipt.items.length > 0 && (
+          </div>
+        </div>
+        {receipt.items && receipt.items.length > 0 && (
                 <div className="mt-2">
                   <p className="text-xs text-blue-200/70 mb-1">Items</p>
                   <ul className="space-y-1 list-disc list-inside">
-                    {receipt.items.map((item, index) => (
-                      <li key={index} className="flex justify-between text-sm">
+              {receipt.items.map((item, index) => (
+                <li key={index} className="flex justify-between text-sm">
                         <span className="truncate max-w-[100px]">{item.name}</span>
                         <span>
                           {!isNaN(parseFloat(item.price)) ? parseFloat(item.price).toFixed(2) : '0.00'} {receipt.currency}
@@ -1334,12 +1332,12 @@ export default function ReceiptUploader({ className, showOnly, onTabChange }) {
                             />
                           )}
                         </span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </CardContent>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </CardContent>
           )}
         </Card>
       </div>
@@ -1938,16 +1936,15 @@ Reply with a JSON object enclosed in triple backticks:
 
   // Add swipe handlers:
   const handleTouchStart = (id, e) => {
-    // Don't prevent default here to allow vertical scrolling
+    console.log('[DEBUG] handleTouchStart', { id, x: e.touches[0].clientX, y: e.touches[0].clientY });
     setSwipeStartX(prev => ({ ...prev, [id]: e.touches[0].clientX }));
     setSwipeStartY(prev => ({ ...prev, [id]: e.touches[0].clientY }));
   };
   const handleTouchMove = (id, e) => {
     if (swipeStartX[id] == null || swipeStartY[id] == null) return;
-    
     const dx = e.touches[0].clientX - swipeStartX[id];
     const dy = e.touches[0].clientY - swipeStartY[id];
-    
+    console.log('[DEBUG] handleTouchMove', { id, dx, dy });
     // Only handle horizontal swipes, ignore vertical movement
     if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 10) {
       e.preventDefault(); // Only prevent default for horizontal swipes
@@ -1960,6 +1957,7 @@ Reply with a JSON object enclosed in triple backticks:
     const card = document.getElementById(`receipt-card-${id}`);
     const width = card ? card.offsetWidth : 1;
     const threshold = width * 0.4;
+    console.log('[DEBUG] handleTouchEnd', { id, offset, width, threshold });
     if (offset > threshold) {
       try { navigator.vibrate && navigator.vibrate(30); } catch {}
       setTimeout(() => {
@@ -2222,14 +2220,14 @@ Reply with a JSON object enclosed in triple backticks:
                 {/* Smiling Face on Receipt */}
                 <ellipse cx="20" cy="45" rx="2" ry="2" fill="#64748b">
                   <animate attributeName="ry" values="2;0.5;2" keyTimes="0;0.5;1" dur="2s" repeatCount="indefinite"/>
-                </ellipse>
+                  </ellipse>
                 <ellipse cx="40" cy="45" rx="2" ry="2" fill="#64748b">
                   <animate attributeName="ry" values="2;2;0.5;2" keyTimes="0;0.3;0.5;1" dur="2s" repeatCount="indefinite"/>
-                </ellipse>
+                  </ellipse>
                 {/* Happy Smile */}
                 <path d="M18 48 Q30 54 42 48" stroke="#64748b" strokeWidth="2" fill="none" strokeLinecap="round"/>
-              </svg>
-            </div>
+                </svg>
+                </div>
             
             {/* Dynamic Loading Messages with Funny Content */}
             <div className="space-y-2">
@@ -2244,8 +2242,8 @@ Reply with a JSON object enclosed in triple backticks:
               </p>
             </div>
           </div>
-        </div>
-      )}
+          </div>
+        )}
 
       {/* Main Content Area */}
       <div
@@ -2422,11 +2420,11 @@ Reply with a JSON object enclosed in triple backticks:
                                       }
                                       // Fallback: calculate on-the-fly if monthly totals not available
                                       return formatCurrency(
-                                        group.receipts.reduce((total, receipt) => {
+                                      group.receipts.reduce((total, receipt) => {
                                           // For fallback, use original amount (this will be less accurate)
-                                          const amount = parseFloat(receipt.total) || 0;
-                                          return total + amount;
-                                        }, 0),
+                                        const amount = parseFloat(receipt.total) || 0;
+                                        return total + amount;
+                                      }, 0),
                                         settings?.baseCurrency || 'EUR'
                                       );
                                     })()}
@@ -2913,10 +2911,10 @@ Reply with a JSON object enclosed in triple backticks:
                     <div className="text-sm font-semibold text-blue-200 mb-1">Recent Receipts</div>
                     <div className="flex flex-col gap-2">
                       {(() => {
-                                                // Get all receipts for this category, sorted by date (newest first)
+                        // Get all receipts for this category, sorted by date (newest first)
                         const categoryReceipts = receipts
                           .filter(r => (r.category || 'Uncategorized') === selectedCategory.name)
-                          .sort((a, b) => {
+                        .sort((a, b) => {
                             // Use the same date parsing approach as the main receipts list
                             const dateA = normalizeToLocalMidnight(a.transactionDate || a.date);
                             const dateB = normalizeToLocalMidnight(b.transactionDate || b.date);
@@ -3016,7 +3014,7 @@ Reply with a JSON object enclosed in triple backticks:
                                 <div className="flex flex-col overflow-hidden">
                                   <span className="font-medium text-white text-sm truncate">{r.merchant || 'Unknown'}</span>
                                   <div className="flex flex-col gap-0.5">
-                                    <span className="text-xs text-gray-400">{formatCurrency(r.total, r.currency || settings?.baseCurrency || 'EUR')}</span>
+                                  <span className="text-xs text-gray-400">{formatCurrency(r.total, r.currency || settings?.baseCurrency || 'EUR')}</span>
                                     {/* Show base currency equivalent if different */}
                                     {r.currency && r.currency !== (settings?.baseCurrency || 'EUR') && (
                                       <AsyncCurrencyConversion amount={r.total} currency={r.currency} date={r.transactionDate || r.date} />
@@ -3047,7 +3045,7 @@ Reply with a JSON object enclosed in triple backticks:
                                             <li key={i} className="flex justify-between">
                                               <span>{item.name}</span>
                                               <div className="flex flex-col items-end gap-0.5">
-                                                <span>{formatCurrency(item.price, r.currency || settings?.baseCurrency || 'EUR')}</span>
+                                              <span>{formatCurrency(item.price, r.currency || settings?.baseCurrency || 'EUR')}</span>
                                                 {/* Show base currency equivalent if different */}
                                                 {r.currency && r.currency !== (settings?.baseCurrency || 'EUR') && (
                                                   <AsyncCurrencyConversion amount={item.price} currency={r.currency} date={r.transactionDate || r.date} />
@@ -3252,9 +3250,9 @@ export function ExpensesDashboard({ totalExpenses, categoryTotals, formatCurrenc
 
                 </div>
                 <div className="flex flex-col gap-1">
-                  <div className="flex items-end gap-2">
-                    <span className="text-xl md:text-2xl font-extrabold text-white">{formatCurrency(amt, settings?.baseCurrency || 'EUR')}</span>
-                    <span className="text-xs text-green-400 font-bold">{percent}%</span>
+                <div className="flex items-end gap-2">
+                  <span className="text-xl md:text-2xl font-extrabold text-white">{formatCurrency(amt, settings?.baseCurrency || 'EUR')}</span>
+                  <span className="text-xs text-green-400 font-bold">{percent}%</span>
                   </div>
                   {localCurrencyDisplay && (
                     <div className="text-xs text-blue-300/80">
@@ -3402,9 +3400,9 @@ function InsightsSection({ receipts = [], categoryTotals = {}, calculatedTotals 
   // Calculate period receipts with historical conversion - using useMemo to prevent infinite loops
   const periodReceipts = useMemo(() => {
     const filteredReceipts = receipts.filter(r => {
-      const d = normalizeToLocalMidnight(r.transactionDate || r.date);
-      return d && d >= periodStart && d <= periodEnd;
-    });
+    const d = normalizeToLocalMidnight(r.transactionDate || r.date);
+    return d && d >= periodStart && d <= periodEnd;
+  });
 
     // Use calculated totals to get accurate base currency amounts for the period
     return filteredReceipts.map(r => {
@@ -3683,15 +3681,15 @@ function InsightsSection({ receipts = [], categoryTotals = {}, calculatedTotals 
             </button>
             
             {/* Period Dropdown */}
-            <select
+          <select
               className="bg-gray-100 rounded-lg px-3 py-1 text-sm font-semibold border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-400"
-              value={period}
-              onChange={e => setPeriod(e.target.value)}
-            >
-              <option value="week">week</option>
-              <option value="month">month</option>
+            value={period}
+            onChange={e => setPeriod(e.target.value)}
+          >
+            <option value="week">week</option>
+            <option value="month">month</option>
               <option value="year">year</option>
-            </select>
+          </select>
             
             {/* Next Arrow - only show when not on current period */}
             {currentOffset < 0 && (
@@ -3739,9 +3737,9 @@ function InsightsSection({ receipts = [], categoryTotals = {}, calculatedTotals 
               <span className="text-xs font-semibold text-gray-700">{l.name}</span>
               <span className="text-xs text-gray-400">{l.percent}%</span>
               <div className="flex flex-col">
-                <span className="text-xs text-gray-500 font-medium">
-                  {formatCurrency(periodCategoryTotals[l.name], settings?.baseCurrency || 'EUR')}
-                </span>
+              <span className="text-xs text-gray-500 font-medium">
+                {formatCurrency(periodCategoryTotals[l.name], settings?.baseCurrency || 'EUR')}
+              </span>
                 {/* Show original currency amounts if available */}
                 {(() => {
                   const categoryReceipts = periodReceipts.filter(r => (r.category || 'Uncategorized') === l.name);
