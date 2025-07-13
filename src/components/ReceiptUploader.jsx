@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -13,11 +13,15 @@ import {
 } from "@/components/ui/select";
 import { useToast } from "@/components/ui/use-toast";
 import { db } from '@/firebase'; // Import your Firebase db instance
-import { collection, addDoc, getDocs, deleteDoc, doc, serverTimestamp, updateDoc, query, where, onSnapshot } from "firebase/firestore"; // Import Firestore functions
+import { collection, addDoc, getDocs, deleteDoc, doc, serverTimestamp, updateDoc, Timestamp, query, where, onSnapshot } from "firebase/firestore"; // Import Firestore functions
 import {
   fetchExchangeRates,
-  convertToBaseCurrency,
-  initializeExchangeRates
+  convertToBaseCurrency as convertToBaseCurrencyUtil,
+  initializeExchangeRates,
+  getCurrentExchangeRates,
+  convertToEUR as convertToEURHistorical,
+  preloadExchangeRates,
+  testExchangeRate
 } from '@/utils/currencyUtils';
 import { loadSettings, formatDate } from '@/utils/settingsUtils'; // Corrected import for formatDate
 import { useAuth } from '@/contexts/AuthContext';
@@ -38,6 +42,7 @@ import { Chart, ArcElement, Tooltip, Legend, CategoryScale, LinearScale, PointEl
 import annotationPlugin from 'chartjs-plugin-annotation';
 import { CircularProgressbarWithChildren, buildStyles } from 'react-circular-progressbar';
 import 'react-circular-progressbar/dist/styles.css';
+import { useSwipeable } from 'react-swipeable';
 Chart.register(ArcElement, Tooltip, Legend, CategoryScale, LinearScale, PointElement, LineElement, TimeScale, Filler, BarElement, annotationPlugin);
 
 // Define supported currencies
@@ -104,7 +109,7 @@ const missingMessages = {
   ],
   date: [
     "When did this happen? Time travel is hard without a date! ⏳",
-    "Date missing! Was it yesterday, today, or in a galaxy far, far away? 🌌",
+    "Date missing! Was it yesterday, today, or in a galaxy far, far away? ��",
     "No date, no story! Please pick a day. 📅"
   ],
   items: [
@@ -131,19 +136,37 @@ const getFunnyMissingMessage = (missing) => {
   return "Something's missing, but we're not sure what!";
 };
 
-// Add at the top of the component:
+// Unified category colors - use hex colors for consistency across all components
 const categoryColors = {
-  Groceries: 'border-green-400',
-  Dining: 'border-pink-400',
-  Transportation: 'border-yellow-400',
-  Shopping: 'border-purple-400',
-  Bills: 'border-blue-400',
-  Entertainment: 'border-indigo-400',
-  Health: 'border-emerald-400',
-  Other: 'border-gray-400',
-  Uncategorized: 'border-blue-500',
+  'Groceries': '#3b82f6',
+  'Dining': '#f472b6',
+  'Transportation': '#a78bfa',
+  'Shopping': '#818cf8',
+  'Bills': '#60a5fa',
+  'Entertainment': '#fbbf24',
+  'Health': '#10b981',
+  'Other': '#f59e42',
+  'Uncategorized': '#9ca3af'
 };
+
+// Helper function to get category color
 const getCategoryColor = (cat) => categoryColors[cat] || categoryColors['Uncategorized'];
+
+// Helper function to get Tailwind border class for receipt cards
+const getCategoryBorderClass = (cat) => {
+  const colorMap = {
+    'Groceries': 'border-blue-400',
+    'Dining': 'border-pink-400',
+    'Transportation': 'border-purple-400',
+    'Shopping': 'border-indigo-400',
+    'Bills': 'border-blue-400',
+    'Entertainment': 'border-yellow-400',
+    'Health': 'border-emerald-400',
+    'Other': 'border-orange-400',
+    'Uncategorized': 'border-gray-400'
+  };
+  return colorMap[cat] || colorMap['Uncategorized'];
+};
 
 export default function ReceiptUploader({ className, showOnly, onTabChange, groupId, defaultStep, uploadOnly }) {
   const { toast } = useToast();
@@ -166,6 +189,7 @@ export default function ReceiptUploader({ className, showOnly, onTabChange, grou
   const [isFirestoreLoading, setIsFirestoreLoading] = useState(true);
   const [firestoreError, setFirestoreError] = useState(null);
   const [formErrors, setFormErrors] = useState({});
+  const updateRatesTimeout = useRef(null);
   const [editingReceipt, setEditingReceipt] = useState(null);
   const [editForm, setEditForm] = useState({
     merchant: '',
@@ -187,12 +211,10 @@ export default function ReceiptUploader({ className, showOnly, onTabChange, grou
       _videoElement = node;
       // Only start camera if modal is open and camera isn't already running
       if (isCameraOpen && !isCameraReady) {
-        console.log('Video element assigned to ref, and camera modal is open. Calling startCamera.');
         startCamera();
       }
     } else {
       _videoElement = null;
-      console.log('Video element detached from ref.');
     }
   };
   const canvasRef = useRef(null);
@@ -226,6 +248,7 @@ export default function ReceiptUploader({ className, showOnly, onTabChange, grou
   const [isBusy, setIsBusy] = useState(false);
   const [message, setMessage] = useState(null);
   const [currentFunnyMessage, setCurrentFunnyMessage] = useState('');
+  const [showSuccessState, setShowSuccessState] = useState(false);
 
   // Combine isLoading and isFirestoreLoading for a global busy state
   const isBusyGlobal = isFirestoreLoading;
@@ -269,32 +292,29 @@ export default function ReceiptUploader({ className, showOnly, onTabChange, grou
     "Other"
   ];
 
-  const receiptsCollectionRef = collection(db, "receipts");
+  const receiptsCollectionRef = user ? collection(db, "users", user.uid, "receipts") : null;
 
   const fetchReceipts = async () => {
     if (!user) {
-      console.log("fetchReceipts: User not authenticated, skipping fetch.");
       return;
     }
-    console.log("fetchReceipts: Current user:", user);
+    // User authenticated, fetching receipts
     setIsFirestoreLoading(true);
     setFirestoreError(null);
     try {
-      const data = await getDocs(receiptsCollectionRef);
+      // Use the per-user receipts subcollection or global collection
+      const data = await getDocs(collection(db, "receipts"));
       const receiptsList = data.docs.map((doc) => ({ ...doc.data(), id: doc.id }));
-      console.log("fetchReceipts: All fetched receipts (before filter):", receiptsList);
-      // Only show receipts for the current user
+      // Only show receipts for the current user and group
       const userReceipts = receiptsList.filter(r => {
-        const isMatch = r.userId === user.uid; // Corrected field name from user_id to userId
-        console.log(`Receipt ID: ${r.id}, Receipt userId: ${r.userId}, Current User UID: ${user.uid}, Match: ${isMatch}`);
-        return isMatch;
+        const userMatch = r.userId === user.uid;
+        const groupMatch = groupId ? r.groupId === groupId : (selectedGroup === 'personal' ? !r.groupId : r.groupId === selectedGroup);
+        return userMatch && groupMatch;
       });
-      console.log("fetchReceipts: Filtered user receipts:", userReceipts);
-      // Sort receipts by last updated timestamp (or created_at if not updated)
       const sortedReceipts = userReceipts.sort((a, b) => {
         const dateA = (a.updated_at?.toDate?.() || a.createdAt?.toDate?.() || new Date(0));
         const dateB = (b.updated_at?.toDate?.() || b.createdAt?.toDate?.() || new Date(0));
-        return dateB - dateA; // Sort in descending order (newest first)
+        return dateB - dateA;
       });
       setReceipts(sortedReceipts);
     } catch (error) {
@@ -346,15 +366,7 @@ export default function ReceiptUploader({ className, showOnly, onTabChange, grou
     }, {});
     setCategoryTotals(categorySums);
 
-    // Debug logging to verify current month filtering
-    console.log('Current Month Filtering:', {
-      totalReceipts: receipts.length,
-      currentMonthReceipts: currentMonthReceipts.length,
-      currentMonthStart: currentMonthStart.toISOString().split('T')[0],
-      currentMonthEnd: currentMonthEnd.toISOString().split('T')[0],
-      totalExpenses: total,
-      categoryTotals: categorySums
-    });
+    // Current month filtering applied
   }, [receipts]);
 
   useEffect(() => {
@@ -372,22 +384,75 @@ export default function ReceiptUploader({ className, showOnly, onTabChange, grou
   const [convertedSubtotal, setConvertedSubtotal] = useState(null);
   const [convertedItems, setConvertedItems] = useState([]);
   const [exchangeRates, setExchangeRates] = useState(null);
+  const [isInitializingRates, setIsInitializingRates] = useState(false);
 
-  // Initialize exchange rates on component mount
+  // Initialize exchange rates and preload historical rates on component mount
   useEffect(() => {
-    initializeExchangeRates().then(rates => {
+    let isMounted = true;
+    
+    const initRates = async () => {
+      // Prevent multiple simultaneous initialization attempts
+      if (isInitializingRates) {
+        return;
+      }
+      
+      setIsInitializingRates(true);
+      
+      try {
+        const rates = await initializeExchangeRates();
+        if (isMounted && rates) {
       setExchangeRates(rates);
-    });
-  }, []);
+        }
+        
+        // Test exchange rate calculation
+        if (isMounted) {
+          await testExchangeRate();
+        }
+        
+        // Preload exchange rates for the last 3 months if we have receipts
+        if (isMounted && receipts.length > 0) {
+          const today = new Date();
+          const threeMonthsAgo = new Date(today.getFullYear(), today.getMonth() - 3, 1);
+          
+          // Get unique currencies from receipts
+          const currencies = [...new Set(receipts.map(r => r.currency).filter(c => c && c !== 'EUR'))];
+          
+          if (currencies.length > 0) {
+            await preloadExchangeRates(threeMonthsAgo, today, currencies);
+          }
+        }
+      } catch (error) {
+        // Try to get cached rates as fallback
+        if (isMounted) {
+          const cachedRates = getCurrentExchangeRates();
+          if (cachedRates) {
+            setExchangeRates(cachedRates);
+          }
+        }
+      } finally {
+        if (isMounted) {
+          setIsInitializingRates(false);
+        }
+      }
+    };
+    
+    initRates();
+    
+    return () => {
+      isMounted = false;
+    };
+  }, []); // Only run once on mount, not when receipts change
 
   // Update exchange rates periodically
   useEffect(() => {
     const interval = setInterval(async () => {
       try {
         const rates = await fetchExchangeRates();
+        if (rates) {
         setExchangeRates(rates);
+        }
       } catch (error) {
-        console.error('Failed to update exchange rates:', error);
+        // Silently handle periodic update errors
       }
     }, 3600000); // Update every hour
 
@@ -444,7 +509,39 @@ export default function ReceiptUploader({ className, showOnly, onTabChange, grou
     };
   }, []);
 
-  console.log('ReceiptUploader component - Current settings state:', settings);
+  // Force recalculation when base currency changes with debouncing
+  useEffect(() => {
+    if (receipts.length > 0 && settings?.baseCurrency) {
+      // Clear exchange rates to force recalculation
+      setExchangeRates(null);
+      
+      // Clear any existing timeout
+      if (updateRatesTimeout.current) {
+        clearTimeout(updateRatesTimeout.current);
+      }
+      
+      // Debounce the rate update to prevent excessive API calls
+      updateRatesTimeout.current = setTimeout(async () => {
+        try {
+          const rates = await initializeExchangeRates();
+          if (rates) {
+            setExchangeRates(rates);
+          }
+        } catch (error) {
+          // Silently handle currency change errors
+        }
+      }, 1000); // 1 second debounce
+    }
+    
+    // Cleanup function
+    return () => {
+      if (updateRatesTimeout.current) {
+        clearTimeout(updateRatesTimeout.current);
+      }
+    };
+  }, [settings?.baseCurrency]); // Only depend on base currency, not receipts.length
+
+  // Settings loaded successfully
 
   // Helper function to format date safely
   const formatDateSafely = (dateString, formatOverride = null) => {
@@ -463,10 +560,64 @@ export default function ReceiptUploader({ className, showOnly, onTabChange, grou
     }
   };
 
-  const convertToEUR = (amount, fromCurrency) => {
-    if (fromCurrency === 'EUR') return parseFloat(amount);
-    if (!exchangeRates || !exchangeRates[fromCurrency] || !amount) return parseFloat(amount); // Return original if no rate
-    return (parseFloat(amount) / exchangeRates[fromCurrency]).toFixed(2);
+  // Enhanced currency conversion function with historical rates
+  const convertToBaseCurrency = async (amount, fromCurrency, date) => {
+    if (!amount || isNaN(parseFloat(amount))) return 0;
+    
+    const baseCurrency = settings?.baseCurrency || 'EUR';
+    if (fromCurrency === baseCurrency) return parseFloat(amount);
+    
+    try {
+      // Use the utility function for base currency conversion
+      return await convertToBaseCurrencyUtil(amount, fromCurrency, date);
+          } catch (error) {
+        // Fallback to current rates if historical conversion fails
+        if (exchangeRates && exchangeRates[fromCurrency]) {
+          return parseFloat((parseFloat(amount) / exchangeRates[fromCurrency]).toFixed(2));
+        }
+        
+        const cachedRates = getCurrentExchangeRates();
+        if (cachedRates && cachedRates[fromCurrency]) {
+          return parseFloat((parseFloat(amount) / cachedRates[fromCurrency]).toFixed(2));
+        }
+        
+        return parseFloat(amount);
+      }
+  };
+
+  // New function to get base currency equivalent for display
+  const getBaseCurrencyEquivalent = async (amount, fromCurrency, date) => {
+    if (!amount || isNaN(parseFloat(amount))) return null;
+    
+    const baseCurrency = settings?.baseCurrency || 'EUR';
+    if (fromCurrency === baseCurrency) return null; // No need to show equivalent for same currency
+    return await convertToBaseCurrency(amount, fromCurrency, date);
+  };
+
+  // Enhanced format currency function that handles conversion display
+  const formatCurrencyWithConversion = async (amount, currency, date, showConversion = true) => {
+    if (!amount || isNaN(parseFloat(amount))) return '';
+    
+    const baseCurrency = settings?.baseCurrency || 'EUR';
+    const formattedAmount = formatCurrency(parseFloat(amount), currency);
+    
+    if (showConversion && currency !== baseCurrency) {
+      try {
+        const baseEquivalent = await getBaseCurrencyEquivalent(amount, currency, date);
+        if (baseEquivalent !== null) {
+          return (
+            <span className="flex flex-col">
+              <span className="text-sm text-gray-400">{formattedAmount}</span>
+              <span className="text-xs text-blue-300">≈ {formatCurrency(baseEquivalent, baseCurrency)}</span>
+            </span>
+          );
+        }
+      } catch (error) {
+        // Silently handle base currency equivalent errors
+      }
+    }
+    
+    return formattedAmount;
   };
 
   const handleDeleteReceipt = async (id) => {
@@ -479,7 +630,7 @@ export default function ReceiptUploader({ className, showOnly, onTabChange, grou
       return;
     }
     try {
-      await deleteDoc(doc(db, "receipts", id));
+      await deleteDoc(doc(db, "users", user.uid, "receipts", id));
       setReceipts(receipts.filter((receipt) => receipt.id !== id));
       toast({
         title: "Receipt Deleted! 🗑️",
@@ -636,11 +787,23 @@ export default function ReceiptUploader({ className, showOnly, onTabChange, grou
       if (isNaN(calculatedTax) || calculatedTax < 0) calculatedTax = 0; // Ensure non-negative tax
     }
 
+    // Convert transactionDate to Firestore Timestamp if it's a string
+    let transactionDateValue;
+    if (activeFormData.date) {
+      // If already a Date object, use as is; otherwise, parse
+      const dateObj = (activeFormData.date instanceof Date)
+        ? activeFormData.date
+        : new Date(activeFormData.date);
+      transactionDateValue = Timestamp.fromDate(dateObj);
+    } else {
+      transactionDateValue = serverTimestamp();
+    }
+
     const receiptData = {
       userId: user.uid,
       merchant: activeFormData.merchant,
-      date: serverTimestamp(),
-      transactionDate: activeFormData.date,
+      date: serverTimestamp(), // Use server timestamp for consistency
+      transactionDate: transactionDateValue, // Always a Firestore Timestamp
       total: parseFloat(activeFormData.total),
       subtotal: parseFloat(activeFormData.subtotal),
       tax: calculatedTax,
@@ -650,22 +813,22 @@ export default function ReceiptUploader({ className, showOnly, onTabChange, grou
       imageUrl: activeFormData.imageUrl || '',
       category: activeFormData.category || 'Uncategorized',
       createdAt: serverTimestamp(),
-      ...(groupId ? { groupId } : {}) // <-- Ensures group receipts are tagged
+      ...(groupId ? { groupId } : selectedGroup && selectedGroup !== 'personal' ? { groupId: selectedGroup } : {})
     };
 
-    console.log("Receipt data being sent to Firestore:", receiptData);
+    // Receipt data prepared for Firestore
 
     try {
       if (editingReceipt) {
-        // Update existing receipt
-        await updateDoc(doc(db, "receipts", editingReceipt.id), receiptData);
+        // Update existing receipt in the user's subcollection
+        await updateDoc(doc(db, "users", user.uid, "receipts", editingReceipt.id), receiptData);
         toast({
           title: "Receipt Updated! 🚀",
           description: "Your receipt has been successfully updated.",
         });
       } else {
-        // Create new receipt
-      await addDoc(collection(db, "receipts"), receiptData);
+        // Create new receipt in the user's subcollection
+        await addDoc(collection(db, "users", user.uid, "receipts"), receiptData);
       toast({
         title: "Receipt Saved! 🎉",
         description: "Your expense has been successfully recorded.",
@@ -805,7 +968,9 @@ export default function ReceiptUploader({ className, showOnly, onTabChange, grou
         total: parsedTotal, // Store as number
         subtotal: parsedSubtotal ? parsedSubtotal : undefined, // Store as number
         tax: parseFloat(taxAmount), // Store as number
-        transactionDate: editForm.date, // Use transactionDate for consistency
+        transactionDate: editForm.date
+          ? Timestamp.fromDate(new Date(editForm.date))
+          : serverTimestamp(), // Use Firestore Timestamp
         category: editForm.category,
         paymentMethod: editForm.payment_method,
         currency: editForm.currency || editingReceipt.currency || settings.baseCurrency,
@@ -816,7 +981,7 @@ export default function ReceiptUploader({ className, showOnly, onTabChange, grou
         updated_at: serverTimestamp()
       };
 
-      await updateDoc(doc(db, "receipts", editingReceipt.id), updatedReceiptData);
+      await updateDoc(doc(db, "users", user.uid, "receipts", editingReceipt.id), updatedReceiptData);
       toast({
         title: "Receipt Updated! 🚀",
         description: "Your receipt has been successfully updated.",
@@ -971,110 +1136,163 @@ export default function ReceiptUploader({ className, showOnly, onTabChange, grou
   // Determine which form state to use based on editingReceipt
   const activeFormData = editingReceipt ? editForm : formData;
 
-  // Update the receipt card rendering
-  const renderReceiptCard = (receipt) => {
+  // Async receipt card component with historical currency conversion
+  const ReceiptCard = ({ receipt }) => {
+    const [baseCurrencyEquivalent, setBaseCurrencyEquivalent] = useState(null);
+    const [isLoadingConversion, setIsLoadingConversion] = useState(false);
     const isExpanded = expandedReceiptId === receipt.id;
     const amount = parseFloat(receipt.total);
     const isNegative = isNaN(amount) || amount < 0;
-    const catColor = getCategoryColor(receipt.category);
-    const isSwiped = swipedId === receipt.id;
-    const { progress, dir } = getSwipeProgress(receipt.id);
+    const catColor = getCategoryBorderClass(receipt.category);
+
+    // --- Swipe animation state ---
+    const [swipeOffset, setSwipeOffset] = useState(0);
+    const [swipeDir, setSwipeDir] = useState(null); // 'left' or 'right'
+    const swipeThreshold = 80; // px, minimum to trigger action
+    const animating = useRef(false);
+
+    const handlers = useSwipeable({
+      onSwiping: (eventData) => {
+        // Only allow horizontal swipes
+        if (Math.abs(eventData.deltaX) > Math.abs(eventData.deltaY)) {
+          setSwipeOffset(eventData.deltaX);
+          setSwipeDir(eventData.deltaX > 0 ? 'right' : 'left');
+        }
+      },
+      onSwiped: (eventData) => {
+        animating.current = true;
+        if (eventData.absX > swipeThreshold) {
+          // Trigger action and animate out
+          setSwipeOffset(eventData.deltaX > 0 ? 500 : -500); // animate out
+          setTimeout(() => {
+            setSwipeOffset(0);
+            animating.current = false;
+            if (eventData.deltaX > 0) {
+              handleEditClick(receipt);
+            } else {
+              setPendingDeleteId(receipt.id);
+              setShowDeleteModal(true);
+            }
+          }, 200);
+        } else {
+          // Snap back
+          setSwipeOffset(0);
+          setSwipeDir(null);
+          setTimeout(() => { animating.current = false; }, 200);
+        }
+      },
+      onSwipedLeft: () => {}, // handled in onSwiped
+      onSwipedRight: () => {}, // handled in onSwiped
+      delta: 10,
+      preventScrollOnSwipe: true,
+      trackTouch: true,
+      trackMouse: false,
+    });
+
+    // Background color and icon
+    let bgColor = 'transparent';
+    let icon = null;
+    if (swipeOffset < 0) {
+      bgColor = `rgba(220,38,38,${Math.min(Math.abs(swipeOffset) / 100, 0.8)})`; // red
+      icon = <Trash2 className="h-7 w-7 text-white" style={{ opacity: Math.min(Math.abs(swipeOffset) / swipeThreshold, 1), transform: `scale(${0.8 + 0.4 * Math.min(Math.abs(swipeOffset) / swipeThreshold, 1)})` }} />;
+    } else if (swipeOffset > 0) {
+      bgColor = `rgba(37,99,235,${Math.min(Math.abs(swipeOffset) / 100, 0.8)})`; // blue
+      icon = <Edit className="h-7 w-7 text-white" style={{ opacity: Math.min(Math.abs(swipeOffset) / swipeThreshold, 1), transform: `scale(${0.8 + 0.4 * Math.min(Math.abs(swipeOffset) / swipeThreshold, 1)})` }} />;
+    }
+
     return (
       <div
-        className="relative w-full overflow-x-hidden" // Add overflow-x-hidden here
-        style={{ touchAction: 'pan-y' }} // Allow vertical scrolling, prevent horizontal pan
-        onTouchStart={e => handleTouchStart(receipt.id, e)}
-        onTouchMove={e => handleTouchMove(receipt.id, e)}
-        onTouchEnd={() => handleTouchEnd(receipt.id)}
+        key={receipt.id}
+        className="relative w-full overflow-x-hidden"
+        style={{ touchAction: 'pan-y' }}
+        {...handlers}
       >
-        {/* Swipe backgrounds with animated icon */}
+        {/* Animated swipe background */}
         <div
-          className={`absolute inset-0 z-0 flex items-center transition-all duration-200 ${dir === 'left' ? 'justify-end pr-8' : dir === 'right' ? 'justify-start pl-8' : ''}`}
+          className={`absolute inset-0 z-0 flex items-center transition-all duration-200 ${swipeDir === 'left' ? 'justify-end pr-8' : swipeDir === 'right' ? 'justify-start pl-8' : ''}`}
           style={{
-            background: dir === 'left'
-              ? `rgba(220,38,38,${progress * 0.8})` // red-600
-              : dir === 'right'
-              ? `rgba(37,99,235,${progress * 0.8})` // blue-600
-              : 'transparent',
+            background: bgColor,
             borderRadius: '1rem',
             pointerEvents: 'none',
           }}
         >
-          {dir === 'left' && (
-            <Trash2
-              className="h-7 w-7 text-white"
-              style={{
-                opacity: progress,
-                transform: `scale(${0.8 + 0.4 * progress})`,
-                transition: 'all 0.2s',
-              }}
-            />
-          )}
-          {dir === 'right' && (
-            <Edit
-              className="h-7 w-7 text-white"
-              style={{
-                opacity: progress,
-                transform: `scale(${0.8 + 0.4 * progress})`,
-                transition: 'all 0.2s',
-              }}
-            />
-          )}
+          {icon}
         </div>
         <Card
           id={`receipt-card-${receipt.id}`}
-          key={receipt.id || receipt._id || receipt.date+receipt.merchant+receipt.total}
           style={{
             minHeight: 96,
-            transform: `translateX(${swipeOffset[receipt.id] || 0}px)`, // Only Card moves
-            transition: swipeOffset[receipt.id] ? 'none' : 'transform 0.5s cubic-bezier(0.22,1,0.36,1)', // springy
+            transform: `translateX(${swipeOffset}px)`,
+            transition: animating.current ? 'transform 0.2s cubic-bezier(0.22,1,0.36,1)' : 'transform 0.1s',
           }}
-          className={`relative bg-slate-800/90 p-5 pl-4 rounded-2xl shadow-xl text-white border border-blue-900/30 border-l-4 ${catColor} transition-all duration-300 ease-in-out animate-fade-in-up ${isExpanded ? 'ring-2 ring-blue-500/50 scale-[1.01] shadow-2xl' : 'hover:shadow-2xl hover:-translate-y-1 active:scale-[0.98]'}`}
+          className={`relative bg-slate-800/90 p-5 pl-4 rounded-2xl shadow-xl text-white border border-blue-900/30 border-l-4 ${catColor} transition-all duration-300 ease-in-out animate-fade-in-up ${isExpanded ? 'ring-2 ring-blue-500/50 scale-[1.01] shadow-2xl' : 'hover:shadow-2xl hover:-translate-y-1 active:scale-90'}`}
           onClick={() => setExpandedReceiptId(isExpanded ? null : receipt.id)}
           aria-label={`Receipt for ${receipt.merchant}`}
         >
-          <div className="flex items-center justify-between gap-2 w-full">
-            <div className="flex flex-col flex-1 min-w-0">
-              <div className="flex items-center gap-2 min-w-0">
-                <span className="text-lg font-extrabold text-blue-200 truncate max-w-[120px] md:max-w-[200px] tracking-tight" title={receipt.merchant}>{receipt.merchant}</span>
-                <span className="text-xs text-blue-200/80 font-medium whitespace-nowrap">{formatDateSafely(receipt.transactionDate, 'DD MMM')}</span>
-              </div>
-              <div className="flex items-baseline gap-1 mt-1">
-                <span className={`text-2xl font-extrabold ${isNegative ? 'text-red-400' : 'text-blue-100'}`}>{isNegative ? '0.00' : amount.toFixed(2)}</span>
-                <span className="text-sm text-blue-200/80 ml-1">{receipt.currency}</span>
-              </div>
-            </div>
-            <div className="flex flex-col gap-2 items-end ml-2">
-          <Button
-                onClick={e => { e.stopPropagation(); handleEditClick(receipt); }}
-            variant="ghost"
-            size="icon"
-                className="text-blue-400 hover:bg-blue-900/40 hover:text-blue-300 transition-transform duration-150 ease-in-out active:scale-90"
-                aria-label="Edit receipt"
-          >
-                <Edit className="h-5 w-5" />
-          </Button>
-          <Button
-                onClick={e => { e.stopPropagation(); handleDeleteReceipt(receipt.id); }}
-            variant="ghost"
-            size="icon"
-                className="text-red-400 hover:bg-blue-900/40 hover:text-red-300 transition-transform duration-150 ease-in-out active:scale-90"
-                aria-label="Delete receipt"
-          >
-                <Trash2 className="h-5 w-5" />
-          </Button>
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="text-lg font-extrabold text-blue-200 truncate max-w-[120px] md:max-w-[200px] tracking-tight" title={receipt.merchant}>{receipt.merchant}</span>
+            <span className="text-xs text-blue-200/80 font-medium whitespace-nowrap">
+              {receipt.transactionDate && receipt.transactionDate.toDate ? receipt.transactionDate.toDate().toLocaleDateString() : ''}
+            </span>
           </div>
+          <div className="flex items-baseline gap-1 mt-1">
+            <span className={`text-2xl font-extrabold ${isNegative ? 'text-red-400' : 'text-blue-100'}`}>{isNegative ? '0.00' : amount.toFixed(2)}</span>
+            <span className="text-sm text-blue-200/80 ml-1">{receipt.currency}</span>
+            {isLoadingConversion && (
+              <span className="text-xs text-blue-300/80 ml-2">Converting...</span>
+            )}
+            {!isLoadingConversion && baseCurrencyEquivalent && (
+              <span className="text-xs text-blue-300/80 ml-2">≈ {formatCurrency(baseCurrencyEquivalent, settings?.baseCurrency || 'EUR')}</span>
+            )}
+          </div>
+          <div className="flex flex-col gap-2 items-end ml-2">
+            <Button
+              onClick={e => { e.stopPropagation(); handleEditClick(receipt); }}
+              variant="ghost"
+              size="icon"
+              className="text-blue-400 hover:bg-blue-900/40 hover:text-blue-300 transition-transform duration-150 ease-in-out active:scale-90"
+              aria-label="Edit receipt"
+            >
+              <Edit className="h-5 w-5" />
+            </Button>
+            <Button
+              onClick={e => handleBinIconClick(e, receipt.id)}
+              variant="ghost"
+              size="icon"
+              className="text-red-400 hover:bg-blue-900/40 hover:text-red-300 transition-transform duration-150 ease-in-out active:scale-90"
+              aria-label="Delete receipt"
+            >
+              <Trash2 className="h-5 w-5" />
+            </Button>
           </div>
           {isExpanded && (
             <CardContent className="pt-4">
               <div className="grid grid-cols-2 gap-4 mb-4">
           <div>
                   <p className="text-xs text-blue-200/70">Subtotal</p>
-                  <p className="text-base">{receipt.subtotal ? parseFloat(receipt.subtotal).toFixed(2) : '-'}</p>
+                  <p className="text-base">
+                    {receipt.subtotal && !isNaN(parseFloat(receipt.subtotal)) ? parseFloat(receipt.subtotal).toFixed(2) : '-'}
+                    {receipt.subtotal && !isNaN(parseFloat(receipt.subtotal)) && receipt.currency !== (settings?.baseCurrency || 'EUR') && (
+                      <AsyncCurrencyConversion 
+                        amount={receipt.subtotal} 
+                        currency={receipt.currency} 
+                        date={receipt.transactionDate || receipt.date}
+                      />
+                    )}
+                  </p>
           </div>
           <div>
                   <p className="text-xs text-blue-200/70">Tax</p>
-                  <p className="text-base">{receipt.tax ? parseFloat(receipt.tax).toFixed(2) : '-'}</p>
+                  <p className="text-base">
+                    {receipt.tax && !isNaN(parseFloat(receipt.tax)) ? parseFloat(receipt.tax).toFixed(2) : '-'}
+                    {receipt.tax && !isNaN(parseFloat(receipt.tax)) && receipt.currency !== (settings?.baseCurrency || 'EUR') && (
+                      <AsyncCurrencyConversion 
+                        amount={receipt.tax} 
+                        currency={receipt.currency} 
+                        date={receipt.transactionDate || receipt.date}
+                      />
+                    )}
+                  </p>
         </div>
           <div>
                   <p className="text-xs text-blue-200/70">Payment</p>
@@ -1088,7 +1306,18 @@ export default function ReceiptUploader({ className, showOnly, onTabChange, grou
                 </div>
                 <div>
                   <p className="text-xs text-blue-200/70">Date</p>
-                  <p className="text-base">{formatDateSafely(receipt.transactionDate, 'DD MMM YYYY')}</p>
+                  <p className="text-base">{receipt.transactionDate && receipt.transactionDate.toDate ? receipt.transactionDate.toDate().toLocaleDateString() : ''}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-blue-200/70">Currency</p>
+                  <p className="text-base">
+                    {receipt.currency}
+                    {receipt.currency !== (settings?.baseCurrency || 'EUR') && (
+                      <span className="text-xs text-blue-300/80 ml-1">
+                        (converted to {settings?.baseCurrency || 'EUR'})
+                      </span>
+                    )}
+                  </p>
           </div>
         </div>
         {receipt.items && receipt.items.length > 0 && (
@@ -1098,7 +1327,16 @@ export default function ReceiptUploader({ className, showOnly, onTabChange, grou
               {receipt.items.map((item, index) => (
                 <li key={index} className="flex justify-between text-sm">
                         <span className="truncate max-w-[100px]">{item.name}</span>
-                        <span>{parseFloat(item.price).toFixed(2)} {receipt.currency}</span>
+                        <span>
+                          {!isNaN(parseFloat(item.price)) ? parseFloat(item.price).toFixed(2) : '0.00'} {receipt.currency}
+                          {!isNaN(parseFloat(item.price)) && receipt.currency !== (settings?.baseCurrency || 'EUR') && (
+                            <AsyncCurrencyConversion 
+                              amount={item.price} 
+                              currency={receipt.currency} 
+                              date={receipt.transactionDate || receipt.date}
+                            />
+                          )}
+                        </span>
                 </li>
               ))}
             </ul>
@@ -1106,14 +1344,57 @@ export default function ReceiptUploader({ className, showOnly, onTabChange, grou
         )}
       </CardContent>
           )}
-    </Card>
+        </Card>
       </div>
     );
   };
 
+  // Async currency conversion component
+  const AsyncCurrencyConversion = ({ amount, currency, date }) => {
+    const [baseCurrencyEquivalent, setBaseCurrencyEquivalent] = useState(null);
+    const [isLoading, setIsLoading] = useState(false);
+
+    useEffect(() => {
+      const loadConversion = async () => {
+        const baseCurrency = settings?.baseCurrency || 'EUR';
+        if (currency === baseCurrency) return;
+        
+        setIsLoading(true);
+        try {
+          const dateObj = normalizeToLocalMidnight(date);
+          const equivalent = await convertToBaseCurrency(amount, currency, dateObj);
+          setBaseCurrencyEquivalent(equivalent);
+        } catch (error) {
+          // Silently handle currency conversion errors
+        } finally {
+          setIsLoading(false);
+        }
+      };
+      
+      loadConversion();
+    }, [amount, currency, date]); // Removed settings?.baseCurrency dependency to prevent infinite loops
+
+    if (isLoading) {
+      return <span className="text-xs text-blue-300/80 ml-1">Converting...</span>;
+    }
+
+    if (baseCurrencyEquivalent) {
+      return (
+        <span className="text-xs text-blue-300/80 ml-1">
+          ≈ {formatCurrency(baseCurrencyEquivalent, settings?.baseCurrency || 'EUR')}
+        </span>
+      );
+    }
+
+    return null;
+  };
+
+  // Wrapper function for backward compatibility
+  const renderReceiptCard = (receipt) => {
+    return <ReceiptCard receipt={receipt} />;
+  };
+
   const startCamera = async () => {
-    console.log('startCamera called');
-    console.log('video element in startCamera: ', _videoElement);
     if (!_videoElement) {
       console.error('Attempted to start camera but _videoElement is null.');
       toast({
@@ -1133,13 +1414,10 @@ export default function ReceiptUploader({ className, showOnly, onTabChange, grou
           height: { ideal: 1080 }
         } 
       });
-      console.log('Camera stream obtained:', stream);
       _videoElement.srcObject = stream;
       _videoElement.onloadedmetadata = () => {
-        console.log('Video metadata loaded, playing video...');
         _videoElement.play()
           .then(() => {
-            console.log('Video playback started successfully');
             setIsCameraReady(true);
           })
           .catch(error => {
@@ -1147,11 +1425,8 @@ export default function ReceiptUploader({ className, showOnly, onTabChange, grou
             setIsCameraReady(false);
           });
       };
-      console.log('Camera stream assigned. Camera is ready.');
     } catch (error) {
       console.error("Error accessing camera:", error);
-      console.error("Error name:", error.name);
-      console.error("Error message:", error.message);
       toast({
         title: "Camera Access Denied",
         description: "Please grant camera access to use this feature.",
@@ -1170,7 +1445,7 @@ export default function ReceiptUploader({ className, showOnly, onTabChange, grou
       });
       _videoElement.srcObject = null;
       _videoElement = null;
-      console.log('Camera stream stopped and tracks released.');
+      // Camera stream stopped
     }
     setIsCameraOpen(false);
     setIsCameraReady(false);
@@ -1252,6 +1527,84 @@ export default function ReceiptUploader({ className, showOnly, onTabChange, grou
     setIsEditing(true);
     setCurrentStep('receipt_form'); // Open the receipt form modal for editing
     setReturnToCategory(selectedCategory); // Save the category context
+  };
+
+  // Add auto-save function for streamlined UX
+  const autoSaveReceipt = async (ocrData) => {
+    if (!user) {
+      toast({
+        title: "Authentication Required",
+        description: "Please sign in to save receipts.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsBusy(true);
+
+    try {
+      // Prepare receipt data from OCR results
+      const receiptData = {
+        userId: user.uid,
+        merchant: ocrData.merchant || '',
+        date: serverTimestamp(),
+        transactionDate: ocrData.date ? Timestamp.fromDate(new Date(ocrData.date)) : serverTimestamp(),
+        total: parseFloat(ocrData.total) || 0,
+        subtotal: parseFloat(ocrData.subtotal) || 0,
+        tax: parseFloat(ocrData.tax) || 0,
+        paymentMethod: ocrData.paymentMethod || 'Other',
+        currency: ocrData.currency || 'EUR',
+        items: (ocrData.items || []).filter(item => item.name && !isNaN(parseFloat(item.price))).map(item => ({
+          name: item.name,
+          price: parseFloat(item.price)
+        })),
+        imageUrl: '', // No image URL for auto-saved receipts
+        category: ocrData.category || 'Uncategorized',
+        createdAt: serverTimestamp()
+      };
+
+      // Save to Firestore
+      await addDoc(collection(db, "users", user.uid, "receipts"), receiptData);
+      
+      // Show success feedback with enhanced message
+      toast({
+        title: "Receipt Saved! 🎉",
+        description: `Successfully saved receipt from ${ocrData.merchant || 'Unknown Store'} for ${formatCurrency(parseFloat(ocrData.total) || 0, ocrData.currency || 'EUR')}`,
+      });
+
+      // Brief success state before navigation
+      setIsLoading(false);
+      setIsOcrProcessing(false);
+      
+      // Show success overlay for 1.5 seconds
+      setShowSuccessState(true);
+      setTimeout(() => {
+        setShowSuccessState(false);
+        
+        // Reset states and navigate to dashboard
+        setFile(null);
+        setPreviewImageSrc(null);
+        setCurrentStep('upload_options');
+        fetchReceipts();
+        
+        // Navigate to expenses tab to show the updated financial overview
+        if (onTabChange) {
+          onTabChange('expenses');
+        }
+      }, 1500);
+
+    } catch (error) {
+      console.error("Error auto-saving receipt:", error);
+      toast({
+        title: "Error Saving Receipt 😥",
+        description: `There was an issue saving your receipt: ${error.message}`,
+        variant: "destructive",
+      });
+      setIsLoading(false);
+      setIsOcrProcessing(false);
+    } finally {
+      setIsBusy(false);
+    }
   };
 
   const processOCR = async (file) => {
@@ -1389,7 +1742,7 @@ Reply with a JSON object enclosed in triple backticks:
 
       const data = await response.json();
       const replyText = data?.choices?.[0]?.message?.content || '';
-      console.log("OCR Raw Response:\n", replyText);
+      // OCR response received
 
       const jsonMatch = replyText.match(/```json\s*({[\s\S]*?})\s*```/i);
       if (!jsonMatch || !jsonMatch[1]) {
@@ -1399,16 +1752,7 @@ Reply with a JSON object enclosed in triple backticks:
 
       const parsedJSON = JSON.parse(jsonMatch[1]);
 
-      // Log date detection details for debugging
-      if (parsedJSON.date_confidence !== undefined) {
-        console.log("Date Detection Details:", {
-          date: parsedJSON.date,
-          confidence: parsedJSON.date_confidence,
-          source: parsedJSON.date_source,
-          format: parsedJSON.date_format_detected,
-          notes: parsedJSON.date_notes
-        });
-      }
+      // Date detection details available
 
       // Enhanced date validation and normalization
       let normalizedDate = parsedJSON.date;
@@ -1457,18 +1801,23 @@ Reply with a JSON object enclosed in triple backticks:
         }
         return { ...item, price };
       });
-      setFormData(prev => ({
-        ...prev,
+
+      // Prepare OCR data for auto-save
+      const ocrData = {
         merchant: parsedJSON.store || '',
         total: parsedJSON.amount ? parsedJSON.amount.replace(/[^\d.,]/g, '').replace(',', '.') : '',
         date: normalizedDate,
         category: parsedJSON.category || '',
         paymentMethod: parsedJSON.payment_method || '',
-        currency: parsedJSON.currency || 'EUR', // Use detected currency or default to EUR
-        items: normalizedItems
-      }));
+        currency: parsedJSON.currency || 'EUR',
+        items: normalizedItems,
+        subtotal: parsedJSON.subtotal ? parsedJSON.subtotal.replace(/[^\d.,]/g, '').replace(',', '.') : '',
+        tax: 0 // Will be calculated as total - subtotal if needed
+      };
 
-      setCurrentStep('receipt_form');
+      // Auto-save the receipt instead of showing verification window
+      await autoSaveReceipt(ocrData);
+
     } catch (error) {
       console.error('OCR error:', error);
       setOcrError('Failed to process receipt. Please try again or enter manually.');
@@ -1551,8 +1900,14 @@ Reply with a JSON object enclosed in triple backticks:
 
   // Add a helper to format currency with locale-aware symbol placement and postfix exceptions
   const postfixCurrencies = ['SEK', 'NOK', 'DKK', 'PLN', 'CZK', 'HUF'];
-  const formatCurrency = (amount, currencyCode = 'EUR') => {
+  const formatCurrency = (amount, currencyCode = null) => {
     if (amount === null || amount === undefined) return '';
+    
+    // Use base currency if no currency specified
+    if (!currencyCode) {
+      currencyCode = settings?.baseCurrency || 'EUR';
+    }
+    
     if (postfixCurrencies.includes(currencyCode)) {
       return amount.toFixed(2) + ' ' + currencyCode;
     }
@@ -1586,16 +1941,15 @@ Reply with a JSON object enclosed in triple backticks:
 
   // Add swipe handlers:
   const handleTouchStart = (id, e) => {
-    // Don't prevent default here to allow vertical scrolling
+    console.log('[DEBUG] handleTouchStart', { id, x: e.touches[0].clientX, y: e.touches[0].clientY });
     setSwipeStartX(prev => ({ ...prev, [id]: e.touches[0].clientX }));
     setSwipeStartY(prev => ({ ...prev, [id]: e.touches[0].clientY }));
   };
   const handleTouchMove = (id, e) => {
     if (swipeStartX[id] == null || swipeStartY[id] == null) return;
-    
     const dx = e.touches[0].clientX - swipeStartX[id];
     const dy = e.touches[0].clientY - swipeStartY[id];
-    
+    console.log('[DEBUG] handleTouchMove', { id, dx, dy });
     // Only handle horizontal swipes, ignore vertical movement
     if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 10) {
       e.preventDefault(); // Only prevent default for horizontal swipes
@@ -1608,6 +1962,7 @@ Reply with a JSON object enclosed in triple backticks:
     const card = document.getElementById(`receipt-card-${id}`);
     const width = card ? card.offsetWidth : 1;
     const threshold = width * 0.4;
+    console.log('[DEBUG] handleTouchEnd', { id, offset, width, threshold });
     if (offset > threshold) {
       try { navigator.vibrate && navigator.vibrate(30); } catch {}
       setTimeout(() => {
@@ -1684,10 +2039,9 @@ Reply with a JSON object enclosed in triple backticks:
   const [selectedCategory, setSelectedCategory] = useState(null);
   const [modalOpen, setModalOpen] = useState(false);
 
+  // Group logic for group receipts
   const [groups, setGroups] = useState([]);
-  const [selectedGroup, setSelectedGroup] = useState("personal");
-
-  // Fetch groups where the user is a member
+  const [selectedGroup, setSelectedGroup] = useState(groupId || 'personal');
   useEffect(() => {
     if (!user) return;
     const q = query(
@@ -1778,52 +2132,77 @@ Reply with a JSON object enclosed in triple backticks:
 
   return (
     <div className={`relative flex flex-col items-center w-full ${className}`} style={{ touchAction: 'manipulation', overflowX: 'hidden' }}>
-      {/* Loading Overlay */}
-      {isLoading && (
-        <div className="fixed inset-0 z-[100000] bg-black/80 backdrop-blur-sm grid place-items-center overflow-hidden">
-          <div className="flex flex-col items-center justify-center text-center">
-            {/* Final Animation: Contained, Clipped, and now with no-scrollbar class */}
-            <div className="relative mb-8 flex h-32 w-32 items-center justify-center no-scrollbar">
-              {/* Soft radial glow */}
-              <div className="absolute inset-0 rounded-full" style={{background: 'radial-gradient(circle, rgba(99,102,241,0.15) 0%, rgba(30,41,59,0) 70%)'}}></div>
-              {/* Pulsing rings (box-shadow) */}
-              <div className="absolute h-16 w-16 animate-pulse-ring rounded-full"></div>
-              {/* Clipped container for confetti to prevent overflow */}
-              <div className="absolute inset-0 rounded-full overflow-hidden">
-                <svg className="absolute left-6 top-6 h-4 w-4 animate-bounce-slow" style={{animationDelay: '0.2s'}} viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="1.5" fill="#fbbf24"/><circle cx="14" cy="4" r="1" fill="#38bdf8"/><circle cx="3" cy="12" r="1.2" fill="#a78bfa"/></svg>
-                <svg className="absolute right-6 top-8 h-3 w-3 animate-bounce-slow-delayed" style={{animationDelay: '0.6s'}} viewBox="0 0 12 12" fill="none"><rect x="6" y="1" width="1.5" height="1.5" rx=".75" fill="#f472b6"/><rect x="10" y="8" width="1" height="1" rx=".5" fill="#fbbf24"/></svg>
-                <svg className="absolute left-8 bottom-6 h-2 w-2 animate-bounce-slow" style={{animationDelay: '1s'}} viewBox="0 0 8 8" fill="none"><circle cx="4" cy="4" r="1" fill="#34d399"/></svg>
+      {/* Success State Overlay */}
+      {showSuccessState && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center">
+          <div className="bg-slate-800/90 backdrop-blur-md rounded-2xl p-8 md:p-12 max-w-md mx-4 text-center border border-green-400/20 shadow-2xl animate-in fade-in duration-300">
+            {/* Success Icon */}
+            <div className="mb-6 flex justify-center">
+              <div className="relative">
+                <div className="w-16 h-16 bg-green-500 rounded-full flex items-center justify-center animate-pulse">
+                  <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"></path>
+                  </svg>
                 </div>
-              {/* Dancing Receipt with Face */}
-              <div className="animate-[wiggle_1.2s_ease-in-out_infinite] drop-shadow-2xl">
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  className="h-16 w-16 text-blue-100"
-                  fill="none"
-                  viewBox="0 0 48 64"
-                >
-                  {/* Paper shape */}
-                  <rect x="4" y="4" width="40" height="56" rx="6" fill="#fff" stroke="#c7d2fe" strokeWidth="2"/>
-                  {/* Lines for text */}
-                  <rect x="12" y="14" width="24" height="3" rx="1.5" fill="#c7d2fe"/>
-                  <rect x="12" y="22" width="18" height="3" rx="1.5" fill="#c7d2fe"/>
-                  <rect x="12" y="30" width="20" height="3" rx="1.5" fill="#c7d2fe"/>
-                  {/* Face: Eyes (animated blink) */}
-                  <ellipse cx="18" cy="44" rx="2" ry="2.2" fill="#64748b">
-                    <animate attributeName="ry" values="2.2;0.5;2.2" keyTimes="0;0.5;1" dur="2s" repeatCount="indefinite"/>
-                  </ellipse>
-                  <ellipse cx="30" cy="44" rx="2" ry="2.2" fill="#64748b">
-                    <animate attributeName="ry" values="2.2;2.2;0.5;2.2" keyTimes="0;0.3;0.5;1" dur="2s" repeatCount="indefinite"/>
-                  </ellipse>
-                  {/* Smile */}
-                  <path d="M20 48 Q24 52 28 48" stroke="#64748b" strokeWidth="2" fill="none" strokeLinecap="round"/>
-                </svg>
+                {/* Ripple effect */}
+                <div className="absolute inset-0 w-16 h-16 bg-green-400 rounded-full animate-ping opacity-20"></div>
               </div>
+            </div>
+            
+            {/* Success Message */}
+            <div className="space-y-2">
+              <p className="text-2xl font-bold text-green-400">Receipt Saved!</p>
+              <p className="text-lg text-white">Your expense has been successfully recorded.</p>
+              <p className="text-sm text-gray-400">Redirecting to dashboard...</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Loading Overlay */}
+      {isLoading && !showSuccessState && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center">
+          <div className="bg-slate-800/90 backdrop-blur-md rounded-2xl p-8 md:p-12 max-w-md mx-4 text-center border border-blue-400/20 shadow-2xl">
+            {/* Animated Loading Icon */}
+            <div className="mb-6 flex justify-center">
+              <svg width="60" height="60" viewBox="0 0 60 60" className="animate-pulse">
+                {/* Receipt Icon */}
+                <rect x="10" y="5" width="40" height="50" rx="3" fill="none" stroke="#3b82f6" strokeWidth="2"/>
+                <line x1="15" y1="15" x2="45" y2="15" stroke="#3b82f6" strokeWidth="1"/>
+                <line x1="15" y1="20" x2="45" y2="20" stroke="#3b82f6" strokeWidth="1"/>
+                <line x1="15" y1="25" x2="35" y2="25" stroke="#3b82f6" strokeWidth="1"/>
+                <line x1="15" y1="30" x2="40" y2="30" stroke="#3b82f6" strokeWidth="1"/>
+                <line x1="15" y1="35" x2="30" y2="35" stroke="#3b82f6" strokeWidth="1"/>
+                
+                {/* Processing Animation */}
+                <circle cx="30" cy="30" r="25" fill="none" stroke="#1e40af" strokeWidth="2" strokeDasharray="157" strokeDashoffset="157">
+                  <animate attributeName="stroke-dashoffset" values="157;0;157" dur="2s" repeatCount="indefinite"/>
+                </circle>
+                
+                {/* Smiling Face on Receipt */}
+                <ellipse cx="20" cy="45" rx="2" ry="2" fill="#64748b">
+                  <animate attributeName="ry" values="2;0.5;2" keyTimes="0;0.5;1" dur="2s" repeatCount="indefinite"/>
+                  </ellipse>
+                <ellipse cx="40" cy="45" rx="2" ry="2" fill="#64748b">
+                  <animate attributeName="ry" values="2;2;0.5;2" keyTimes="0;0.3;0.5;1" dur="2s" repeatCount="indefinite"/>
+                  </ellipse>
+                {/* Happy Smile */}
+                <path d="M18 48 Q30 54 42 48" stroke="#64748b" strokeWidth="2" fill="none" strokeLinecap="round"/>
+                </svg>
                 </div>
             
-            {/* Text without a wrapping card/box */}
-            <p className="text-xl font-medium text-white" style={{textShadow: '0 2px 8px rgba(0,0,0,0.5)'}}>Processing your receipt...</p>
-            <p className="text-lg text-blue-300 animate-pulse" style={{textShadow: '0 2px 8px rgba(0,0,0,0.5)'}}>{currentFunnyMessage} <span role="img" aria-label="fun">🎉</span></p>
+            {/* Dynamic Loading Messages with Funny Content */}
+            <div className="space-y-2">
+              <p className="text-xl font-medium text-white" style={{textShadow: '0 2px 8px rgba(0,0,0,0.5)'}}>
+                {isOcrProcessing ? "Processing your receipt..." : "Saving receipt..."}
+              </p>
+              <p className="text-lg text-blue-300 animate-pulse" style={{textShadow: '0 2px 8px rgba(0,0,0,0.5)'}}>
+                {isOcrProcessing ? currentFunnyMessage : "Almost done..."} <span role="img" aria-label="fun">🎉</span>
+              </p>
+              <p className="text-sm text-gray-400 mt-2">
+                {isOcrProcessing ? "AI is analyzing your receipt..." : "Updating your expense dashboard..."}
+              </p>
+            </div>
           </div>
           </div>
         )}
@@ -1854,7 +2233,7 @@ Reply with a JSON object enclosed in triple backticks:
           <div className={`w-full md:w-1/3 flex-col items-center mb-8 md:mb-0 ${showOnly === 'upload' ? 'flex' : !showOnly ? 'flex' : 'hidden'} md:flex`}>
             <Card className="w-full p-4 md:p-6 flex flex-col items-center justify-start gap-4 bg-slate-800/80 text-white shadow-2xl rounded-xl border border-blue-400/20">
             <CardHeader className="w-full text-center p-0 mb-4">
-                <CardTitle className="text-xl md:text-2xl font-bold text-blue-100">Choose Upload Method</CardTitle>
+                <CardTitle className="text-xl md:text-2xl font-bold text-blue-100">Add Receipt</CardTitle>
             </CardHeader>
             <CardContent className="w-full flex flex-col items-center justify-center gap-4 p-0">
                   <input
@@ -1870,7 +2249,7 @@ Reply with a JSON object enclosed in triple backticks:
                   className="w-full bg-blue-700 text-white font-semibold py-3 rounded-xl hover:bg-blue-800 transition-all duration-300 ease-in-out transform hover:scale-105 flex items-center justify-center gap-2 shadow-lg overflow-hidden"
                 >
                 <Upload className="h-5 w-5" />
-                Upload File
+                Upload & Process
                 </Button>
               <Button
                   onClick={() => setIsCameraOpen(true)}
@@ -1896,6 +2275,7 @@ Reply with a JSON object enclosed in triple backticks:
               totalExpenses={totalExpenses}
               categoryTotals={categoryTotals}
               formatCurrency={formatCurrency}
+              formatDateSafely={formatDateSafely}
               settings={settings}
               receipts={receipts}
               selectedCategory={selectedCategory}
@@ -1907,6 +2287,7 @@ Reply with a JSON object enclosed in triple backticks:
             <InsightsSection
               receipts={receipts}
               categoryTotals={categoryTotals}
+              calculatedTotals={calculatedTotals}
               formatCurrency={formatCurrency}
               settings={settings}
             />
@@ -1992,13 +2373,23 @@ Reply with a JSON object enclosed in triple backticks:
                                 <div className="flex items-center space-x-2">
                                   {/* Total Spending */}
                                   <span className="text-sm text-blue-200/90 font-medium bg-blue-800/40 rounded px-2 py-1">
-                                    {formatCurrency(
+                                    {(() => {
+                                      // Use the calculated monthly totals for accurate base currency amounts
+                                      const monthKey = `${group.year}-${String(group.month + 1).padStart(2, '0')}`;
+                                      const monthlyTotal = calculatedTotals.monthlyTotals[monthKey];
+                                      if (monthlyTotal && monthlyTotal.total > 0) {
+                                        return formatCurrency(monthlyTotal.total, settings?.baseCurrency || 'EUR');
+                                      }
+                                      // Fallback: calculate on-the-fly if monthly totals not available
+                                      return formatCurrency(
                                       group.receipts.reduce((total, receipt) => {
+                                          // For fallback, use original amount (this will be less accurate)
                                         const amount = parseFloat(receipt.total) || 0;
                                         return total + amount;
                                       }, 0),
-                                      'EUR'
-                                    )}
+                                        settings?.baseCurrency || 'EUR'
+                                      );
+                                    })()}
                                   </span>
                                   {/* Receipt Count */}
                                   <div className="flex items-center space-x-1">
@@ -2025,7 +2416,9 @@ Reply with a JSON object enclosed in triple backticks:
                                   if (!dateB) return -1;
                                   return dateB - dateA; // Newest first
                                 })
-                                .map((receipt) => renderReceiptCard(receipt))
+                                .map((receipt) => (
+                                  <div key={receipt.id}>{renderReceiptCard(receipt)}</div>
+                                ))
                               }
                             </div>
                           </div>
@@ -2318,7 +2711,7 @@ Reply with a JSON object enclosed in triple backticks:
               className="text-lg py-3 px-6 bg-blue-600/80 hover:bg-blue-500 text-white backdrop-blur-sm"
             >
               <CheckCircle className="h-5 w-5 mr-2" />
-              Use Photo
+              Process & Save
             </Button>
           </div>
         </div>
@@ -2335,7 +2728,7 @@ Reply with a JSON object enclosed in triple backticks:
           <DialogHeader className="mb-4">
             <DialogTitle className="text-2xl font-bold text-gray-100">Take Photo</DialogTitle>
             <DialogDescription className="text-gray-400">
-              Position your receipt within the frame and click capture.
+              Position your receipt within the frame and click capture. Your receipt will be automatically processed and saved.
             </DialogDescription>
           </DialogHeader>
           <div className="relative w-full max-w-[560px] h-[420px] bg-gray-900 rounded-lg overflow-hidden flex items-center justify-center">
@@ -2419,6 +2812,16 @@ Reply with a JSON object enclosed in triple backticks:
                     <div>
                       <div className="text-2xl font-extrabold text-indigo-300">{formatCurrency(selectedCategory.amount, settings?.baseCurrency || 'EUR')}</div>
                       <div className="text-xs text-gray-400">{selectedCategory.percent}% of total</div>
+                      {selectedCategory.categoryData && selectedCategory.categoryData.currencies && Object.keys(selectedCategory.categoryData.currencies).length > 0 && (
+                        <div className="text-xs text-blue-300/80 mt-1">
+                          {Object.entries(selectedCategory.categoryData.currencies).map(([currency, amount], idx) => (
+                            <span key={currency}>
+                              {formatCurrency(amount, currency)}
+                              {idx < Object.keys(selectedCategory.categoryData.currencies).length - 1 ? ' • ' : ''}
+                            </span>
+                          ))}
+                        </div>
+                      )}
                     </div>
                     {/* Mini bar chart for this category by day (last 7 days) */}
                     <div className="w-28 h-16 flex items-end">
@@ -2436,7 +2839,10 @@ Reply with a JSON object enclosed in triple backticks:
                           const dStr = d.toISOString().split('T')[0];
                           return receipts.filter(r =>
                             (r.category || 'Uncategorized') === selectedCategory.name &&
-                            (r.transactionDate === dStr || (r.transactionDate && r.transactionDate.startsWith(dStr)))
+                            (
+                              (typeof r.transactionDate === 'string' && (r.transactionDate === dStr || r.transactionDate.startsWith(dStr))) ||
+                              (r.transactionDate && r.transactionDate.toDate && r.transactionDate.toDate().toISOString().startsWith(dStr))
+                            )
                           ).reduce((sum, r) => sum + (parseFloat(r.total) || 0), 0);
                         });
                         const maxVal = Math.max(...dayTotals, 1);
@@ -2471,11 +2877,15 @@ Reply with a JSON object enclosed in triple backticks:
                         const categoryReceipts = receipts
                           .filter(r => (r.category || 'Uncategorized') === selectedCategory.name)
                         .sort((a, b) => {
-                          const da = new Date(a.transactionDate || a.date);
-                          const db = new Date(b.transactionDate || b.date);
-                          return db - da;
-                        })
-                          .slice(0, 10); // Show more receipts since we're grouping
+                            // Use the same date parsing approach as the main receipts list
+                            const dateA = normalizeToLocalMidnight(a.transactionDate || a.date);
+                            const dateB = normalizeToLocalMidnight(b.transactionDate || b.date);
+                            
+                            if (!dateA && !dateB) return 0;
+                            if (!dateA) return 1; // Put receipts without dates at the end
+                            if (!dateB) return -1;
+                            return dateB - dateA; // Newest first
+                          }); // Show ALL receipts, no limit
 
                         // Group receipts by month
                         const groupedReceipts = [];
@@ -2484,12 +2894,35 @@ Reply with a JSON object enclosed in triple backticks:
                         let currentMonthReceipts = [];
 
                         categoryReceipts.forEach((receipt, index) => {
-                          const receiptDate = new Date(receipt.transactionDate || receipt.date);
-                          const monthKey = `${receiptDate.getFullYear()}-${receiptDate.getMonth()}`;
+                          // Use the same date parsing approach as the main receipts list
+                          const receiptDate = normalizeToLocalMidnight(receipt.transactionDate || receipt.date);
+                          
+                          // Check if date is valid
+                          if (!receiptDate) {
+                            console.warn('Invalid date for receipt:', receipt.id, receipt.transactionDate || receipt.date);
+                            return; // Skip this receipt
+                          }
+                          
+
+                          
+
+                          
+                          // Create month key and label using local time (consistent with main receipts list)
+                          const year = receiptDate.getFullYear();
+                          const month = receiptDate.getMonth(); // 0-based
+                          const monthKey = `${year}-${month}`;
+                          
+                          // Create month label with proper localization
                           const monthLabel = receiptDate.toLocaleDateString(undefined, { 
                             month: 'long', 
                             year: 'numeric' 
                           }).replace(/^[a-z]/, letter => letter.toUpperCase());
+                          
+
+                          
+
+                          
+
 
                           if (monthKey !== currentMonth) {
                             // Save previous month's receipts if any
@@ -2542,12 +2975,18 @@ Reply with a JSON object enclosed in triple backticks:
                                 {/* Left side: Merchant and Amount */}
                                 <div className="flex flex-col overflow-hidden">
                                   <span className="font-medium text-white text-sm truncate">{r.merchant || 'Unknown'}</span>
+                                  <div className="flex flex-col gap-0.5">
                                   <span className="text-xs text-gray-400">{formatCurrency(r.total, r.currency || settings?.baseCurrency || 'EUR')}</span>
+                                    {/* Show base currency equivalent if different */}
+                                    {r.currency && r.currency !== (settings?.baseCurrency || 'EUR') && (
+                                      <AsyncCurrencyConversion amount={r.total} currency={r.currency} date={r.transactionDate || r.date} />
+                                    )}
+                                  </div>
                                 </div>
                                 {/* Right side: Date and Icon */}
                                 <div className="flex items-center gap-3 text-right whitespace-nowrap">
                                   <div className="flex flex-col items-end">
-                                    <span className="text-xs text-blue-200">{r.transactionDate ? new Date(r.transactionDate).toLocaleDateString() : ''}</span>
+                                    <span className="text-xs text-blue-200">{formatDateSafely(r.transactionDate || r.date)}</span>
                                     <span className="text-xs text-gray-400">{r.paymentMethod || ''}</span>
                                   </div>
                                   <div className="transition-transform duration-300" style={{ transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)' }}>
@@ -2567,7 +3006,13 @@ Reply with a JSON object enclosed in triple backticks:
                                           {r.items.map((item, i) => (
                                             <li key={i} className="flex justify-between">
                                               <span>{item.name}</span>
+                                              <div className="flex flex-col items-end gap-0.5">
                                               <span>{formatCurrency(item.price, r.currency || settings?.baseCurrency || 'EUR')}</span>
+                                                {/* Show base currency equivalent if different */}
+                                                {r.currency && r.currency !== (settings?.baseCurrency || 'EUR') && (
+                                                  <AsyncCurrencyConversion amount={item.price} currency={r.currency} date={r.transactionDate || r.date} />
+                                                )}
+                                              </div>
                                           </li>
                                         ))}
                                       </ul>
@@ -2633,14 +3078,20 @@ Reply with a JSON object enclosed in triple backticks:
   );
 }
 
-export function ExpensesDashboard({ totalExpenses, categoryTotals, formatCurrency, settings, receipts = [], selectedCategory, setSelectedCategory, modalOpen, setModalOpen }) {
+export function ExpensesDashboard({ totalExpenses, categoryTotals, formatCurrency, formatDateSafely, settings, receipts = [], selectedCategory, setSelectedCategory, modalOpen, setModalOpen }) {
   // --- Semi-Circle Doughnut Data ---
-  const sortedCategories = Object.entries(categoryTotals).sort((a, b) => b[1] - a[1]);
+  const sortedCategories = Object.entries(categoryTotals)
+    .map(([cat, data]) => {
+      // Handle both new format (object with baseCurrency) and old format (number)
+      const amount = typeof data === 'object' ? data.baseCurrency : data;
+      return [cat, typeof data === 'object' ? data : { baseCurrency: data, localCurrency: data, currencies: {} }];
+    })
+    .sort(([, a], [, b]) => (a.baseCurrency || 0) - (b.baseCurrency || 0))
+    .reverse(); // Sort descending
   const categoryLabels = sortedCategories.map(c => c[0]);
-  const categoryData = sortedCategories.map(c => c[1]);
-  const categoryColors = [
-    '#6366F1', '#22D3EE', '#F472B6', '#FBBF24', '#34D399', '#818CF8', '#F87171', '#A3E635', '#F59E42', '#60A5FA', '#F43F5E', '#10B981', '#EAB308', '#8B5CF6', '#FDE68A', '#FCA5A5', '#6EE7B7', '#F9A8D4', '#FCD34D', '#C7D2FE'
-  ];
+  const categoryData = sortedCategories.map(c => c[1].baseCurrency || c[1]);
+  // Use unified category colors for consistency
+  const chartColors = categoryLabels.map(cat => getCategoryColor(cat));
 
   // Get current month for context
   const currentMonth = new Date().toLocaleDateString('en-US', { month: 'short' });
@@ -2651,7 +3102,7 @@ export function ExpensesDashboard({ totalExpenses, categoryTotals, formatCurrenc
     datasets: [
       {
         data: categoryData,
-        backgroundColor: categoryLabels.map((_, i) => categoryColors[i % categoryColors.length]),
+        backgroundColor: chartColors,
         borderWidth: 3,
         borderColor: '#181e2a',
         hoverBorderColor: '#6366F1',
@@ -2723,28 +3174,52 @@ export function ExpensesDashboard({ totalExpenses, categoryTotals, formatCurrenc
         </div>
         {/* Category Cards Grid (mobile-friendly) */}
         <div className="w-full grid grid-cols-1 gap-4 mb-4 md:grid-cols-2">
-          {sortedCategories.map(([cat, amt], idx) => {
+          {sortedCategories.map(([cat, categoryData], idx) => {
+            const amt = categoryData.baseCurrency || categoryData; // Handle both new and old format
             const percent = totalExpenses > 0 ? Math.min(100, Math.round((amt / totalExpenses) * 100)) : 0;
-            const color = categoryColors[categoryLabels.indexOf(cat) % categoryColors.length];
-            const emoji = cat === 'Groceries' ? '🛒' : cat === 'Dining' ? '🍽️' : cat === 'Transport' ? '🚌' : cat === 'Bills' ? '💡' : cat === 'Entertainment' ? '🎬' : cat === 'Health' ? '💊' : cat === 'Family' ? '👨‍👩‍👧‍👦' : '💸';
-            const daysLeft = cat === 'Groceries' ? 20 : cat === 'Dining' ? 7 : cat === 'Transport' ? 6 : cat === 'Bills' ? 15 : 10;
+            const color = getCategoryColor(cat); // Use unified color system
+            const emoji = cat === 'Groceries' ? '🛒' : cat === 'Dining' ? '🍽️' : cat === 'Transportation' ? '🚌' : cat === 'Bills' ? '💡' : cat === 'Entertainment' ? '🎬' : cat === 'Health' ? '💊' : cat === 'Family' ? '👨‍👩‍👧‍👦' : '💸';
+
+            
+            // Get the most common currency for this category
+            let localCurrencyDisplay = '';
+            if (categoryData.currencies && Object.keys(categoryData.currencies).length > 0) {
+              const currencies = Object.entries(categoryData.currencies);
+              if (currencies.length === 1) {
+                // Single currency
+                const [currency, amount] = currencies[0];
+                localCurrencyDisplay = formatCurrency(amount, currency);
+              } else {
+                // Multiple currencies - show the largest amount
+                const largestCurrency = currencies.reduce((a, b) => a[1] > b[1] ? a : b);
+                localCurrencyDisplay = formatCurrency(largestCurrency[1], largestCurrency[0]);
+              }
+            }
+            
             return (
               <button
                 key={cat}
                 className="rounded-2xl bg-slate-900/80 shadow-lg p-3 flex flex-col gap-2 items-start border border-blue-400/10 relative overflow-hidden cursor-pointer transition-transform duration-200 hover:scale-105 hover:shadow-blue-400/30 active:scale-95 w-full focus:outline-none focus:ring-2 focus:ring-blue-400"
                 style={{boxShadow: '0 2px 12px 0 rgba(99,102,241,0.08)', border: `1.5px solid ${color}33`, minHeight: 128, touchAction: 'manipulation'}}
-                onClick={() => { setSelectedCategory({ name: cat, amount: amt, percent, color, emoji }); setModalOpen(true); }}
+                onClick={() => { setSelectedCategory({ name: cat, amount: amt, percent, color, emoji, categoryData }); setModalOpen(true); }}
                 tabIndex={0}
                 aria-label={`Show details for ${cat}`}
               >
                 <div className="flex items-center gap-2 mb-1">
                   <span className="text-2xl">{emoji}</span>
                   <span className="font-semibold text-base text-white/90">{cat}</span>
-                  <span className="ml-auto text-xs text-gray-400">{daysLeft} days left</span>
+
                 </div>
+                <div className="flex flex-col gap-1">
                 <div className="flex items-end gap-2">
                   <span className="text-xl md:text-2xl font-extrabold text-white">{formatCurrency(amt, settings?.baseCurrency || 'EUR')}</span>
                   <span className="text-xs text-green-400 font-bold">{percent}%</span>
+                  </div>
+                  {localCurrencyDisplay && (
+                    <div className="text-xs text-blue-300/80">
+                      {localCurrencyDisplay}
+                    </div>
+                  )}
                 </div>
                 {/* Progress Bar */}
                 <div className="w-full h-2 rounded-full bg-slate-700/60 mt-1 mb-1 overflow-hidden">
@@ -2816,31 +3291,9 @@ export function ReceiptsList({ receipts, renderReceiptCard, isFirestoreLoading, 
   );
 }
 
-function InsightsSection({ receipts = [], categoryTotals = {}, formatCurrency, settings }) {
+function InsightsSection({ receipts = [], categoryTotals = {}, calculatedTotals = {}, formatCurrency, settings }) {
   const [period, setPeriod] = useState('week');
-
-  // --- Date helpers ---
-  const today = new Date();
-  let periodStart, periodEnd, periodLabel;
-  const weekStartsOn = (settings?.weekStartsOn || 'monday').toLowerCase();
-  if (period === 'week') {
-    periodStart = new Date(today);
-    periodStart.setHours(0, 0, 0, 0);
-    // 0 = Sunday, 1 = Monday
-    let dayOfWeek = today.getDay();
-    let offset = weekStartsOn === 'monday' ? (dayOfWeek === 0 ? -6 : 1 - dayOfWeek) : -dayOfWeek;
-    periodStart.setDate(today.getDate() + offset);
-    periodEnd = new Date(periodStart);
-    periodEnd.setDate(periodStart.getDate() + 6);
-    periodEnd.setHours(23, 59, 59, 999);
-    const formatShort = d => d.toLocaleDateString(undefined, { day: '2-digit', month: 'short' });
-    periodLabel = `${formatShort(periodStart)} - ${formatShort(periodEnd)}`.replace(/\b[a-z]/g, letter => letter.toUpperCase());
-  } else {
-    periodStart = new Date(today.getFullYear(), today.getMonth(), 1, 0, 0, 0, 0);
-    periodEnd = new Date(today.getFullYear(), today.getMonth() + 1, 0, 23, 59, 59, 999);
-    const formatShort = d => d.toLocaleDateString(undefined, { day: '2-digit', month: 'short' });
-    periodLabel = `${formatShort(periodStart)} - ${formatShort(periodEnd)}`.replace(/\b[a-z]/g, letter => letter.toUpperCase());
-  }
+  const [currentOffset, setCurrentOffset] = useState(0); // 0 = current, -1 = previous, 1 = next, etc.
 
   // Helper to robustly normalize a date string/object to local midnight
   const normalizeToLocalMidnight = (d) => {
@@ -2856,23 +3309,98 @@ function InsightsSection({ receipts = [], categoryTotals = {}, formatCurrency, s
     return new Date(date.getFullYear(), date.getMonth(), date.getDate());
   };
 
-  // Filter receipts for selected period (inclusive)
-  const periodReceipts = receipts.filter(r => {
+  // Navigation functions
+  const navigatePrevious = () => {
+    setCurrentOffset(prev => prev - 1);
+  };
+
+  const navigateNext = () => {
+    setCurrentOffset(prev => prev + 1);
+  };
+
+  const navigateToCurrent = () => {
+    setCurrentOffset(0);
+  };
+
+  // --- Date helpers ---
+  const today = new Date();
+  let periodStart, periodEnd, periodLabel;
+  const weekStartsOn = (settings?.weekStartsOn || 'monday').toLowerCase();
+  
+  if (period === 'week') {
+    // For week view, calculate based on offset
+    const targetDate = new Date(today);
+    targetDate.setDate(today.getDate() + (currentOffset * 7));
+    
+    periodStart = new Date(targetDate);
+    periodStart.setHours(0, 0, 0, 0);
+    // 0 = Sunday, 1 = Monday
+    let dayOfWeek = targetDate.getDay();
+    let offset = weekStartsOn === 'monday' ? (dayOfWeek === 0 ? -6 : 1 - dayOfWeek) : -dayOfWeek;
+    periodStart.setDate(targetDate.getDate() + offset);
+    periodEnd = new Date(periodStart);
+    periodEnd.setDate(periodStart.getDate() + 6);
+    periodEnd.setHours(23, 59, 59, 999);
+    const formatShort = d => d.toLocaleDateString(undefined, { day: '2-digit', month: 'short' });
+    periodLabel = `${formatShort(periodStart)} - ${formatShort(periodEnd)}`.replace(/\b[a-z]/g, letter => letter.toUpperCase());
+  } else if (period === 'month') {
+    // For month view, calculate based on offset
+    const targetDate = new Date(today.getFullYear(), today.getMonth() + currentOffset, 1);
+    periodStart = new Date(targetDate.getFullYear(), targetDate.getMonth(), 1, 0, 0, 0, 0);
+    periodEnd = new Date(targetDate.getFullYear(), targetDate.getMonth() + 1, 0, 23, 59, 59, 999);
+    const formatShort = d => d.toLocaleDateString(undefined, { day: '2-digit', month: 'short' });
+    periodLabel = `${formatShort(periodStart)} - ${formatShort(periodEnd)}`.replace(/\b[a-z]/g, letter => letter.toUpperCase());
+  } else {
+    // For year view, calculate based on offset
+    const targetYear = today.getFullYear() + currentOffset;
+    periodStart = new Date(targetYear, 0, 1, 0, 0, 0, 0); // January 1st
+    periodEnd = new Date(targetYear, 11, 31, 23, 59, 59, 999); // December 31st
+    periodLabel = targetYear.toString();
+  }
+
+  // Calculate period receipts with historical conversion - using useMemo to prevent infinite loops
+  const periodReceipts = useMemo(() => {
+    const filteredReceipts = receipts.filter(r => {
     const d = normalizeToLocalMidnight(r.transactionDate || r.date);
     return d && d >= periodStart && d <= periodEnd;
   });
 
-  const allCategoryColors = {
-    'Groceries': '#3b82f6',
-    'Dining': '#f472b6',
-    'Transportation': '#a78bfa',
-    'Shopping': '#818cf8',
-    'Bills': '#60a5fa',
-    'Entertainment': '#fbbf24',
-    'Health': '#10b981',
-    'Other': '#f59e42',
-    'Uncategorized': '#9ca3af'
-  };
+    // Use calculated totals to get accurate base currency amounts for the period
+    return filteredReceipts.map(r => {
+      const date = normalizeToLocalMidnight(r.transactionDate || r.date);
+      let totalBaseCurrency = parseFloat(r.total) || 0;
+      
+      // If the receipt currency is different from base currency, we need to estimate the conversion
+      // For now, use a simple approach: if we have calculated totals for this month, use the average
+      if (date && r.currency !== (settings?.baseCurrency || 'EUR') && calculatedTotals.monthlyTotals) {
+        const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+        const monthlyTotal = calculatedTotals.monthlyTotals[monthKey];
+        if (monthlyTotal && monthlyTotal.total > 0) {
+          // This is an approximation - ideally we'd have individual receipt conversions
+          const originalTotal = filteredReceipts
+            .filter(r2 => {
+              const d2 = normalizeToLocalMidnight(r2.transactionDate || r2.date);
+              return d2 && d2.getMonth() === date.getMonth() && d2.getFullYear() === date.getFullYear();
+            })
+            .reduce((sum, r2) => sum + (parseFloat(r2.total) || 0), 0);
+          
+          if (originalTotal > 0) {
+            totalBaseCurrency = (parseFloat(r.total) / originalTotal) * monthlyTotal.total;
+          }
+        }
+      }
+      
+      return {
+        ...r,
+        totalBaseCurrency,
+        subtotalBaseCurrency: r.subtotal ? parseFloat(r.subtotal) : 0,
+        taxBaseCurrency: r.tax ? parseFloat(r.tax) : 0
+      };
+    });
+  }, [receipts, periodStart, periodEnd, period, currentOffset, calculatedTotals, settings?.baseCurrency]);
+
+  // Use the unified category colors from the top of the file
+  const allCategoryColors = categoryColors;
 
   // --- New Data Structuring for Rich Tooltips ---
   let dailyData, labelsWithDates;
@@ -2903,13 +3431,13 @@ function InsightsSection({ receipts = [], categoryTotals = {}, formatCurrency, s
         const dayIndex = weekDates.findIndex(d => d.getTime() === date.getTime());
         if (dayIndex !== -1) {
           const category = r.category || 'Uncategorized';
-          const amount = parseFloat(r.total) || 0;
+          const amount = r.totalBaseCurrency || parseFloat(r.total) || 0; // Use base currency amount for calculations
           dailyData[dayIndex].categories[category] = (dailyData[dayIndex].categories[category] || 0) + amount;
           dailyData[dayIndex].total += amount;
         }
       }
     });
-  } else { // month
+  } else if (period === 'month') {
     const daysInMonth = periodEnd.getDate();
     labelsWithDates = Array.from({ length: daysInMonth }, (_, i) => {
       const d = new Date(periodStart.getFullYear(), periodStart.getMonth(), i + 1);
@@ -2926,9 +3454,31 @@ function InsightsSection({ receipts = [], categoryTotals = {}, formatCurrency, s
         const dayIndex = date.getDate() - 1;
         if (dayIndex >= 0 && dayIndex < daysInMonth) {
           const category = r.category || 'Uncategorized';
-          const amount = parseFloat(r.total) || 0;
+          const amount = r.totalBaseCurrency || parseFloat(r.total) || 0; // Use base currency amount for calculations
           dailyData[dayIndex].categories[category] = (dailyData[dayIndex].categories[category] || 0) + amount;
           dailyData[dayIndex].total += amount;
+        }
+      }
+    });
+  } else { // year
+    // For year view, group by months
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const targetYear = today.getFullYear() + currentOffset;
+    labelsWithDates = months.map((month, i) => ({
+      short: month,
+      full: `${month} ${targetYear}`
+    }));
+    dailyData = Array.from({ length: 12 }, () => ({ categories: {}, total: 0 }));
+
+    periodReceipts.forEach(r => {
+      const date = normalizeToLocalMidnight(r.transactionDate || r.date);
+      if (date) {
+        const monthIndex = date.getMonth();
+        if (monthIndex >= 0 && monthIndex < 12) {
+          const category = r.category || 'Uncategorized';
+          const amount = r.totalBaseCurrency || parseFloat(r.total) || 0; // Use base currency amount for calculations
+          dailyData[monthIndex].categories[category] = (dailyData[monthIndex].categories[category] || 0) + amount;
+          dailyData[monthIndex].total += amount;
         }
       }
     });
@@ -2936,11 +3486,14 @@ function InsightsSection({ receipts = [], categoryTotals = {}, formatCurrency, s
   
   const chartTotals = dailyData.map(d => d.total);
   const expenses = chartTotals.reduce((a, b) => a + b, 0);
-  const spentPerDay = period === 'week' ? expenses / 7 : (chartTotals.length > 0 ? expenses / chartTotals.length : 0);
+  const spentPerDay = period === 'week' ? expenses / 7 : 
+                     period === 'month' ? (chartTotals.length > 0 ? expenses / chartTotals.length : 0) :
+                     period === 'year' ? expenses / 365 : 0;
   
+  // Calculate category totals using base currency amounts
   const periodCategoryTotals = periodReceipts.reduce((acc, r) => {
     const cat = r.category || 'Uncategorized';
-    const amt = parseFloat(r.total) || 0;
+    const amt = r.totalBaseCurrency || parseFloat(r.total) || 0; // Use base currency amount for calculations
     acc[cat] = (acc[cat] || 0) + amt;
     return acc;
   }, {});
@@ -3076,14 +3629,53 @@ function InsightsSection({ receipts = [], categoryTotals = {}, formatCurrency, s
         {/* Header */}
         <div className="w-full flex flex-row items-center justify-between mb-2">
           <div className="text-lg font-bold">Expense Insights</div>
+          <div className="flex items-center gap-2">
+            {/* Previous Arrow */}
+            <button
+              onClick={navigatePrevious}
+              className="w-8 h-8 flex items-center justify-center rounded-lg bg-gray-100 hover:bg-gray-200 transition-colors duration-200 border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-400"
+              title="Previous period"
+            >
+              <svg className="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+              </svg>
+            </button>
+            
+            {/* Period Dropdown */}
           <select
-            className="bg-gray-100 rounded-lg px-2 py-1 text-sm font-semibold border border-gray-200 focus:outline-none"
+              className="bg-gray-100 rounded-lg px-3 py-1 text-sm font-semibold border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-400"
             value={period}
             onChange={e => setPeriod(e.target.value)}
           >
             <option value="week">week</option>
             <option value="month">month</option>
+              <option value="year">year</option>
           </select>
+            
+            {/* Next Arrow - only show when not on current period */}
+            {currentOffset < 0 && (
+              <button
+                onClick={navigateNext}
+                className="w-8 h-8 flex items-center justify-center rounded-lg bg-gray-100 hover:bg-gray-200 transition-colors duration-200 border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                title="Next period"
+              >
+                <svg className="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                </svg>
+              </button>
+            )}
+            
+            {/* Current Period Button (only show when not on current) */}
+            {currentOffset !== 0 && (
+              <button
+                onClick={navigateToCurrent}
+                className="px-2 py-1 text-xs font-medium text-blue-600 hover:text-blue-700 hover:bg-blue-50 rounded transition-colors duration-200"
+                title="Go to current period"
+              >
+                Today
+              </button>
+            )}
+          </div>
         </div>
         {/* Date range and stats */}
         <div className="w-full flex flex-row items-center justify-between mb-2 text-xs font-semibold text-gray-500">
@@ -3105,9 +3697,35 @@ function InsightsSection({ receipts = [], categoryTotals = {}, formatCurrency, s
               <span className="inline-block w-6 h-3 rounded-full" style={{background: l.color}}></span>
               <span className="text-xs font-semibold text-gray-700">{l.name}</span>
               <span className="text-xs text-gray-400">{l.percent}%</span>
+              <div className="flex flex-col">
               <span className="text-xs text-gray-500 font-medium">
                 {formatCurrency(periodCategoryTotals[l.name], settings?.baseCurrency || 'EUR')}
               </span>
+                {/* Show original currency amounts if available */}
+                {(() => {
+                  const categoryReceipts = periodReceipts.filter(r => (r.category || 'Uncategorized') === l.name);
+                  const currencyTotals = {};
+                  categoryReceipts.forEach(r => {
+                    const currency = r.currency || settings?.baseCurrency || 'EUR';
+                    if (!currencyTotals[currency]) currencyTotals[currency] = 0;
+                    currencyTotals[currency] += parseFloat(r.total) || 0;
+                  });
+                  const currencies = Object.entries(currencyTotals);
+                  if (currencies.length > 1 || (currencies.length === 1 && currencies[0][0] !== (settings?.baseCurrency || 'EUR'))) {
+                    return (
+                      <span className="text-xs text-blue-600">
+                        {currencies.map(([currency, amount], idx) => (
+                          <span key={currency}>
+                            {formatCurrency(amount, currency)}
+                            {idx < currencies.length - 1 ? ' • ' : ''}
+                          </span>
+                        ))}
+                      </span>
+                    );
+                  }
+                  return null;
+                })()}
+              </div>
             </div>
           ))}
         </div>

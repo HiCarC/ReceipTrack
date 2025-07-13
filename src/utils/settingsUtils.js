@@ -88,10 +88,19 @@ export function formatDate(date, settings) {
   if (!date) return '';
   
   const { dateFormat } = settings;
-  const d = new Date(date);
+  
+  // Handle Firestore Timestamps
+  let d;
+  if (date && typeof date === 'object' && date.toDate) {
+    // This is a Firestore Timestamp
+    d = date.toDate();
+  } else {
+    // This is a regular date string or Date object
+    d = new Date(date);
+  }
   
   if (isNaN(d.getTime())) {
-    return date; // Return original if invalid date
+    return ''; // Return empty string if invalid date
   }
 
   let formattedDate;
@@ -129,20 +138,26 @@ export function calculateTax(amount, taxRate) {
   return amount * taxRate;
 }
 
-// Get category color
+// Get category color - using unified color scheme
 export function getCategoryColor(category) {
   const colors = {
-    'Food & Dining': '#FF6B6B',
-    'Transportation': '#4ECDC4',
-    'Shopping': '#FFD93D',
-    'Entertainment': '#95E1D3',
-    'Bills & Utilities': '#6C5CE7',
-    'Health & Medical': '#FF8B94',
-    'Travel': '#A8E6CF',
-    'Education': '#FFB6B9',
-    'Personal Care': '#FFD3B6',
-    'Other': '#B8B8B8'
+    'Groceries': '#3b82f6',
+    'Dining': '#f472b6',
+    'Transportation': '#a78bfa',
+    'Shopping': '#818cf8',
+    'Bills': '#60a5fa',
+    'Entertainment': '#fbbf24',
+    'Health': '#10b981',
+    'Other': '#f59e42',
+    'Uncategorized': '#9ca3af',
+    // Legacy category names for backward compatibility
+    'Food & Dining': '#f472b6',
+    'Bills & Utilities': '#60a5fa',
+    'Health & Medical': '#10b981',
+    'Travel': '#a78bfa',
+    'Education': '#f59e42',
+    'Personal Care': '#f472b6'
   };
   
-  return colors[category] || '#B8B8B8';
+  return colors[category] || '#9ca3af';
 } 
