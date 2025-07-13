@@ -647,10 +647,10 @@ export default function ReceiptUploader({ className, showOnly, onTabChange }) {
       } else {
         // Create new receipt in the user's subcollection
         await addDoc(collection(db, "users", user.uid, "receipts"), receiptData);
-        toast({
-          title: "Receipt Saved! 🎉",
-          description: "Your expense has been successfully recorded.",
-        });
+      toast({
+        title: "Receipt Saved! 🎉",
+        description: "Your expense has been successfully recorded.",
+      });
       }
       // Reset form and close modal
       setFormData({ // Ensure formData is reset for next new entry

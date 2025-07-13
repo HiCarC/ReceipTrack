@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -16,8 +16,12 @@ import { db } from '@/firebase'; // Import your Firebase db instance
 import { collection, addDoc, getDocs, deleteDoc, doc, serverTimestamp, updateDoc, Timestamp } from "firebase/firestore"; // Import Firestore functions
 import {
   fetchExchangeRates,
-  convertToBaseCurrency,
-  initializeExchangeRates
+  convertToBaseCurrency as convertToBaseCurrencyUtil,
+  initializeExchangeRates,
+  getCurrentExchangeRates,
+  convertToEUR as convertToEURHistorical,
+  preloadExchangeRates,
+  testExchangeRate
 } from '@/utils/currencyUtils';
 import { loadSettings, formatDate } from '@/utils/settingsUtils'; // Corrected import for formatDate
 import { useAuth } from '@/contexts/AuthContext';
@@ -104,7 +108,7 @@ const missingMessages = {
   ],
   date: [
     "When did this happen? Time travel is hard without a date! ⏳",
-    "Date missing! Was it yesterday, today, or in a galaxy far, far away? 🌌",
+    "Date missing! Was it yesterday, today, or in a galaxy far, far away? ��",
     "No date, no story! Please pick a day. 📅"
   ],
   items: [
@@ -131,19 +135,37 @@ const getFunnyMissingMessage = (missing) => {
   return "Something's missing, but we're not sure what!";
 };
 
-// Add at the top of the component:
+// Unified category colors - use hex colors for consistency across all components
 const categoryColors = {
-  Groceries: 'border-green-400',
-  Dining: 'border-pink-400',
-  Transportation: 'border-yellow-400',
-  Shopping: 'border-purple-400',
-  Bills: 'border-blue-400',
-  Entertainment: 'border-indigo-400',
-  Health: 'border-emerald-400',
-  Other: 'border-gray-400',
-  Uncategorized: 'border-blue-500',
+  'Groceries': '#3b82f6',
+  'Dining': '#f472b6',
+  'Transportation': '#a78bfa',
+  'Shopping': '#818cf8',
+  'Bills': '#60a5fa',
+  'Entertainment': '#fbbf24',
+  'Health': '#10b981',
+  'Other': '#f59e42',
+  'Uncategorized': '#9ca3af'
 };
+
+// Helper function to get category color
 const getCategoryColor = (cat) => categoryColors[cat] || categoryColors['Uncategorized'];
+
+// Helper function to get Tailwind border class for receipt cards
+const getCategoryBorderClass = (cat) => {
+  const colorMap = {
+    'Groceries': 'border-blue-400',
+    'Dining': 'border-pink-400',
+    'Transportation': 'border-purple-400',
+    'Shopping': 'border-indigo-400',
+    'Bills': 'border-blue-400',
+    'Entertainment': 'border-yellow-400',
+    'Health': 'border-emerald-400',
+    'Other': 'border-orange-400',
+    'Uncategorized': 'border-gray-400'
+  };
+  return colorMap[cat] || colorMap['Uncategorized'];
+};
 
 export default function ReceiptUploader({ className, showOnly, onTabChange }) {
   const { toast } = useToast();
@@ -166,6 +188,7 @@ export default function ReceiptUploader({ className, showOnly, onTabChange }) {
   const [isFirestoreLoading, setIsFirestoreLoading] = useState(true);
   const [firestoreError, setFirestoreError] = useState(null);
   const [formErrors, setFormErrors] = useState({});
+  const updateRatesTimeout = useRef(null);
   const [editingReceipt, setEditingReceipt] = useState(null);
   const [editForm, setEditForm] = useState({
     merchant: '',
@@ -187,12 +210,10 @@ export default function ReceiptUploader({ className, showOnly, onTabChange }) {
       _videoElement = node;
       // Only start camera if modal is open and camera isn't already running
       if (isCameraOpen && !isCameraReady) {
-        console.log('Video element assigned to ref, and camera modal is open. Calling startCamera.');
         startCamera();
       }
     } else {
       _videoElement = null;
-      console.log('Video element detached from ref.');
     }
   };
   const canvasRef = useRef(null);
@@ -274,17 +295,16 @@ export default function ReceiptUploader({ className, showOnly, onTabChange }) {
 
   const fetchReceipts = async () => {
     if (!user) {
-      console.log("fetchReceipts: User not authenticated, skipping fetch.");
       return;
     }
-    console.log("fetchReceipts: Current user:", user);
+    // User authenticated, fetching receipts
     setIsFirestoreLoading(true);
     setFirestoreError(null);
     try {
       // Use the per-user receipts subcollection
       const data = await getDocs(collection(db, "users", user.uid, "receipts"));
       const receiptsList = data.docs.map((doc) => ({ ...doc.data(), id: doc.id }));
-      console.log("fetchReceipts: All fetched receipts (before filter):", receiptsList);
+      // All receipts fetched from Firestore
       // No need to filter by userId anymore, all are for this user
       const sortedReceipts = receiptsList.sort((a, b) => {
         const dateA = (a.updated_at?.toDate?.() || a.createdAt?.toDate?.() || new Date(0));
@@ -341,15 +361,7 @@ export default function ReceiptUploader({ className, showOnly, onTabChange }) {
     }, {});
     setCategoryTotals(categorySums);
 
-    // Debug logging to verify current month filtering
-    console.log('Current Month Filtering:', {
-      totalReceipts: receipts.length,
-      currentMonthReceipts: currentMonthReceipts.length,
-      currentMonthStart: currentMonthStart.toISOString().split('T')[0],
-      currentMonthEnd: currentMonthEnd.toISOString().split('T')[0],
-      totalExpenses: total,
-      categoryTotals: categorySums
-    });
+    // Current month filtering applied
   }, [receipts]);
 
   useEffect(() => {
@@ -367,22 +379,75 @@ export default function ReceiptUploader({ className, showOnly, onTabChange }) {
   const [convertedSubtotal, setConvertedSubtotal] = useState(null);
   const [convertedItems, setConvertedItems] = useState([]);
   const [exchangeRates, setExchangeRates] = useState(null);
+  const [isInitializingRates, setIsInitializingRates] = useState(false);
 
-  // Initialize exchange rates on component mount
+  // Initialize exchange rates and preload historical rates on component mount
   useEffect(() => {
-    initializeExchangeRates().then(rates => {
-      setExchangeRates(rates);
-    });
-  }, []);
+    let isMounted = true;
+    
+    const initRates = async () => {
+      // Prevent multiple simultaneous initialization attempts
+      if (isInitializingRates) {
+        return;
+      }
+      
+      setIsInitializingRates(true);
+      
+      try {
+        const rates = await initializeExchangeRates();
+        if (isMounted && rates) {
+          setExchangeRates(rates);
+        }
+        
+        // Test exchange rate calculation
+        if (isMounted) {
+          await testExchangeRate();
+        }
+        
+        // Preload exchange rates for the last 3 months if we have receipts
+        if (isMounted && receipts.length > 0) {
+          const today = new Date();
+          const threeMonthsAgo = new Date(today.getFullYear(), today.getMonth() - 3, 1);
+          
+          // Get unique currencies from receipts
+          const currencies = [...new Set(receipts.map(r => r.currency).filter(c => c && c !== 'EUR'))];
+          
+          if (currencies.length > 0) {
+            await preloadExchangeRates(threeMonthsAgo, today, currencies);
+          }
+        }
+      } catch (error) {
+        // Try to get cached rates as fallback
+        if (isMounted) {
+          const cachedRates = getCurrentExchangeRates();
+          if (cachedRates) {
+            setExchangeRates(cachedRates);
+          }
+        }
+      } finally {
+        if (isMounted) {
+          setIsInitializingRates(false);
+        }
+      }
+    };
+    
+    initRates();
+    
+    return () => {
+      isMounted = false;
+    };
+  }, []); // Only run once on mount, not when receipts change
 
   // Update exchange rates periodically
   useEffect(() => {
     const interval = setInterval(async () => {
       try {
         const rates = await fetchExchangeRates();
-        setExchangeRates(rates);
+        if (rates) {
+          setExchangeRates(rates);
+        }
       } catch (error) {
-        console.error('Failed to update exchange rates:', error);
+        // Silently handle periodic update errors
       }
     }, 3600000); // Update every hour
 
@@ -439,7 +504,39 @@ export default function ReceiptUploader({ className, showOnly, onTabChange }) {
     };
   }, []);
 
-  console.log('ReceiptUploader component - Current settings state:', settings);
+  // Force recalculation when base currency changes with debouncing
+  useEffect(() => {
+    if (receipts.length > 0 && settings?.baseCurrency) {
+      // Clear exchange rates to force recalculation
+      setExchangeRates(null);
+      
+      // Clear any existing timeout
+      if (updateRatesTimeout.current) {
+        clearTimeout(updateRatesTimeout.current);
+      }
+      
+      // Debounce the rate update to prevent excessive API calls
+      updateRatesTimeout.current = setTimeout(async () => {
+        try {
+          const rates = await initializeExchangeRates();
+          if (rates) {
+            setExchangeRates(rates);
+          }
+        } catch (error) {
+          // Silently handle currency change errors
+        }
+      }, 1000); // 1 second debounce
+    }
+    
+    // Cleanup function
+    return () => {
+      if (updateRatesTimeout.current) {
+        clearTimeout(updateRatesTimeout.current);
+      }
+    };
+  }, [settings?.baseCurrency]); // Only depend on base currency, not receipts.length
+
+  // Settings loaded successfully
 
   // Helper function to format date safely
   const formatDateSafely = (dateString, formatOverride = null) => {
@@ -458,10 +555,64 @@ export default function ReceiptUploader({ className, showOnly, onTabChange }) {
     }
   };
 
-  const convertToEUR = (amount, fromCurrency) => {
-    if (fromCurrency === 'EUR') return parseFloat(amount);
-    if (!exchangeRates || !exchangeRates[fromCurrency] || !amount) return parseFloat(amount); // Return original if no rate
-    return (parseFloat(amount) / exchangeRates[fromCurrency]).toFixed(2);
+  // Enhanced currency conversion function with historical rates
+  const convertToBaseCurrency = async (amount, fromCurrency, date) => {
+    if (!amount || isNaN(parseFloat(amount))) return 0;
+    
+    const baseCurrency = settings?.baseCurrency || 'EUR';
+    if (fromCurrency === baseCurrency) return parseFloat(amount);
+    
+    try {
+      // Use the utility function for base currency conversion
+      return await convertToBaseCurrencyUtil(amount, fromCurrency, date);
+          } catch (error) {
+        // Fallback to current rates if historical conversion fails
+        if (exchangeRates && exchangeRates[fromCurrency]) {
+          return parseFloat((parseFloat(amount) / exchangeRates[fromCurrency]).toFixed(2));
+        }
+        
+        const cachedRates = getCurrentExchangeRates();
+        if (cachedRates && cachedRates[fromCurrency]) {
+          return parseFloat((parseFloat(amount) / cachedRates[fromCurrency]).toFixed(2));
+        }
+        
+        return parseFloat(amount);
+      }
+  };
+
+  // New function to get base currency equivalent for display
+  const getBaseCurrencyEquivalent = async (amount, fromCurrency, date) => {
+    if (!amount || isNaN(parseFloat(amount))) return null;
+    
+    const baseCurrency = settings?.baseCurrency || 'EUR';
+    if (fromCurrency === baseCurrency) return null; // No need to show equivalent for same currency
+    return await convertToBaseCurrency(amount, fromCurrency, date);
+  };
+
+  // Enhanced format currency function that handles conversion display
+  const formatCurrencyWithConversion = async (amount, currency, date, showConversion = true) => {
+    if (!amount || isNaN(parseFloat(amount))) return '';
+    
+    const baseCurrency = settings?.baseCurrency || 'EUR';
+    const formattedAmount = formatCurrency(parseFloat(amount), currency);
+    
+    if (showConversion && currency !== baseCurrency) {
+      try {
+        const baseEquivalent = await getBaseCurrencyEquivalent(amount, currency, date);
+        if (baseEquivalent !== null) {
+          return (
+            <span className="flex flex-col">
+              <span className="text-sm text-gray-400">{formattedAmount}</span>
+              <span className="text-xs text-blue-300">≈ {formatCurrency(baseEquivalent, baseCurrency)}</span>
+            </span>
+          );
+        }
+      } catch (error) {
+        // Silently handle base currency equivalent errors
+      }
+    }
+    
+    return formattedAmount;
   };
 
   const handleDeleteReceipt = async (id) => {
@@ -659,7 +810,7 @@ export default function ReceiptUploader({ className, showOnly, onTabChange }) {
       createdAt: serverTimestamp()
     };
 
-    console.log("Receipt data being sent to Firestore:", JSON.stringify(receiptData, null, 2));
+    // Receipt data prepared for Firestore
 
     try {
       if (editingReceipt) {
@@ -979,14 +1130,42 @@ export default function ReceiptUploader({ className, showOnly, onTabChange }) {
   // Determine which form state to use based on editingReceipt
   const activeFormData = editingReceipt ? editForm : formData;
 
-  // Update the receipt card rendering
-  const renderReceiptCard = (receipt) => {
+  // Async receipt card component with historical currency conversion
+  const ReceiptCard = ({ receipt }) => {
+    const [baseCurrencyEquivalent, setBaseCurrencyEquivalent] = useState(null);
+    const [isLoadingConversion, setIsLoadingConversion] = useState(false);
     const isExpanded = expandedReceiptId === receipt.id;
     const amount = parseFloat(receipt.total);
     const isNegative = isNaN(amount) || amount < 0;
-    const catColor = getCategoryColor(receipt.category);
+    const catColor = getCategoryBorderClass(receipt.category);
     const isSwiped = swipedId === receipt.id;
     const { progress, dir } = getSwipeProgress(receipt.id);
+    
+    // Load base currency equivalent on mount
+    useEffect(() => {
+      const loadBaseCurrencyEquivalent = async () => {
+        const baseCurrency = settings?.baseCurrency || 'EUR';
+        if (receipt.currency === baseCurrency) {
+          setBaseCurrencyEquivalent(null);
+          return;
+        }
+        
+        setIsLoadingConversion(true);
+        try {
+          const date = normalizeToLocalMidnight(receipt.transactionDate || receipt.date);
+          const equivalent = await getBaseCurrencyEquivalent(amount, receipt.currency, date);
+          setBaseCurrencyEquivalent(equivalent);
+        } catch (error) {
+          console.error('Error loading base currency equivalent:', error);
+          setBaseCurrencyEquivalent(null);
+        } finally {
+          setIsLoadingConversion(false);
+        }
+      };
+      
+      loadBaseCurrencyEquivalent();
+    }, [receipt, amount, settings?.baseCurrency]);
+    
     return (
       <div
         key={receipt.id}
@@ -1048,8 +1227,20 @@ export default function ReceiptUploader({ className, showOnly, onTabChange }) {
             </span>
           </div>
           <div className="flex items-baseline gap-1 mt-1">
-            <span className={`text-2xl font-extrabold ${isNegative ? 'text-red-400' : 'text-blue-100'}`}>{isNegative ? '0.00' : amount.toFixed(2)}</span>
+            <span className={`text-2xl font-extrabold ${isNegative ? 'text-red-400' : 'text-blue-100'}`}>
+              {isNegative ? '0.00' : amount.toFixed(2)}
+            </span>
             <span className="text-sm text-blue-200/80 ml-1">{receipt.currency}</span>
+            {isLoadingConversion && (
+              <span className="text-xs text-blue-300/80 ml-2">
+                Converting...
+              </span>
+            )}
+            {!isLoadingConversion && baseCurrencyEquivalent && (
+              <span className="text-xs text-blue-300/80 ml-2">
+                ≈ {formatCurrency(baseCurrencyEquivalent, settings?.baseCurrency || 'EUR')}
+              </span>
+            )}
           </div>
           <div className="flex flex-col gap-2 items-end ml-2">
             <Button
@@ -1076,11 +1267,29 @@ export default function ReceiptUploader({ className, showOnly, onTabChange }) {
               <div className="grid grid-cols-2 gap-4 mb-4">
                 <div>
                   <p className="text-xs text-blue-200/70">Subtotal</p>
-                  <p className="text-base">{receipt.subtotal ? parseFloat(receipt.subtotal).toFixed(2) : '-'}</p>
+                  <p className="text-base">
+                    {receipt.subtotal && !isNaN(parseFloat(receipt.subtotal)) ? parseFloat(receipt.subtotal).toFixed(2) : '-'}
+                    {receipt.subtotal && !isNaN(parseFloat(receipt.subtotal)) && receipt.currency !== (settings?.baseCurrency || 'EUR') && (
+                      <AsyncCurrencyConversion 
+                        amount={receipt.subtotal} 
+                        currency={receipt.currency} 
+                        date={receipt.transactionDate || receipt.date}
+                      />
+                    )}
+                  </p>
                 </div>
                 <div>
                   <p className="text-xs text-blue-200/70">Tax</p>
-                  <p className="text-base">{receipt.tax ? parseFloat(receipt.tax).toFixed(2) : '-'}</p>
+                  <p className="text-base">
+                    {receipt.tax && !isNaN(parseFloat(receipt.tax)) ? parseFloat(receipt.tax).toFixed(2) : '-'}
+                    {receipt.tax && !isNaN(parseFloat(receipt.tax)) && receipt.currency !== (settings?.baseCurrency || 'EUR') && (
+                      <AsyncCurrencyConversion 
+                        amount={receipt.tax} 
+                        currency={receipt.currency} 
+                        date={receipt.transactionDate || receipt.date}
+                      />
+                    )}
+                  </p>
                 </div>
                 <div>
                   <p className="text-xs text-blue-200/70">Payment</p>
@@ -1096,6 +1305,17 @@ export default function ReceiptUploader({ className, showOnly, onTabChange }) {
                   <p className="text-xs text-blue-200/70">Date</p>
                   <p className="text-base">{receipt.transactionDate && receipt.transactionDate.toDate ? receipt.transactionDate.toDate().toLocaleDateString() : ''}</p>
                 </div>
+                <div>
+                  <p className="text-xs text-blue-200/70">Currency</p>
+                  <p className="text-base">
+                    {receipt.currency}
+                    {receipt.currency !== (settings?.baseCurrency || 'EUR') && (
+                      <span className="text-xs text-blue-300/80 ml-1">
+                        (converted to {settings?.baseCurrency || 'EUR'})
+                      </span>
+                    )}
+                  </p>
+                </div>
               </div>
               {receipt.items && receipt.items.length > 0 && (
                 <div className="mt-2">
@@ -1104,7 +1324,16 @@ export default function ReceiptUploader({ className, showOnly, onTabChange }) {
                     {receipt.items.map((item, index) => (
                       <li key={index} className="flex justify-between text-sm">
                         <span className="truncate max-w-[100px]">{item.name}</span>
-                        <span>{parseFloat(item.price).toFixed(2)} {receipt.currency}</span>
+                        <span>
+                          {!isNaN(parseFloat(item.price)) ? parseFloat(item.price).toFixed(2) : '0.00'} {receipt.currency}
+                          {!isNaN(parseFloat(item.price)) && receipt.currency !== (settings?.baseCurrency || 'EUR') && (
+                            <AsyncCurrencyConversion 
+                              amount={item.price} 
+                              currency={receipt.currency} 
+                              date={receipt.transactionDate || receipt.date}
+                            />
+                          )}
+                        </span>
                       </li>
                     ))}
                   </ul>
@@ -1117,9 +1346,52 @@ export default function ReceiptUploader({ className, showOnly, onTabChange }) {
     );
   };
 
+  // Async currency conversion component
+  const AsyncCurrencyConversion = ({ amount, currency, date }) => {
+    const [baseCurrencyEquivalent, setBaseCurrencyEquivalent] = useState(null);
+    const [isLoading, setIsLoading] = useState(false);
+
+    useEffect(() => {
+      const loadConversion = async () => {
+        const baseCurrency = settings?.baseCurrency || 'EUR';
+        if (currency === baseCurrency) return;
+        
+        setIsLoading(true);
+        try {
+          const dateObj = normalizeToLocalMidnight(date);
+          const equivalent = await convertToBaseCurrency(amount, currency, dateObj);
+          setBaseCurrencyEquivalent(equivalent);
+        } catch (error) {
+          // Silently handle currency conversion errors
+        } finally {
+          setIsLoading(false);
+        }
+      };
+      
+      loadConversion();
+    }, [amount, currency, date]); // Removed settings?.baseCurrency dependency to prevent infinite loops
+
+    if (isLoading) {
+      return <span className="text-xs text-blue-300/80 ml-1">Converting...</span>;
+    }
+
+    if (baseCurrencyEquivalent) {
+      return (
+        <span className="text-xs text-blue-300/80 ml-1">
+          ≈ {formatCurrency(baseCurrencyEquivalent, settings?.baseCurrency || 'EUR')}
+        </span>
+      );
+    }
+
+    return null;
+  };
+
+  // Wrapper function for backward compatibility
+  const renderReceiptCard = (receipt) => {
+    return <ReceiptCard receipt={receipt} />;
+  };
+
   const startCamera = async () => {
-    console.log('startCamera called');
-    console.log('video element in startCamera: ', _videoElement);
     if (!_videoElement) {
       console.error('Attempted to start camera but _videoElement is null.');
       toast({
@@ -1139,13 +1411,10 @@ export default function ReceiptUploader({ className, showOnly, onTabChange }) {
           height: { ideal: 1080 }
         } 
       });
-      console.log('Camera stream obtained:', stream);
       _videoElement.srcObject = stream;
       _videoElement.onloadedmetadata = () => {
-        console.log('Video metadata loaded, playing video...');
         _videoElement.play()
           .then(() => {
-            console.log('Video playback started successfully');
             setIsCameraReady(true);
           })
           .catch(error => {
@@ -1153,11 +1422,8 @@ export default function ReceiptUploader({ className, showOnly, onTabChange }) {
             setIsCameraReady(false);
           });
       };
-      console.log('Camera stream assigned. Camera is ready.');
     } catch (error) {
       console.error("Error accessing camera:", error);
-      console.error("Error name:", error.name);
-      console.error("Error message:", error.message);
       toast({
         title: "Camera Access Denied",
         description: "Please grant camera access to use this feature.",
@@ -1176,7 +1442,7 @@ export default function ReceiptUploader({ className, showOnly, onTabChange }) {
       });
       _videoElement.srcObject = null;
       _videoElement = null;
-      console.log('Camera stream stopped and tracks released.');
+      // Camera stream stopped
     }
     setIsCameraOpen(false);
     setIsCameraReady(false);
@@ -1473,7 +1739,7 @@ Reply with a JSON object enclosed in triple backticks:
 
       const data = await response.json();
       const replyText = data?.choices?.[0]?.message?.content || '';
-      console.log("OCR Raw Response:\n", replyText);
+      // OCR response received
 
       const jsonMatch = replyText.match(/```json\s*({[\s\S]*?})\s*```/i);
       if (!jsonMatch || !jsonMatch[1]) {
@@ -1483,16 +1749,7 @@ Reply with a JSON object enclosed in triple backticks:
 
       const parsedJSON = JSON.parse(jsonMatch[1]);
 
-      // Log date detection details for debugging
-      if (parsedJSON.date_confidence !== undefined) {
-        console.log("Date Detection Details:", {
-          date: parsedJSON.date,
-          confidence: parsedJSON.date_confidence,
-          source: parsedJSON.date_source,
-          format: parsedJSON.date_format_detected,
-          notes: parsedJSON.date_notes
-        });
-      }
+      // Date detection details available
 
       // Enhanced date validation and normalization
       let normalizedDate = parsedJSON.date;
@@ -1640,8 +1897,14 @@ Reply with a JSON object enclosed in triple backticks:
 
   // Add a helper to format currency with locale-aware symbol placement and postfix exceptions
   const postfixCurrencies = ['SEK', 'NOK', 'DKK', 'PLN', 'CZK', 'HUF'];
-  const formatCurrency = (amount, currencyCode = 'EUR') => {
+  const formatCurrency = (amount, currencyCode = null) => {
     if (amount === null || amount === undefined) return '';
+    
+    // Use base currency if no currency specified
+    if (!currencyCode) {
+      currencyCode = settings?.baseCurrency || 'EUR';
+    }
+    
     if (postfixCurrencies.includes(currencyCode)) {
       return amount.toFixed(2) + ' ' + currencyCode;
     }
@@ -1779,6 +2042,133 @@ Reply with a JSON object enclosed in triple backticks:
     setPendingDeleteId(receiptId);
     setShowDeleteModal(true);
   };
+
+  // Make exchange rates available globally for insights
+  useEffect(() => {
+    if (exchangeRates) {
+      window.exchangeRates = exchangeRates;
+    }
+  }, [exchangeRates]);
+
+  // Update monthly totals calculation to use converted base currency amounts
+  const calculateMonthlyTotals = async (receipts) => {
+    const monthlyTotals = {};
+    
+    for (const receipt of receipts) {
+      const date = normalizeToLocalMidnight(receipt.transactionDate || receipt.date);
+      if (!date) continue;
+      
+      const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+      const amountBaseCurrency = await convertToBaseCurrency(receipt.total, receipt.currency, date);
+      
+      if (!monthlyTotals[monthKey]) {
+        monthlyTotals[monthKey] = {
+          total: 0,
+          count: 0,
+          month: date.getMonth(),
+          year: date.getFullYear()
+        };
+      }
+      
+      monthlyTotals[monthKey].total += amountBaseCurrency;
+      monthlyTotals[monthKey].count += 1;
+    }
+    
+    return monthlyTotals;
+  };
+
+  // State for calculated totals
+  const [calculatedTotals, setCalculatedTotals] = useState({
+    totalExpenses: 0,
+    categoryTotals: {},
+    monthlyTotals: {}
+  });
+
+  // Calculate current month totals using converted amounts
+  const [currentMonthData, setCurrentMonthData] = useState({ total: 0, count: 0 });
+
+  // Update the existing totalExpenses calculation to use converted base currency amounts
+  useEffect(() => {
+    const calculateTotals = async () => {
+      try {
+        let totalExpenses = 0;
+        const categoryTotals = {};
+        
+        for (const receipt of receipts) {
+          const date = normalizeToLocalMidnight(receipt.transactionDate || receipt.date);
+          if (!date) continue;
+          
+          const amountBaseCurrency = await convertToBaseCurrency(receipt.total, receipt.currency, date);
+          const amountLocalCurrency = parseFloat(receipt.total) || 0;
+          const receiptCurrency = receipt.currency || settings?.baseCurrency || 'EUR';
+          
+          totalExpenses += amountBaseCurrency;
+          
+          const category = receipt.category || 'Uncategorized';
+          if (!categoryTotals[category]) {
+            categoryTotals[category] = {
+              baseCurrency: 0,
+              localCurrency: 0,
+              currencies: {} // Track amounts by original currency
+            };
+          }
+          
+          categoryTotals[category].baseCurrency += amountBaseCurrency;
+          categoryTotals[category].localCurrency += amountLocalCurrency;
+          
+          // Track amounts by original currency
+          if (!categoryTotals[category].currencies[receiptCurrency]) {
+            categoryTotals[category].currencies[receiptCurrency] = 0;
+          }
+          categoryTotals[category].currencies[receiptCurrency] += amountLocalCurrency;
+        }
+        
+        const monthlyTotals = await calculateMonthlyTotals(receipts);
+        
+        setCalculatedTotals({
+          totalExpenses,
+          categoryTotals,
+          monthlyTotals
+        });
+        
+        setTotalExpenses(totalExpenses);
+        setCategoryTotals(categoryTotals);
+        
+        // Calculate current month data
+        const today = new Date();
+        const currentMonthKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
+        const currentMonthData = monthlyTotals[currentMonthKey] || { total: 0, count: 0 };
+        setCurrentMonthData(currentMonthData);
+        
+      } catch (error) {
+        console.error('Error calculating totals:', error);
+      }
+    };
+    
+    if (receipts.length > 0) {
+      calculateTotals();
+    } else {
+      setCalculatedTotals({ totalExpenses: 0, categoryTotals: {}, monthlyTotals: {} });
+      setTotalExpenses(0);
+      setCategoryTotals({});
+      setCurrentMonthData({ total: 0, count: 0 });
+    }
+  }, [receipts, exchangeRates, settings?.baseCurrency]);
+
+  // Convert receipts to EUR for period calculations
+  const [periodReceipts, setPeriodReceipts] = useState([]);
+  const [periodStart, setPeriodStart] = useState(() => {
+    const now = new Date();
+    const start = new Date(now.getFullYear(), now.getMonth(), 1);
+    return start;
+  });
+  const [periodEnd, setPeriodEnd] = useState(() => {
+    const now = new Date();
+    const end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    return end;
+  });
+
+
 
   return (
     <div className={`relative flex flex-col items-center w-full ${className}`} style={{ touchAction: 'manipulation', overflowX: 'hidden' }}>
@@ -1925,6 +2315,7 @@ Reply with a JSON object enclosed in triple backticks:
               totalExpenses={totalExpenses}
               categoryTotals={categoryTotals}
               formatCurrency={formatCurrency}
+              formatDateSafely={formatDateSafely}
               settings={settings}
               receipts={receipts}
               selectedCategory={selectedCategory}
@@ -1936,6 +2327,7 @@ Reply with a JSON object enclosed in triple backticks:
             <InsightsSection
               receipts={receipts}
               categoryTotals={categoryTotals}
+              calculatedTotals={calculatedTotals}
               formatCurrency={formatCurrency}
               settings={settings}
             />
@@ -2021,13 +2413,23 @@ Reply with a JSON object enclosed in triple backticks:
                                 <div className="flex items-center space-x-2">
                                   {/* Total Spending */}
                                   <span className="text-sm text-blue-200/90 font-medium bg-blue-800/40 rounded px-2 py-1">
-                                    {formatCurrency(
-                                      group.receipts.reduce((total, receipt) => {
-                                        const amount = parseFloat(receipt.total) || 0;
-                                        return total + amount;
-                                      }, 0),
-                                      'EUR'
-                                    )}
+                                    {(() => {
+                                      // Use the calculated monthly totals for accurate base currency amounts
+                                      const monthKey = `${group.year}-${String(group.month + 1).padStart(2, '0')}`;
+                                      const monthlyTotal = calculatedTotals.monthlyTotals[monthKey];
+                                      if (monthlyTotal && monthlyTotal.total > 0) {
+                                        return formatCurrency(monthlyTotal.total, settings?.baseCurrency || 'EUR');
+                                      }
+                                      // Fallback: calculate on-the-fly if monthly totals not available
+                                      return formatCurrency(
+                                        group.receipts.reduce((total, receipt) => {
+                                          // For fallback, use original amount (this will be less accurate)
+                                          const amount = parseFloat(receipt.total) || 0;
+                                          return total + amount;
+                                        }, 0),
+                                        settings?.baseCurrency || 'EUR'
+                                      );
+                                    })()}
                                   </span>
                                   {/* Receipt Count */}
                                   <div className="flex items-center space-x-1">
@@ -2450,6 +2852,16 @@ Reply with a JSON object enclosed in triple backticks:
                     <div>
                       <div className="text-2xl font-extrabold text-indigo-300">{formatCurrency(selectedCategory.amount, settings?.baseCurrency || 'EUR')}</div>
                       <div className="text-xs text-gray-400">{selectedCategory.percent}% of total</div>
+                      {selectedCategory.categoryData && selectedCategory.categoryData.currencies && Object.keys(selectedCategory.categoryData.currencies).length > 0 && (
+                        <div className="text-xs text-blue-300/80 mt-1">
+                          {Object.entries(selectedCategory.categoryData.currencies).map(([currency, amount], idx) => (
+                            <span key={currency}>
+                              {formatCurrency(amount, currency)}
+                              {idx < Object.keys(selectedCategory.categoryData.currencies).length - 1 ? ' • ' : ''}
+                            </span>
+                          ))}
+                        </div>
+                      )}
                     </div>
                     {/* Mini bar chart for this category by day (last 7 days) */}
                     <div className="w-28 h-16 flex items-end">
@@ -2501,15 +2913,19 @@ Reply with a JSON object enclosed in triple backticks:
                     <div className="text-sm font-semibold text-blue-200 mb-1">Recent Receipts</div>
                     <div className="flex flex-col gap-2">
                       {(() => {
-                        // Get all receipts for this category, sorted by date (newest first)
+                                                // Get all receipts for this category, sorted by date (newest first)
                         const categoryReceipts = receipts
                           .filter(r => (r.category || 'Uncategorized') === selectedCategory.name)
-                        .sort((a, b) => {
-                          const da = new Date(a.transactionDate || a.date);
-                          const db = new Date(b.transactionDate || b.date);
-                          return db - da;
-                        })
-                          .slice(0, 10); // Show more receipts since we're grouping
+                          .sort((a, b) => {
+                            // Use the same date parsing approach as the main receipts list
+                            const dateA = normalizeToLocalMidnight(a.transactionDate || a.date);
+                            const dateB = normalizeToLocalMidnight(b.transactionDate || b.date);
+                            
+                            if (!dateA && !dateB) return 0;
+                            if (!dateA) return 1; // Put receipts without dates at the end
+                            if (!dateB) return -1;
+                            return dateB - dateA; // Newest first
+                          }); // Show ALL receipts, no limit
 
                         // Group receipts by month
                         const groupedReceipts = [];
@@ -2518,12 +2934,35 @@ Reply with a JSON object enclosed in triple backticks:
                         let currentMonthReceipts = [];
 
                         categoryReceipts.forEach((receipt, index) => {
-                          const receiptDate = new Date(receipt.transactionDate || receipt.date);
-                          const monthKey = `${receiptDate.getFullYear()}-${receiptDate.getMonth()}`;
+                          // Use the same date parsing approach as the main receipts list
+                          const receiptDate = normalizeToLocalMidnight(receipt.transactionDate || receipt.date);
+                          
+                          // Check if date is valid
+                          if (!receiptDate) {
+                            console.warn('Invalid date for receipt:', receipt.id, receipt.transactionDate || receipt.date);
+                            return; // Skip this receipt
+                          }
+                          
+
+                          
+
+                          
+                          // Create month key and label using local time (consistent with main receipts list)
+                          const year = receiptDate.getFullYear();
+                          const month = receiptDate.getMonth(); // 0-based
+                          const monthKey = `${year}-${month}`;
+                          
+                          // Create month label with proper localization
                           const monthLabel = receiptDate.toLocaleDateString(undefined, { 
                             month: 'long', 
                             year: 'numeric' 
                           }).replace(/^[a-z]/, letter => letter.toUpperCase());
+                          
+
+                          
+
+                          
+
 
                           if (monthKey !== currentMonth) {
                             // Save previous month's receipts if any
@@ -2576,12 +3015,18 @@ Reply with a JSON object enclosed in triple backticks:
                                 {/* Left side: Merchant and Amount */}
                                 <div className="flex flex-col overflow-hidden">
                                   <span className="font-medium text-white text-sm truncate">{r.merchant || 'Unknown'}</span>
-                                  <span className="text-xs text-gray-400">{formatCurrency(r.total, r.currency || settings?.baseCurrency || 'EUR')}</span>
+                                  <div className="flex flex-col gap-0.5">
+                                    <span className="text-xs text-gray-400">{formatCurrency(r.total, r.currency || settings?.baseCurrency || 'EUR')}</span>
+                                    {/* Show base currency equivalent if different */}
+                                    {r.currency && r.currency !== (settings?.baseCurrency || 'EUR') && (
+                                      <AsyncCurrencyConversion amount={r.total} currency={r.currency} date={r.transactionDate || r.date} />
+                                    )}
+                                  </div>
                                 </div>
                                 {/* Right side: Date and Icon */}
                                 <div className="flex items-center gap-3 text-right whitespace-nowrap">
                                   <div className="flex flex-col items-end">
-                                    <span className="text-xs text-blue-200">{r.transactionDate && r.transactionDate.toDate ? r.transactionDate.toDate().toLocaleDateString() : ''}</span>
+                                    <span className="text-xs text-blue-200">{formatDateSafely(r.transactionDate || r.date)}</span>
                                     <span className="text-xs text-gray-400">{r.paymentMethod || ''}</span>
                                   </div>
                                   <div className="transition-transform duration-300" style={{ transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)' }}>
@@ -2601,7 +3046,13 @@ Reply with a JSON object enclosed in triple backticks:
                                           {r.items.map((item, i) => (
                                             <li key={i} className="flex justify-between">
                                               <span>{item.name}</span>
-                                              <span>{formatCurrency(item.price, r.currency || settings?.baseCurrency || 'EUR')}</span>
+                                              <div className="flex flex-col items-end gap-0.5">
+                                                <span>{formatCurrency(item.price, r.currency || settings?.baseCurrency || 'EUR')}</span>
+                                                {/* Show base currency equivalent if different */}
+                                                {r.currency && r.currency !== (settings?.baseCurrency || 'EUR') && (
+                                                  <AsyncCurrencyConversion amount={item.price} currency={r.currency} date={r.transactionDate || r.date} />
+                                                )}
+                                              </div>
                                           </li>
                                         ))}
                                       </ul>
@@ -2668,14 +3119,20 @@ export function UploadMethodModal({
   );
 }
 
-export function ExpensesDashboard({ totalExpenses, categoryTotals, formatCurrency, settings, receipts = [], selectedCategory, setSelectedCategory, modalOpen, setModalOpen }) {
+export function ExpensesDashboard({ totalExpenses, categoryTotals, formatCurrency, formatDateSafely, settings, receipts = [], selectedCategory, setSelectedCategory, modalOpen, setModalOpen }) {
   // --- Semi-Circle Doughnut Data ---
-  const sortedCategories = Object.entries(categoryTotals).sort((a, b) => b[1] - a[1]);
+  const sortedCategories = Object.entries(categoryTotals)
+    .map(([cat, data]) => {
+      // Handle both new format (object with baseCurrency) and old format (number)
+      const amount = typeof data === 'object' ? data.baseCurrency : data;
+      return [cat, typeof data === 'object' ? data : { baseCurrency: data, localCurrency: data, currencies: {} }];
+    })
+    .sort(([, a], [, b]) => (a.baseCurrency || 0) - (b.baseCurrency || 0))
+    .reverse(); // Sort descending
   const categoryLabels = sortedCategories.map(c => c[0]);
-  const categoryData = sortedCategories.map(c => c[1]);
-  const categoryColors = [
-    '#6366F1', '#22D3EE', '#F472B6', '#FBBF24', '#34D399', '#818CF8', '#F87171', '#A3E635', '#F59E42', '#60A5FA', '#F43F5E', '#10B981', '#EAB308', '#8B5CF6', '#FDE68A', '#FCA5A5', '#6EE7B7', '#F9A8D4', '#FCD34D', '#C7D2FE'
-  ];
+  const categoryData = sortedCategories.map(c => c[1].baseCurrency || c[1]);
+  // Use unified category colors for consistency
+  const chartColors = categoryLabels.map(cat => getCategoryColor(cat));
 
   // Get current month for context
   const currentMonth = new Date().toLocaleDateString('en-US', { month: 'short' });
@@ -2686,7 +3143,7 @@ export function ExpensesDashboard({ totalExpenses, categoryTotals, formatCurrenc
     datasets: [
       {
         data: categoryData,
-        backgroundColor: categoryLabels.map((_, i) => categoryColors[i % categoryColors.length]),
+        backgroundColor: chartColors,
         borderWidth: 3,
         borderColor: '#181e2a',
         hoverBorderColor: '#6366F1',
@@ -2758,28 +3215,52 @@ export function ExpensesDashboard({ totalExpenses, categoryTotals, formatCurrenc
         </div>
         {/* Category Cards Grid (mobile-friendly) */}
         <div className="w-full grid grid-cols-1 gap-4 mb-4 md:grid-cols-2">
-          {sortedCategories.map(([cat, amt], idx) => {
+          {sortedCategories.map(([cat, categoryData], idx) => {
+            const amt = categoryData.baseCurrency || categoryData; // Handle both new and old format
             const percent = totalExpenses > 0 ? Math.min(100, Math.round((amt / totalExpenses) * 100)) : 0;
-            const color = categoryColors[categoryLabels.indexOf(cat) % categoryColors.length];
-            const emoji = cat === 'Groceries' ? '🛒' : cat === 'Dining' ? '🍽️' : cat === 'Transport' ? '🚌' : cat === 'Bills' ? '💡' : cat === 'Entertainment' ? '🎬' : cat === 'Health' ? '💊' : cat === 'Family' ? '👨‍👩‍👧‍👦' : '💸';
-            const daysLeft = cat === 'Groceries' ? 20 : cat === 'Dining' ? 7 : cat === 'Transport' ? 6 : cat === 'Bills' ? 15 : 10;
+            const color = getCategoryColor(cat); // Use unified color system
+            const emoji = cat === 'Groceries' ? '🛒' : cat === 'Dining' ? '🍽️' : cat === 'Transportation' ? '🚌' : cat === 'Bills' ? '💡' : cat === 'Entertainment' ? '🎬' : cat === 'Health' ? '💊' : cat === 'Family' ? '👨‍👩‍👧‍👦' : '💸';
+
+            
+            // Get the most common currency for this category
+            let localCurrencyDisplay = '';
+            if (categoryData.currencies && Object.keys(categoryData.currencies).length > 0) {
+              const currencies = Object.entries(categoryData.currencies);
+              if (currencies.length === 1) {
+                // Single currency
+                const [currency, amount] = currencies[0];
+                localCurrencyDisplay = formatCurrency(amount, currency);
+              } else {
+                // Multiple currencies - show the largest amount
+                const largestCurrency = currencies.reduce((a, b) => a[1] > b[1] ? a : b);
+                localCurrencyDisplay = formatCurrency(largestCurrency[1], largestCurrency[0]);
+              }
+            }
+            
             return (
               <button
                 key={cat}
                 className="rounded-2xl bg-slate-900/80 shadow-lg p-3 flex flex-col gap-2 items-start border border-blue-400/10 relative overflow-hidden cursor-pointer transition-transform duration-200 hover:scale-105 hover:shadow-blue-400/30 active:scale-95 w-full focus:outline-none focus:ring-2 focus:ring-blue-400"
                 style={{boxShadow: '0 2px 12px 0 rgba(99,102,241,0.08)', border: `1.5px solid ${color}33`, minHeight: 128, touchAction: 'manipulation'}}
-                onClick={() => { setSelectedCategory({ name: cat, amount: amt, percent, color, emoji }); setModalOpen(true); }}
+                onClick={() => { setSelectedCategory({ name: cat, amount: amt, percent, color, emoji, categoryData }); setModalOpen(true); }}
                 tabIndex={0}
                 aria-label={`Show details for ${cat}`}
               >
                 <div className="flex items-center gap-2 mb-1">
                   <span className="text-2xl">{emoji}</span>
                   <span className="font-semibold text-base text-white/90">{cat}</span>
-                  <span className="ml-auto text-xs text-gray-400">{daysLeft} days left</span>
+
                 </div>
-                <div className="flex items-end gap-2">
-                  <span className="text-xl md:text-2xl font-extrabold text-white">{formatCurrency(amt, settings?.baseCurrency || 'EUR')}</span>
-                  <span className="text-xs text-green-400 font-bold">{percent}%</span>
+                <div className="flex flex-col gap-1">
+                  <div className="flex items-end gap-2">
+                    <span className="text-xl md:text-2xl font-extrabold text-white">{formatCurrency(amt, settings?.baseCurrency || 'EUR')}</span>
+                    <span className="text-xs text-green-400 font-bold">{percent}%</span>
+                  </div>
+                  {localCurrencyDisplay && (
+                    <div className="text-xs text-blue-300/80">
+                      {localCurrencyDisplay}
+                    </div>
+                  )}
                 </div>
                 {/* Progress Bar */}
                 <div className="w-full h-2 rounded-full bg-slate-700/60 mt-1 mb-1 overflow-hidden">
@@ -2851,31 +3332,9 @@ export function ReceiptsList({ receipts, renderReceiptCard, isFirestoreLoading, 
   );
 }
 
-function InsightsSection({ receipts = [], categoryTotals = {}, formatCurrency, settings }) {
+function InsightsSection({ receipts = [], categoryTotals = {}, calculatedTotals = {}, formatCurrency, settings }) {
   const [period, setPeriod] = useState('week');
-
-  // --- Date helpers ---
-  const today = new Date();
-  let periodStart, periodEnd, periodLabel;
-  const weekStartsOn = (settings?.weekStartsOn || 'monday').toLowerCase();
-  if (period === 'week') {
-    periodStart = new Date(today);
-    periodStart.setHours(0, 0, 0, 0);
-    // 0 = Sunday, 1 = Monday
-    let dayOfWeek = today.getDay();
-    let offset = weekStartsOn === 'monday' ? (dayOfWeek === 0 ? -6 : 1 - dayOfWeek) : -dayOfWeek;
-    periodStart.setDate(today.getDate() + offset);
-    periodEnd = new Date(periodStart);
-    periodEnd.setDate(periodStart.getDate() + 6);
-    periodEnd.setHours(23, 59, 59, 999);
-    const formatShort = d => d.toLocaleDateString(undefined, { day: '2-digit', month: 'short' });
-    periodLabel = `${formatShort(periodStart)} - ${formatShort(periodEnd)}`.replace(/\b[a-z]/g, letter => letter.toUpperCase());
-  } else {
-    periodStart = new Date(today.getFullYear(), today.getMonth(), 1, 0, 0, 0, 0);
-    periodEnd = new Date(today.getFullYear(), today.getMonth() + 1, 0, 23, 59, 59, 999);
-    const formatShort = d => d.toLocaleDateString(undefined, { day: '2-digit', month: 'short' });
-    periodLabel = `${formatShort(periodStart)} - ${formatShort(periodEnd)}`.replace(/\b[a-z]/g, letter => letter.toUpperCase());
-  }
+  const [currentOffset, setCurrentOffset] = useState(0); // 0 = current, -1 = previous, 1 = next, etc.
 
   // Helper to robustly normalize a date string/object to local midnight
   const normalizeToLocalMidnight = (d) => {
@@ -2891,23 +3350,98 @@ function InsightsSection({ receipts = [], categoryTotals = {}, formatCurrency, s
     return new Date(date.getFullYear(), date.getMonth(), date.getDate());
   };
 
-  // Filter receipts for selected period (inclusive)
-  const periodReceipts = receipts.filter(r => {
-    const d = normalizeToLocalMidnight(r.transactionDate || r.date);
-    return d && d >= periodStart && d <= periodEnd;
-  });
-
-  const allCategoryColors = {
-    'Groceries': '#3b82f6',
-    'Dining': '#f472b6',
-    'Transportation': '#a78bfa',
-    'Shopping': '#818cf8',
-    'Bills': '#60a5fa',
-    'Entertainment': '#fbbf24',
-    'Health': '#10b981',
-    'Other': '#f59e42',
-    'Uncategorized': '#9ca3af'
+  // Navigation functions
+  const navigatePrevious = () => {
+    setCurrentOffset(prev => prev - 1);
   };
+
+  const navigateNext = () => {
+    setCurrentOffset(prev => prev + 1);
+  };
+
+  const navigateToCurrent = () => {
+    setCurrentOffset(0);
+  };
+
+  // --- Date helpers ---
+  const today = new Date();
+  let periodStart, periodEnd, periodLabel;
+  const weekStartsOn = (settings?.weekStartsOn || 'monday').toLowerCase();
+  
+  if (period === 'week') {
+    // For week view, calculate based on offset
+    const targetDate = new Date(today);
+    targetDate.setDate(today.getDate() + (currentOffset * 7));
+    
+    periodStart = new Date(targetDate);
+    periodStart.setHours(0, 0, 0, 0);
+    // 0 = Sunday, 1 = Monday
+    let dayOfWeek = targetDate.getDay();
+    let offset = weekStartsOn === 'monday' ? (dayOfWeek === 0 ? -6 : 1 - dayOfWeek) : -dayOfWeek;
+    periodStart.setDate(targetDate.getDate() + offset);
+    periodEnd = new Date(periodStart);
+    periodEnd.setDate(periodStart.getDate() + 6);
+    periodEnd.setHours(23, 59, 59, 999);
+    const formatShort = d => d.toLocaleDateString(undefined, { day: '2-digit', month: 'short' });
+    periodLabel = `${formatShort(periodStart)} - ${formatShort(periodEnd)}`.replace(/\b[a-z]/g, letter => letter.toUpperCase());
+  } else if (period === 'month') {
+    // For month view, calculate based on offset
+    const targetDate = new Date(today.getFullYear(), today.getMonth() + currentOffset, 1);
+    periodStart = new Date(targetDate.getFullYear(), targetDate.getMonth(), 1, 0, 0, 0, 0);
+    periodEnd = new Date(targetDate.getFullYear(), targetDate.getMonth() + 1, 0, 23, 59, 59, 999);
+    const formatShort = d => d.toLocaleDateString(undefined, { day: '2-digit', month: 'short' });
+    periodLabel = `${formatShort(periodStart)} - ${formatShort(periodEnd)}`.replace(/\b[a-z]/g, letter => letter.toUpperCase());
+  } else {
+    // For year view, calculate based on offset
+    const targetYear = today.getFullYear() + currentOffset;
+    periodStart = new Date(targetYear, 0, 1, 0, 0, 0, 0); // January 1st
+    periodEnd = new Date(targetYear, 11, 31, 23, 59, 59, 999); // December 31st
+    periodLabel = targetYear.toString();
+  }
+
+  // Calculate period receipts with historical conversion - using useMemo to prevent infinite loops
+  const periodReceipts = useMemo(() => {
+    const filteredReceipts = receipts.filter(r => {
+      const d = normalizeToLocalMidnight(r.transactionDate || r.date);
+      return d && d >= periodStart && d <= periodEnd;
+    });
+
+    // Use calculated totals to get accurate base currency amounts for the period
+    return filteredReceipts.map(r => {
+      const date = normalizeToLocalMidnight(r.transactionDate || r.date);
+      let totalBaseCurrency = parseFloat(r.total) || 0;
+      
+      // If the receipt currency is different from base currency, we need to estimate the conversion
+      // For now, use a simple approach: if we have calculated totals for this month, use the average
+      if (date && r.currency !== (settings?.baseCurrency || 'EUR') && calculatedTotals.monthlyTotals) {
+        const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+        const monthlyTotal = calculatedTotals.monthlyTotals[monthKey];
+        if (monthlyTotal && monthlyTotal.total > 0) {
+          // This is an approximation - ideally we'd have individual receipt conversions
+          const originalTotal = filteredReceipts
+            .filter(r2 => {
+              const d2 = normalizeToLocalMidnight(r2.transactionDate || r2.date);
+              return d2 && d2.getMonth() === date.getMonth() && d2.getFullYear() === date.getFullYear();
+            })
+            .reduce((sum, r2) => sum + (parseFloat(r2.total) || 0), 0);
+          
+          if (originalTotal > 0) {
+            totalBaseCurrency = (parseFloat(r.total) / originalTotal) * monthlyTotal.total;
+          }
+        }
+      }
+      
+      return {
+        ...r,
+        totalBaseCurrency,
+        subtotalBaseCurrency: r.subtotal ? parseFloat(r.subtotal) : 0,
+        taxBaseCurrency: r.tax ? parseFloat(r.tax) : 0
+      };
+    });
+  }, [receipts, periodStart, periodEnd, period, currentOffset, calculatedTotals, settings?.baseCurrency]);
+
+  // Use the unified category colors from the top of the file
+  const allCategoryColors = categoryColors;
 
   // --- New Data Structuring for Rich Tooltips ---
   let dailyData, labelsWithDates;
@@ -2938,13 +3472,13 @@ function InsightsSection({ receipts = [], categoryTotals = {}, formatCurrency, s
         const dayIndex = weekDates.findIndex(d => d.getTime() === date.getTime());
         if (dayIndex !== -1) {
           const category = r.category || 'Uncategorized';
-          const amount = parseFloat(r.total) || 0;
+          const amount = r.totalBaseCurrency || parseFloat(r.total) || 0; // Use base currency amount for calculations
           dailyData[dayIndex].categories[category] = (dailyData[dayIndex].categories[category] || 0) + amount;
           dailyData[dayIndex].total += amount;
         }
       }
     });
-  } else { // month
+  } else if (period === 'month') {
     const daysInMonth = periodEnd.getDate();
     labelsWithDates = Array.from({ length: daysInMonth }, (_, i) => {
       const d = new Date(periodStart.getFullYear(), periodStart.getMonth(), i + 1);
@@ -2961,9 +3495,31 @@ function InsightsSection({ receipts = [], categoryTotals = {}, formatCurrency, s
         const dayIndex = date.getDate() - 1;
         if (dayIndex >= 0 && dayIndex < daysInMonth) {
           const category = r.category || 'Uncategorized';
-          const amount = parseFloat(r.total) || 0;
+          const amount = r.totalBaseCurrency || parseFloat(r.total) || 0; // Use base currency amount for calculations
           dailyData[dayIndex].categories[category] = (dailyData[dayIndex].categories[category] || 0) + amount;
           dailyData[dayIndex].total += amount;
+        }
+      }
+    });
+  } else { // year
+    // For year view, group by months
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const targetYear = today.getFullYear() + currentOffset;
+    labelsWithDates = months.map((month, i) => ({
+      short: month,
+      full: `${month} ${targetYear}`
+    }));
+    dailyData = Array.from({ length: 12 }, () => ({ categories: {}, total: 0 }));
+
+    periodReceipts.forEach(r => {
+      const date = normalizeToLocalMidnight(r.transactionDate || r.date);
+      if (date) {
+        const monthIndex = date.getMonth();
+        if (monthIndex >= 0 && monthIndex < 12) {
+          const category = r.category || 'Uncategorized';
+          const amount = r.totalBaseCurrency || parseFloat(r.total) || 0; // Use base currency amount for calculations
+          dailyData[monthIndex].categories[category] = (dailyData[monthIndex].categories[category] || 0) + amount;
+          dailyData[monthIndex].total += amount;
         }
       }
     });
@@ -2971,11 +3527,14 @@ function InsightsSection({ receipts = [], categoryTotals = {}, formatCurrency, s
   
   const chartTotals = dailyData.map(d => d.total);
   const expenses = chartTotals.reduce((a, b) => a + b, 0);
-  const spentPerDay = period === 'week' ? expenses / 7 : (chartTotals.length > 0 ? expenses / chartTotals.length : 0);
+  const spentPerDay = period === 'week' ? expenses / 7 : 
+                     period === 'month' ? (chartTotals.length > 0 ? expenses / chartTotals.length : 0) :
+                     period === 'year' ? expenses / 365 : 0;
   
+  // Calculate category totals using base currency amounts
   const periodCategoryTotals = periodReceipts.reduce((acc, r) => {
     const cat = r.category || 'Uncategorized';
-    const amt = parseFloat(r.total) || 0;
+    const amt = r.totalBaseCurrency || parseFloat(r.total) || 0; // Use base currency amount for calculations
     acc[cat] = (acc[cat] || 0) + amt;
     return acc;
   }, {});
@@ -3111,14 +3670,53 @@ function InsightsSection({ receipts = [], categoryTotals = {}, formatCurrency, s
         {/* Header */}
         <div className="w-full flex flex-row items-center justify-between mb-2">
           <div className="text-lg font-bold">Expense Insights</div>
-          <select
-            className="bg-gray-100 rounded-lg px-2 py-1 text-sm font-semibold border border-gray-200 focus:outline-none"
-            value={period}
-            onChange={e => setPeriod(e.target.value)}
-          >
-            <option value="week">week</option>
-            <option value="month">month</option>
-          </select>
+          <div className="flex items-center gap-2">
+            {/* Previous Arrow */}
+            <button
+              onClick={navigatePrevious}
+              className="w-8 h-8 flex items-center justify-center rounded-lg bg-gray-100 hover:bg-gray-200 transition-colors duration-200 border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-400"
+              title="Previous period"
+            >
+              <svg className="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+              </svg>
+            </button>
+            
+            {/* Period Dropdown */}
+            <select
+              className="bg-gray-100 rounded-lg px-3 py-1 text-sm font-semibold border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-400"
+              value={period}
+              onChange={e => setPeriod(e.target.value)}
+            >
+              <option value="week">week</option>
+              <option value="month">month</option>
+              <option value="year">year</option>
+            </select>
+            
+            {/* Next Arrow - only show when not on current period */}
+            {currentOffset < 0 && (
+              <button
+                onClick={navigateNext}
+                className="w-8 h-8 flex items-center justify-center rounded-lg bg-gray-100 hover:bg-gray-200 transition-colors duration-200 border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                title="Next period"
+              >
+                <svg className="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                </svg>
+              </button>
+            )}
+            
+            {/* Current Period Button (only show when not on current) */}
+            {currentOffset !== 0 && (
+              <button
+                onClick={navigateToCurrent}
+                className="px-2 py-1 text-xs font-medium text-blue-600 hover:text-blue-700 hover:bg-blue-50 rounded transition-colors duration-200"
+                title="Go to current period"
+              >
+                Today
+              </button>
+            )}
+          </div>
         </div>
         {/* Date range and stats */}
         <div className="w-full flex flex-row items-center justify-between mb-2 text-xs font-semibold text-gray-500">
@@ -3140,9 +3738,35 @@ function InsightsSection({ receipts = [], categoryTotals = {}, formatCurrency, s
               <span className="inline-block w-6 h-3 rounded-full" style={{background: l.color}}></span>
               <span className="text-xs font-semibold text-gray-700">{l.name}</span>
               <span className="text-xs text-gray-400">{l.percent}%</span>
-              <span className="text-xs text-gray-500 font-medium">
-                {formatCurrency(periodCategoryTotals[l.name], settings?.baseCurrency || 'EUR')}
-              </span>
+              <div className="flex flex-col">
+                <span className="text-xs text-gray-500 font-medium">
+                  {formatCurrency(periodCategoryTotals[l.name], settings?.baseCurrency || 'EUR')}
+                </span>
+                {/* Show original currency amounts if available */}
+                {(() => {
+                  const categoryReceipts = periodReceipts.filter(r => (r.category || 'Uncategorized') === l.name);
+                  const currencyTotals = {};
+                  categoryReceipts.forEach(r => {
+                    const currency = r.currency || settings?.baseCurrency || 'EUR';
+                    if (!currencyTotals[currency]) currencyTotals[currency] = 0;
+                    currencyTotals[currency] += parseFloat(r.total) || 0;
+                  });
+                  const currencies = Object.entries(currencyTotals);
+                  if (currencies.length > 1 || (currencies.length === 1 && currencies[0][0] !== (settings?.baseCurrency || 'EUR'))) {
+                    return (
+                      <span className="text-xs text-blue-600">
+                        {currencies.map(([currency, amount], idx) => (
+                          <span key={currency}>
+                            {formatCurrency(amount, currency)}
+                            {idx < currencies.length - 1 ? ' • ' : ''}
+                          </span>
+                        ))}
+                      </span>
+                    );
+                  }
+                  return null;
+                })()}
+              </div>
             </div>
           ))}
         </div>
