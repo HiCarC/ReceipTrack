@@ -1,6 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { useLoading } from "@/contexts/LoadingContext";
-import { Camera } from 'lucide-react';
+import { Camera, Users } from 'lucide-react';
 
 // Custom SVGs for premium look
 const WalletSVG = ({ className }) => (
@@ -58,7 +58,7 @@ export default function MobileNavBar({ currentTab, onTabChange }) {
     <>
       <nav
         ref={navRef}
-        className="fixed bottom-0 left-0 right-0 z-50 flex justify-between items-center px-8 h-20 md:hidden shadow-2xl border-t border-blue-900/40 bg-gradient-to-tr from-slate-900/80 to-blue-900/60 backdrop-blur-xl bg-opacity-70 rounded-t-3xl transition-all duration-300 overflow-hidden"
+        className="fixed bottom-0 left-0 right-0 z-50 flex justify-between items-end px-0 h-20 md:hidden shadow-2xl border-t border-blue-900/40 bg-gradient-to-tr from-slate-900/80 to-blue-900/60 backdrop-blur-xl bg-opacity-70 rounded-t-3xl transition-all duration-300 overflow-hidden"
         style={{
           WebkitBackdropFilter: 'blur(16px)',
           backdropFilter: 'blur(16px)',
@@ -68,39 +68,49 @@ export default function MobileNavBar({ currentTab, onTabChange }) {
       >
         {/* Animated gradient shimmer for branding */}
         <div className="absolute inset-0 z-0 pointer-events-none animate-shimmer" style={{ background: 'linear-gradient(120deg, rgba(59,130,246,0.08) 0%, rgba(139,92,246,0.10) 50%, rgba(59,130,246,0.08) 100%)', opacity: 0.7 }} />
-        {/* Expenses (left, custom SVG) */}
-        <button
-          onClick={() => handleTabChange('expenses')}
-          className={`relative flex items-center justify-center h-14 w-14 rounded-full transition-all duration-300 ease-in-out active:scale-95 ${currentTab === 'expenses' ? 'bg-blue-500/30 text-white scale-110 shadow-lg' : 'text-slate-400 opacity-60 grayscale-[50%] hover:opacity-100 hover:grayscale-0'}`}
-          aria-label="Expenses"
-          tabIndex={0}
-          style={{ touchAction: 'manipulation', zIndex: 2 }}
-        >
-          <WalletSVG className="h-8 w-8" />
-        </button>
-
-        {/* Upload (center, floating FAB, morphing) */}
-        <button
-          onClick={() => handleTabChange('upload')}
-          className={`absolute left-1/2 -translate-x-1/2 -top-0.5 rounded-full h-20 w-20 flex items-center justify-center border-4 border-slate-900 transition-all duration-300 ease-in-out active:scale-95 ${currentTab === 'upload' ? 'bg-gradient-to-tr from-blue-500 via-blue-600 to-indigo-500 shadow-[0_0_32px_8px_rgba(59,130,246,0.35)] animate-glow ring-4 ring-blue-300' : 'bg-slate-700 opacity-70 grayscale hover:opacity-100 hover:grayscale-0'}`}
-          style={{ zIndex: 60, boxShadow: currentTab === 'upload' ? '0 0 32px 8px rgba(59,130,246,0.35)' : undefined, touchAction: 'manipulation' }}
-          aria-label="Upload"
-          tabIndex={0}
-        >
-          <Camera className={`h-11 w-11 text-white transition-transform duration-300 ${currentTab === 'upload' ? 'scale-110 rotate-6' : ''}`} />
-        </button>
-
-        {/* Receipts (right, custom SVG) */}
-        <button
-          onClick={() => handleTabChange('receipts')}
-          className={`relative flex items-center justify-center h-14 w-14 rounded-full transition-all duration-300 ease-in-out active:scale-95 ${currentTab === 'receipts' ? 'bg-blue-500/30 text-white scale-110 shadow-lg' : 'text-slate-400 opacity-60 grayscale-[50%] hover:opacity-100 hover:grayscale-0'}`}
-          aria-label="Receipts"
-          tabIndex={0}
-          style={{ touchAction: 'manipulation', zIndex: 2 }}
-        >
-          <ReceiptSVG className="h-8 w-8" />
-        </button>
-
+        {/* Expenses, Upload (center, floating FAB, slightly above nav), Receipts, Group */}
+        <div className="flex flex-1 h-full">
+          {/* Expenses */}
+          <button
+            onClick={() => handleTabChange('expenses')}
+            className={`flex-1 flex flex-col items-center justify-center h-20 transition-all duration-300 ease-in-out active:scale-95 ${currentTab === 'expenses' ? 'text-blue-400' : 'text-slate-400 opacity-60 grayscale-[50%] hover:opacity-100 hover:grayscale-0'}`}
+            aria-label="Expenses"
+            tabIndex={0}
+            style={{ touchAction: 'manipulation' }}
+          >
+            <WalletSVG className="h-7 w-7" />
+          </button>
+          {/* Upload (camera, vertically centered) */}
+          <button
+            onClick={() => handleTabChange('upload')}
+            className={`flex-1 flex flex-col items-center justify-center h-20 transition-all duration-300 ease-in-out active:scale-95 ${currentTab === 'upload' ? 'text-blue-400' : 'text-slate-400 opacity-60 grayscale-[50%] hover:opacity-100 hover:grayscale-0'}`}
+            aria-label="Upload"
+            tabIndex={0}
+            style={{ touchAction: 'manipulation' }}
+          >
+            <Camera className={`h-9 w-9 text-white transition-transform duration-300 ${currentTab === 'upload' ? 'scale-110 rotate-6' : ''}`} />
+          </button>
+          {/* Receipts */}
+          <button
+            onClick={() => handleTabChange('receipts')}
+            className={`flex-1 flex flex-col items-center justify-center h-20 transition-all duration-300 ease-in-out active:scale-95 ${currentTab === 'receipts' ? 'text-blue-400' : 'text-slate-400 opacity-60 grayscale-[50%] hover:opacity-100 hover:grayscale-0'}`}
+            aria-label="Receipts"
+            tabIndex={0}
+            style={{ touchAction: 'manipulation' }}
+          >
+            <ReceiptSVG className="h-7 w-7" />
+          </button>
+          {/* Group */}
+          <button
+            onClick={() => handleTabChange('group')}
+            className={`flex-1 flex flex-col items-center justify-center h-20 transition-all duration-300 ease-in-out active:scale-95 ${currentTab === 'group' ? 'text-blue-400' : 'text-slate-400 opacity-60 grayscale-[50%] hover:opacity-100 hover:grayscale-0'}`}
+            aria-label="Group"
+            tabIndex={0}
+            style={{ touchAction: 'manipulation' }}
+          >
+            <Users className="h-7 w-7" />
+          </button>
+        </div>
         {/* Animations */}
         <style>{`
           @keyframes glow {

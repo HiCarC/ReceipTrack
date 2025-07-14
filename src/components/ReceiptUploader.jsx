@@ -2707,6 +2707,14 @@ Reply with a JSON object enclosed in triple backticks:
                   </Button>
                 </div>
                   {formErrors.items && <p className="text-red-400 text-xs mt-1 animate-fade-in duration-200 ease-in-out">{formErrors.items}</p>}
+
+                  {(activeFormData.items && activeFormData.items.length > 0) && (
+                    <div className="mt-4">
+                      <GroupManager />
+                      <ItemAssignment items={activeFormData.items} />
+                      <SplitSummary items={activeFormData.items} />
+                    </div>
+                  )}
           </div>
               </form>
             </div>
@@ -3772,3 +3780,7 @@ function InsightsSection({ receipts = [], categoryTotals = {}, calculatedTotals 
     </div>
   );
 }
+
+import GroupManager from './GroupManager';
+import ItemAssignment from './ItemAssignment';
+import SplitSummary from './SplitSummary';

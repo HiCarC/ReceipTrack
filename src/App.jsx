@@ -7,6 +7,8 @@ import { Toaster } from "@/components/ui/toaster"
 import AuthHeader from "@/components/AuthHeader"
 import { Settings } from './components/Settings';
 import MobileNavBar from './components/MobileNavBar';
+import { GroupProvider } from './contexts/GroupContext';
+import GroupHomeScreen from './components/GroupHomeScreen';
 
 // Create a RootContent component that will consume the AuthContext
 function ExpensesScreen(props) {
@@ -44,6 +46,8 @@ function RootContent() {
     mainContent = <ReceiptsScreen onTabChange={setCurrentTab} />;
   } else if (currentTab === 'upload') {
     mainContent = <UploadScreen onTabChange={setCurrentTab} />;
+  } else if (currentTab === 'group') {
+    mainContent = <GroupHomeScreen onTabChange={setCurrentTab} />;
   } else if (currentTab === 'settings') {
     mainContent = <Settings onClose={() => setCurrentTab('expenses')} />;
   }
@@ -67,11 +71,13 @@ function RootContent() {
 
 function App() {
   return (
-    <AuthProvider>
-      <LoadingProvider>
-      <RootContent /> {/* Render the RootContent component inside AuthProvider */}
-      </LoadingProvider>
-    </AuthProvider>
+    <GroupProvider>
+      <AuthProvider>
+        <LoadingProvider>
+          <RootContent /> {/* Render the RootContent component inside AuthProvider */}
+        </LoadingProvider>
+      </AuthProvider>
+    </GroupProvider>
   );
 }
 
