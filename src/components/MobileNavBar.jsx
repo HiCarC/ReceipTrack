@@ -71,33 +71,33 @@ export default function MobileNavBar({ currentTab, onTabChange }) {
         {/* Expenses, Upload (center, floating FAB, slightly above nav), Receipts, Group */}
         <div className="flex flex-1 h-full">
           {/* Expenses */}
-          <button
-            onClick={() => handleTabChange('expenses')}
+        <button
+          onClick={() => handleTabChange('expenses')}
             className={`flex-1 flex flex-col items-center justify-center h-20 transition-all duration-300 ease-in-out active:scale-95 ${currentTab === 'expenses' ? 'text-blue-400' : 'text-slate-400 opacity-60 grayscale-[50%] hover:opacity-100 hover:grayscale-0'}`}
-            aria-label="Expenses"
-            tabIndex={0}
+          aria-label="Expenses"
+          tabIndex={0}
             style={{ touchAction: 'manipulation' }}
-          >
+        >
             <WalletSVG className="h-7 w-7" />
-          </button>
+        </button>
           {/* Upload (camera, vertically centered) */}
-          <button
-            onClick={() => handleTabChange('upload')}
+        <button
+          onClick={() => handleTabChange('upload')}
             className={`flex-1 flex flex-col items-center justify-center h-20 transition-all duration-300 ease-in-out active:scale-95 ${currentTab === 'upload' ? 'text-blue-400' : 'text-slate-400 opacity-60 grayscale-[50%] hover:opacity-100 hover:grayscale-0'}`}
-            aria-label="Upload"
-            tabIndex={0}
+          aria-label="Upload"
+          tabIndex={0}
             style={{ touchAction: 'manipulation' }}
-          >
+        >
             <Camera className={`h-9 w-9 text-white transition-transform duration-300 ${currentTab === 'upload' ? 'scale-110 rotate-6' : ''}`} />
-          </button>
+        </button>
           {/* Receipts */}
-          <button
-            onClick={() => handleTabChange('receipts')}
+        <button
+          onClick={() => handleTabChange('receipts')}
             className={`flex-1 flex flex-col items-center justify-center h-20 transition-all duration-300 ease-in-out active:scale-95 ${currentTab === 'receipts' ? 'text-blue-400' : 'text-slate-400 opacity-60 grayscale-[50%] hover:opacity-100 hover:grayscale-0'}`}
-            aria-label="Receipts"
-            tabIndex={0}
+          aria-label="Receipts"
+          tabIndex={0}
             style={{ touchAction: 'manipulation' }}
-          >
+        >
             <ReceiptSVG className="h-7 w-7" />
           </button>
           {/* Group */}
@@ -109,7 +109,7 @@ export default function MobileNavBar({ currentTab, onTabChange }) {
             style={{ touchAction: 'manipulation' }}
           >
             <Users className="h-7 w-7" />
-          </button>
+        </button>
         </div>
         {/* Animations */}
         <style>{`

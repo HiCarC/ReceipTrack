@@ -9,6 +9,7 @@ import { Settings } from './components/Settings';
 import MobileNavBar from './components/MobileNavBar';
 import { GroupProvider } from './contexts/GroupContext';
 import GroupHomeScreen from './components/GroupHomeScreen';
+import GroupExpensesPage from './components/GroupExpensesPage';
 
 // Create a RootContent component that will consume the AuthContext
 function ExpensesScreen(props) {
@@ -32,6 +33,7 @@ function RootContent() {
   const { user } = useAuth();
   const [currentTab, setCurrentTab] = useState('expenses');
   const [showSettings, setShowSettings] = useState(false);
+  const [selectedGroup, setSelectedGroup] = useState(null);
 
   // Only show bottom nav on mobile
   const isMobile = typeof window !== 'undefined' && window.innerWidth < 768;
@@ -40,6 +42,8 @@ function RootContent() {
   let mainContent = null;
   if (!user) {
     mainContent = <LandingPage className="flex-grow" />;
+  } else if (selectedGroup) {
+    mainContent = <GroupExpensesPage group={selectedGroup} onBack={() => setSelectedGroup(null)} />;
   } else if (currentTab === 'expenses') {
     mainContent = <ExpensesScreen onTabChange={setCurrentTab} />;
   } else if (currentTab === 'receipts') {
@@ -47,7 +51,7 @@ function RootContent() {
   } else if (currentTab === 'upload') {
     mainContent = <UploadScreen onTabChange={setCurrentTab} />;
   } else if (currentTab === 'group') {
-    mainContent = <GroupHomeScreen onTabChange={setCurrentTab} />;
+    mainContent = <GroupHomeScreen onTabChange={setCurrentTab} onGroupEnter={setSelectedGroup} />;
   } else if (currentTab === 'settings') {
     mainContent = <Settings onClose={() => setCurrentTab('expenses')} />;
   }

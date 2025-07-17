@@ -1,6 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Plus, Users, Link2, X } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, DialogClose } from './ui/dialog';
+import { db, auth } from '../firebase';
+import { collection, addDoc, query, where, getDocs, serverTimestamp, onSnapshot, doc, updateDoc } from 'firebase/firestore';
+import { useAuth } from '../contexts/AuthContext';
 
 const CURRENCIES = [
   { code: 'EUR', name: 'Euro', symbol: '€' },
@@ -9,17 +12,63 @@ const CURRENCIES = [
   { code: 'JPY', name: 'Japanese Yen', symbol: '¥' },
 ];
 
-export default function GroupHomeScreen({ onTabChange }) {
+const BASE_URL = process.env.NODE_ENV === 'production' ? 'https://receip-track.vercel.app' : window.location.origin;
+
+export default function GroupHomeScreen({ onTabChange, onGroupEnter }) {
+  const { user } = useAuth();
   const [showAction, setShowAction] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
   const [groupName, setGroupName] = useState('');
   const [currency, setCurrency] = useState('EUR');
-  const [participants, setParticipants] = useState(['']);
-  const [inviteLink, setInviteLink] = useState('https://yourapp.com/invite/abc123');
-  const [qrUrl, setQrUrl] = useState('https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=https://yourapp.com/invite/abc123');
-  // Add state for QR modal
+  const [participants, setParticipants] = useState(() => user ? [user.displayName] : []);
+  const [inviteLink, setInviteLink] = useState('');
+  const [qrUrl, setQrUrl] = useState('');
   const [showQR, setShowQR] = useState(false);
+  const [groups, setGroups] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [pendingClaimGroup, setPendingClaimGroup] = useState(null);
+  const [claimError, setClaimError] = useState('');
+  const [newlyCreatedGroup, setNewlyCreatedGroup] = useState(null);
+
+  // Update group loading query to use claimedBy and createdBy
+  useEffect(() => {
+    if (!user) return;
+    setLoading(true);
+    setError('');
+    // Query for groups where user has claimed a name
+    const q1 = query(
+      collection(db, 'groups'),
+      where(`claimedBy.${user.displayName}`, '==', user.uid)
+    );
+    // Query for groups where user is the creator
+    const q2 = query(
+      collection(db, 'groups'),
+      where('createdBy', '==', user.uid)
+    );
+    // Listen to both queries and merge results
+    const unsub1 = onSnapshot(q1, (snapshot1) => {
+      const groups1 = snapshot1.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      // Listen to creator groups
+      const unsub2 = onSnapshot(q2, (snapshot2) => {
+        const groups2 = snapshot2.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        // Merge and deduplicate by id
+        const allGroups = [...groups1, ...groups2.filter(g2 => !groups1.some(g1 => g1.id === g2.id))];
+        setGroups(allGroups);
+        setLoading(false);
+      }, err => {
+        setError('Failed to load groups');
+        setLoading(false);
+      });
+      // Clean up creator listener
+      return unsub2;
+    }, err => {
+      setError('Failed to load groups');
+      setLoading(false);
+    });
+    return () => { unsub1(); };
+  }, [user]);
 
   // Add participant
   const addParticipant = () => setParticipants([...participants, '']);
@@ -29,18 +78,105 @@ export default function GroupHomeScreen({ onTabChange }) {
   const updateParticipant = (idx, val) => setParticipants(participants.map((p, i) => i === idx ? val : p));
 
   // Handle create group
-  const handleCreateGroup = e => {
+  const handleCreateGroup = async e => {
     e.preventDefault();
-    setShowCreate(false);
-    setShowSuccess(true);
-    // TODO: Actually create group and generate real invite link/QR
+    if (!user) return;
+    setError('');
+    // Participants: names only, creator's name pre-filled
+    const participantNames = participants.filter(Boolean);
+    if (!participantNames.includes(user.displayName)) participantNames.unshift(user.displayName);
+    // Automatically claim the creator's name
+    const claimedBy = { [user.displayName]: user.uid };
+    const groupObj = {
+      name: groupName,
+      currency,
+      participants: participantNames,
+      claimedBy,
+      createdBy: user.uid,
+      createdAt: serverTimestamp(),
+      emoji: '',
+    };
+    console.log('Creating group:', groupObj);
+    try {
+      const docRef = await addDoc(collection(db, 'groups'), groupObj);
+      setShowCreate(false);
+      setShowSuccess(true);
+      console.log('Showing group creation success modal');
+      setInviteLink(BASE_URL + '/join/' + docRef.id);
+      setQrUrl('https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=' + encodeURIComponent(BASE_URL + '/join/' + docRef.id));
+      // REMOVE this block:
+      // setTimeout(() => {
+      //   if (onGroupEnter) onGroupEnter({ id: docRef.id, name: groupName, currency, participants: participantNames, claimedBy });
+      // }, 0);
+      // Instead, store the new group object in a ref/state for later navigation:
+      setNewlyCreatedGroup({ id: docRef.id, name: groupName, currency, participants: participantNames, claimedBy });
+    } catch (err) {
+      setError('Failed to create group');
+    }
+  };
+
+  // When entering a group, check if user has claimed a participant slot
+  const handleGroupEnter = (group) => {
+    if (!user) return;
+    const claimedBy = group.claimedBy || {};
+    const alreadyClaimed = Object.values(claimedBy).includes(user.uid);
+    if (alreadyClaimed) {
+      if (onGroupEnter) onGroupEnter(group);
+      return;
+    }
+    // Find unclaimed names
+    const unclaimed = (group.participants || []).filter(name => !claimedBy[name]);
+    if (unclaimed.length === 0) {
+      setClaimError('All participant slots have been claimed.');
+      return;
+    }
+    setPendingClaimGroup(group);
+  };
+
+  // Claim a participant name
+  const handleClaimName = async (name) => {
+    if (!pendingClaimGroup || !user) return;
+    setClaimError('');
+    const groupRef = doc(db, 'groups', pendingClaimGroup.id);
+    try {
+      await updateDoc(groupRef, {
+        [`claimedBy.${name}`]: user.uid
+      });
+      // Update local group object and proceed
+      const updatedGroup = { ...pendingClaimGroup, claimedBy: { ...pendingClaimGroup.claimedBy, [name]: user.uid } };
+      setPendingClaimGroup(null);
+      if (onGroupEnter) onGroupEnter(updatedGroup);
+    } catch (err) {
+      setClaimError('Failed to claim name. Please try again.');
+    }
   };
 
   return (
     <div className="flex flex-col min-h-screen bg-black/90 relative pb-32">
       <div className="text-3xl font-bold text-white text-center pt-8 pb-4 tracking-tight">Groups</div>
-      <div className="flex-1 flex flex-col gap-2 px-4">
-        <div className="text-center text-blue-200/70 mt-12 text-lg">No groups yet. Tap + to create or join a group.</div>
+      <div className="flex-1 flex flex-col gap-4 px-4 mt-6">
+        {loading ? (
+          <div className="text-center text-blue-200/70 mt-12 text-lg">Loading groups...</div>
+        ) : error ? (
+          <div className="text-center text-red-400 mt-12 text-lg">{error}</div>
+        ) : groups.length === 0 ? (
+          <div className="text-center text-blue-200/70 mt-12 text-lg">No groups yet. Tap + to create or join a group.</div>
+        ) : (
+          <div className="flex flex-col gap-4">
+            {groups.map(group => (
+              <button
+                key={group.id}
+                className="flex items-center gap-4 bg-gradient-to-r from-slate-800 via-slate-900 to-slate-800 rounded-2xl p-4 shadow-lg border border-blue-700/20 hover:scale-[1.02] active:scale-95 transition-all duration-150 w-full text-left group-card"
+                onClick={() => handleGroupEnter(group)}
+                style={{ minHeight: 64 }}
+              >
+                <span className="text-3xl mr-2">{group.emoji || '👥'}</span>
+                <span className="font-bold text-lg text-white truncate flex-1">{group.name}</span>
+                <span className="text-blue-300 text-xl ml-2">&rarr;</span>
+              </button>
+            ))}
+          </div>
+        )}
       </div>
       {/* Centered Plus Button, no bounce */}
       <button
@@ -77,6 +213,7 @@ export default function GroupHomeScreen({ onTabChange }) {
             <DialogTitle className="text-2xl font-bold mb-2">Create a Group</DialogTitle>
             <DialogDescription className="text-blue-200/80 mb-4">Set a name, currency, and add participants.</DialogDescription>
           </DialogHeader>
+          {error && <div className="text-red-400 text-sm mb-2">{error}</div>}
           <form onSubmit={handleCreateGroup} className="flex flex-col gap-4">
             <div>
               <label className="block text-blue-200 mb-1">Group Name</label>
@@ -109,10 +246,11 @@ export default function GroupHomeScreen({ onTabChange }) {
                       className="flex-1 rounded-lg bg-slate-800 border border-blue-700/40 px-4 py-3 text-white placeholder-blue-200/60 focus:border-blue-400 focus:ring-2 focus:ring-blue-400 outline-none"
                       placeholder={idx === 0 ? 'Your name' : 'Add participant'}
                       value={p}
-                      onChange={e => updateParticipant(idx, e.target.value)}
+                      onChange={e => idx === 0 ? null : updateParticipant(idx, e.target.value)}
                       required={idx === 0}
+                      disabled={idx === 0}
                     />
-                    {participants.length > 1 && (
+                    {idx > 0 && participants.length > 1 && (
                       <button type="button" onClick={() => removeParticipant(idx)} className="text-red-400 hover:text-red-600"><X className="h-5 w-5" /></button>
                     )}
                   </div>
@@ -132,7 +270,7 @@ export default function GroupHomeScreen({ onTabChange }) {
         </DialogContent>
       </Dialog>
       {/* Success Modal */}
-      <Dialog open={showSuccess} onOpenChange={setShowSuccess}>
+      <Dialog open={showSuccess} onOpenChange={open => { setShowSuccess(open); if (!open && newlyCreatedGroup && onGroupEnter) { onGroupEnter(newlyCreatedGroup); setNewlyCreatedGroup(null); } }}>
         <DialogContent className="bg-slate-900 text-white border-none rounded-2xl shadow-2xl max-w-md w-[95vw]">
           <DialogHeader>
             <div className="flex flex-col items-center justify-center mb-2">
@@ -190,7 +328,7 @@ export default function GroupHomeScreen({ onTabChange }) {
               </button>
             </div>
             <div className="flex justify-center mt-2">
-              <button className="text-blue-400 hover:text-blue-300 text-base underline" onClick={() => setShowSuccess(false)}>Invite later</button>
+              <button className="text-blue-400 hover:text-blue-300 text-base underline" onClick={() => { setShowSuccess(false); if (onGroupEnter && newlyCreatedGroup) onGroupEnter(newlyCreatedGroup); setNewlyCreatedGroup(null); }}>Invite later</button>
             </div>
           </div>
         </DialogContent>
@@ -211,6 +349,37 @@ export default function GroupHomeScreen({ onTabChange }) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      {pendingClaimGroup && (
+        <Dialog open={true} onOpenChange={() => setPendingClaimGroup(null)}>
+          <DialogContent className="bg-slate-900 text-white border-none rounded-2xl shadow-2xl max-w-md w-[95vw]">
+            <DialogHeader>
+              <DialogTitle className="text-2xl font-bold mb-2">Who are you?</DialogTitle>
+              <DialogDescription className="text-blue-200/80 mb-4">Select your name to join the group.</DialogDescription>
+            </DialogHeader>
+            {claimError && <div className="text-red-400 text-sm mb-2">{claimError}</div>}
+            <div className="flex flex-col gap-3 mt-2">
+              {(pendingClaimGroup.participants || []).filter(name => !pendingClaimGroup.claimedBy?.[name]).map(name => (
+                <button
+                  key={name}
+                  className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 rounded-xl shadow-xl transition-all duration-200 ease-in-out text-lg"
+                  onClick={() => handleClaimName(name)}
+                >
+                  {name}
+                </button>
+              ))}
+            </div>
+            <DialogFooter className="mt-4">
+              <button
+                type="button"
+                className="w-full bg-slate-700 hover:bg-slate-800 text-white font-semibold py-3 rounded-xl shadow-xl transition-all duration-200 ease-in-out text-lg"
+                onClick={() => setPendingClaimGroup(null)}
+              >
+                Cancel
+              </button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   );
 } 
