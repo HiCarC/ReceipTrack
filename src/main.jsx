@@ -4,12 +4,14 @@ import App from './App'
 import './index.css'
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import JoinGroupPage from './components/JoinGroupPage';
+import GroupExpensesPageLoader from './components/GroupExpensesPageLoader';
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
     <BrowserRouter>
       <Routes>
         <Route path="/join/:groupId" element={<JoinGroupPage />} />
+        <Route path="/group/:groupId" element={<GroupExpensesPageLoader />} />
         <Route path="/*" element={<App />} />
       </Routes>
     </BrowserRouter>
