@@ -15,17 +15,23 @@ export default function GroupExpensesPageLoader() {
     async function fetchGroup() {
       setLoading(true);
       setError('');
+      console.log('[GroupExpensesPageLoader] Fetching group:', groupId);
       try {
         const ref = doc(db, 'groups', groupId);
         const snap = await getDoc(ref);
+        console.log('[GroupExpensesPageLoader] Firestore snapshot:', snap);
         if (!snap.exists()) {
+          console.warn('[GroupExpensesPageLoader] Group not found:', groupId);
           setError('Group not found.');
           setLoading(false);
           return;
         }
-        setGroup({ id: snap.id, ...snap.data() });
+        const groupData = { id: snap.id, ...snap.data() };
+        console.log('[GroupExpensesPageLoader] Loaded group data:', groupData);
+        setGroup(groupData);
         setLoading(false);
       } catch (e) {
+        console.error('[GroupExpensesPageLoader] Error loading group:', e);
         setError('Failed to load group.');
         setLoading(false);
       }
