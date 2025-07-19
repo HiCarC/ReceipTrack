@@ -4,6 +4,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { db } from '../firebase';
 import { collection, addDoc, query, where, onSnapshot, serverTimestamp, doc, updateDoc, deleteDoc, orderBy } from 'firebase/firestore';
 import { useAuth } from '../contexts/AuthContext';
+import { useNavigate, useParams } from 'react-router-dom';
+import { Helmet } from 'react-helmet-async';
 
 const EXPENSE_CATEGORIES = [
   { name: 'Groceries', emoji: '🛒' },
@@ -40,8 +42,10 @@ function getNameByUid(group, uid) {
   return entry ? entry[0] : uid;
 }
 
-export default function GroupExpensesPage({ group, onBack }) {
+export default function GroupExpensesPage({ group, onBack, initialTab }) {
   const { user } = useAuth();
+  const navigate = useNavigate();
+  const { groupId } = useParams();
   const myName = getMyParticipantName(group, user);
   // If user hasn't claimed a name, show a message and block actions
   if (!myName) {
@@ -52,7 +56,11 @@ export default function GroupExpensesPage({ group, onBack }) {
       </div>
     );
   }
-  const [tab, setTab] = useState('expenses');
+  const [tab, setTab] = useState(() => {
+    if (initialTab && ['expenses', 'balances', 'photos'].includes(initialTab)) return initialTab;
+    return 'expenses';
+  });
+  const [tabFade, setTabFade] = useState(true);
   const [expenses, setExpenses] = useState([]);
   const [showAdd, setShowAdd] = useState(false);
   const [label, setLabel] = useState('');
@@ -268,48 +276,84 @@ export default function GroupExpensesPage({ group, onBack }) {
     }
   };
 
+  // Animated tab transitions
+  const handleTabChange = (newTab) => {
+    if (tab === newTab) return;
+    setTabFade(false);
+    setTimeout(() => {
+      setTab(newTab);
+      setTabFade(true);
+    }, 180); // match transition duration
+  };
+
+  // Update URL and document title/meta when tab changes
+  useEffect(() => {
+    if (groupId) {
+      navigate(`/group/${groupId}/${tab}`); // push to history
+    }
+    let tabLabel = tab.charAt(0).toUpperCase() + tab.slice(1);
+    document.title = `${group.name} – ${tabLabel} | ReceipTrack`;
+    // SEO: set meta description and canonical
+    const metaDesc = document.querySelector('meta[name="description"]');
+    if (metaDesc) metaDesc.setAttribute('content', `${group.name} – ${tabLabel} tab in ReceipTrack group expenses app.`);
+    let link = document.querySelector('link[rel="canonical"]');
+    if (!link) {
+      link = document.createElement('link');
+      link.setAttribute('rel', 'canonical');
+      document.head.appendChild(link);
+    }
+    link.setAttribute('href', window.location.href);
+  }, [tab, groupId, group.name, navigate]);
+
   return (
-    <div className="min-h-screen bg-black/90 flex flex-col">
-      <div className="flex items-center gap-2 p-4">
-        <button onClick={onBack} className="text-white"><ArrowLeft className="h-6 w-6" /></button>
-        <span className="text-2xl font-bold text-white ml-2">{group.emoji || '👥'} {group.name}</span>
-      </div>
-      <div className="flex justify-center gap-2 mt-2 mb-4">
-        {TABS.map(t => (
-          <button
-            key={t.key}
-            className={`px-4 py-2 rounded-full text-sm font-semibold ${tab === t.key ? 'bg-white text-black' : 'bg-slate-800 text-white border border-slate-700'}`}
-            onClick={() => setTab(t.key)}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
-      <div className="flex-1 flex flex-col items-center justify-center w-full px-2">
-        {loading ? (
-          <div className="text-center text-blue-200/70 mt-12 text-lg">Loading expenses...</div>
-        ) : error ? (
-          <div className="text-center text-red-400 mt-12 text-lg">{error}</div>
-        ) : tab === 'expenses' && expenses.length === 0 ? (
-          <div className="flex flex-col items-center justify-center mt-8">
-            <svg width="64" height="64" viewBox="0 0 24 24" fill="none"><path d="M12 8v4l3 3" stroke="#888" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/><circle cx="12" cy="12" r="10" stroke="#888" strokeWidth="2"/></svg>
-            <div className="text-white text-lg font-semibold mt-4">No expenses yet</div>
-            <div className="text-blue-200 text-center mt-2">Add an expense by tapping the "+" button to start tracking and splitting your group expenses.</div>
-          </div>
-        ) : tab === 'expenses' && expenses.length > 0 && (
-          <div className="w-full max-w-md mx-auto mt-2 flex flex-col gap-2">
-            {expenses.map(exp => (
-              <div key={exp.id} className="flex items-center bg-slate-800 rounded-xl p-3 shadow border border-blue-700/20 gap-3 cursor-pointer hover:bg-slate-700 transition" onClick={() => setEditExpense(exp)}>
-                <div className="flex-1">
-                  <div className="font-semibold text-white text-base">{exp.label}</div>
-                  <div className="text-blue-200 text-sm">{getNameByUid(group, exp.paidBy)} • {exp.date}</div>
+    <>
+      <Helmet>
+        <title>{group.name} – {tab.charAt(0).toUpperCase() + tab.slice(1)} | ReceipTrack</title>
+        <meta name="description" content={`${group.name} – ${tab.charAt(0).toUpperCase() + tab.slice(1)} tab in ReceipTrack group expenses app.`} />
+        <link rel="canonical" href={window.location.href} />
+      </Helmet>
+      <div className="min-h-screen bg-black/90 flex flex-col">
+        <div className="flex items-center gap-2 p-4">
+          <button className="text-blue-300 hover:text-white" onClick={onBack}><ArrowLeft className="h-6 w-6" /></button>
+          <span className="text-2xl font-bold text-white ml-2 flex-1 truncate">{group.name}</span>
+        </div>
+        <div className="flex justify-center gap-2 mb-2">
+          {TABS.map(t => (
+            <button
+              key={t.key}
+              className={`px-4 py-2 rounded-full font-semibold text-base transition-all duration-150 ${tab === t.key ? 'bg-blue-600 text-white shadow-lg' : 'bg-slate-800 text-blue-200 hover:bg-blue-700 hover:text-white'}`}
+              onClick={() => handleTabChange(t.key)}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+        <div className={`flex-1 transition-opacity duration-200 ${tabFade ? 'opacity-100' : 'opacity-0'}`}>
+          {loading ? (
+            <div className="text-center text-blue-200/70 mt-12 text-lg">Loading expenses...</div>
+          ) : error ? (
+            <div className="text-center text-red-400 mt-12 text-lg">{error}</div>
+          ) : tab === 'expenses' && expenses.length === 0 ? (
+            <div className="flex flex-col items-center justify-center mt-8">
+              <svg width="64" height="64" viewBox="0 0 24 24" fill="none"><path d="M12 8v4l3 3" stroke="#888" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/><circle cx="12" cy="12" r="10" stroke="#888" strokeWidth="2"/></svg>
+              <div className="text-white text-lg font-semibold mt-4">No expenses yet</div>
+              <div className="text-blue-200 text-center mt-2">Add an expense by tapping the "+" button to start tracking and splitting your group expenses.</div>
+            </div>
+          ) : tab === 'expenses' && expenses.length > 0 && (
+            <div className="w-full max-w-md mx-auto mt-2 flex flex-col gap-2">
+              {expenses.map(exp => (
+                <div key={exp.id} className="flex items-center bg-slate-800 rounded-xl p-3 shadow border border-blue-700/20 gap-3 cursor-pointer hover:bg-slate-700 transition" onClick={() => setEditExpense(exp)}>
+                  <div className="flex-1">
+                    <div className="font-semibold text-white text-base">{exp.label}</div>
+                    <div className="text-blue-200 text-sm">{getNameByUid(group, exp.paidBy)} • {exp.date}</div>
+                  </div>
+                  <div className="font-bold text-lg text-blue-300">{exp.amount.toFixed(2)} {group.currency}</div>
                 </div>
-                <div className="font-bold text-lg text-blue-300">{exp.amount.toFixed(2)} {group.currency}</div>
-              </div>
-            ))}
-          </div>
-        )}
-        {/* TODO: Balances and Photos tabs */}
+              ))}
+            </div>
+          )}
+          {/* TODO: Balances and Photos tabs */}
+        </div>
       </div>
       <button
         className="fixed bottom-24 left-1/2 -translate-x-1/2 z-50 bg-blue-600 hover:bg-blue-700 text-white rounded-full w-16 h-16 flex items-center justify-center shadow-2xl border-4 border-blue-900 transition-all duration-300 ease-in-out active:scale-95 text-3xl"
@@ -580,7 +624,7 @@ export default function GroupExpensesPage({ group, onBack }) {
           )}
         </DialogContent>
       </Dialog>
-    </div>
+    </>
   );
 }
 

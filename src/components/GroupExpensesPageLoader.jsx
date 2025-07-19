@@ -3,9 +3,11 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { db } from '../firebase';
 import { doc, getDoc } from 'firebase/firestore';
 import GroupExpensesPage from './GroupExpensesPage';
+import Skeleton from './Skeleton';
+import NotFound from './NotFound';
 
 export default function GroupExpensesPageLoader() {
-  const { groupId } = useParams();
+  const { groupId, tab } = useParams();
   const navigate = useNavigate();
   const [group, setGroup] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -40,12 +42,15 @@ export default function GroupExpensesPageLoader() {
   }, [groupId]);
 
   if (loading) {
-    return <div className="min-h-screen flex items-center justify-center bg-black/90 text-white text-xl">Loading group...</div>;
+    return <Skeleton type="group" />;
+  }
+  if (error === 'Group not found.') {
+    return <NotFound />;
   }
   if (error) {
     return <div className="min-h-screen flex items-center justify-center bg-black/90 text-red-400 text-xl">{error}</div>;
   }
   if (!group) return null;
 
-  return <GroupExpensesPage group={group} onBack={() => navigate('/')} />;
+  return <GroupExpensesPage group={group} initialTab={tab} onBack={() => navigate('/')} />;
 } 

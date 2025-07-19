@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { getAuth, onAuthStateChanged, signInWithPopup, GoogleAuthProvider, signOut, signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail as firebaseSendPasswordResetEmail, sendEmailVerification as firebaseSendEmailVerification, updateProfile as firebaseUpdateProfile, updateEmail as firebaseUpdateEmail, verifyBeforeUpdateEmail } from 'firebase/auth';
-import { doc, updateDoc, getDoc, setDoc } from 'firebase/firestore';
+import { doc, updateDoc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../firebase';
 
 const AuthContext = createContext();
@@ -28,7 +28,7 @@ export function AuthProvider({ children }) {
             displayName: user.displayName || '',
             email: user.email || '',
             photoURL: user.photoURL || '',
-            createdAt: new Date().toISOString(), // Add a creation timestamp
+            createdAt: serverTimestamp(), // Add a creation timestamp
             settings: {} // Initialize settings
           }, { merge: true });
           setUser(user); // Set user after creating document
@@ -62,7 +62,7 @@ export function AuthProvider({ children }) {
       displayName: user.displayName || '',
       email: user.email || '',
       photoURL: user.photoURL || '',
-      createdAt: new Date().toISOString(),
+      createdAt: serverTimestamp(),
       settings: {} // Initialize settings
     }, { merge: true });
   };
