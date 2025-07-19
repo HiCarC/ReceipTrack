@@ -1,0 +1,183 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // USERS: each user can only create/read/update/delete their own profile
+    match /users/{userId} {
+      allow create: if request.auth != null
+                    && request.auth.uid == userId
+                    && request.resource.data.createdAt == request.time
+                    && request.resource.data.keys().hasAll(['createdAt','displayName','email'])
+                    && request.resource.data.email == request.auth.token.email;
+
+      allow read, update, delete: if request.auth != null
+                                  && request.auth.uid == userId;
+
+      // RECEIPTS SUB-COLLECTION: per-user listing & CRUD
+      match /receipts/{receiptId} {
+        allow create: if request.auth != null
+                      && request.auth.uid == userId
+                      && request.resource.data.userId == userId
+                      && request.resource.data.items is list
+                      && request.resource.data.transactionDate is timestamp
+                      && (
+                           !('createdAt' in request.resource.data)
+                           || request.resource.data.createdAt == request.time
+                         );
+        allow read, update, delete: if request.auth != null
+                                    && request.auth.uid == userId;
+      }
+    }
+
+    // GROUPS: anyone can read group info (for joining/claiming)
+    match /groups/{groupId} {
+      allow create: if request.auth != null
+                    && request.resource.data.createdBy == request.auth.uid
+                    && request.resource.data.participants is list
+                    && request.resource.data.participants.size() > 0
+                    && request.resource.data.claimedBy is map
+                    && request.resource.data.createdAt == request.time;
+
+      // Allow anyone to read group info (for join/claim flow)
+      allow read: if true;
+
+      // Allow a user to claim a name or add themselves (no avatars)
+      allow update: if request.auth != null
+        && (
+          // Add myself: add a new participant and claim it
+          (
+            request.resource.data.claimedBy is map
+            && resource.data.claimedBy is map
+            && request.resource.data.participants is list
+            && resource.data.participants is list
+            && request.resource.data.participants.size() == resource.data.participants.size() + 1
+            && request.resource.data.claimedBy.size() == resource.data.claimedBy.size() + 1
+            && request.resource.data.participants[request.resource.data.participants.size() - 1] in request.resource.data.claimedBy
+            && !(request.resource.data.participants[request.resource.data.participants.size() - 1] in resource.data.claimedBy)
+            && request.resource.data.claimedBy[request.resource.data.participants[request.resource.data.participants.size() - 1]] == request.auth.uid
+            // All other fields must be unchanged
+            && request.resource.data.name == resource.data.name
+            && request.resource.data.currency == resource.data.currency
+            && request.resource.data.createdBy == resource.data.createdBy
+            && request.resource.data.createdAt == resource.data.createdAt
+          )
+          // Claim an existing slot (just update claimedBy)
+          || (
+            request.resource.data.claimedBy is map &&
+            resource.data.claimedBy  is map &&
+
+            // exactly one new key was added
+            request.resource.data.claimedBy.size()
+                == resource.data.claimedBy.size() + 1 &&
+
+            // the caller's uid is that new value
+            !(request.auth.uid in resource.data.claimedBy.values()) &&
+             (request.auth.uid in request.resource.data.claimedBy.values()) &&
+
+            // everything else is unchanged
+            request.resource.data.participants == resource.data.participants &&
+            request.resource.data.name        == resource.data.name        &&
+            request.resource.data.currency    == resource.data.currency    &&
+            request.resource.data.createdBy   == resource.data.createdBy   &&
+            request.resource.data.createdAt   == resource.data.createdAt
+          )
+          // Allow archiving: user has claimed a name and is only updating archivedBy field
+          || (
+            request.auth.uid in resource.data.claimedBy.values()
+            && request.resource.data.archivedBy is list
+            && request.resource.data.participants == resource.data.participants
+            && request.resource.data.name == resource.data.name
+            && request.resource.data.currency == resource.data.currency
+            && request.resource.data.createdBy == resource.data.createdBy
+            && request.resource.data.createdAt == resource.data.createdAt
+            && request.resource.data.claimedBy == resource.data.claimedBy
+          )
+          // Or allow the creator to update group details (not claimedBy/participants)
+          || (request.auth.uid == resource.data.createdBy)
+        );
+
+      allow delete: if request.auth != null
+                    && request.auth.uid == resource.data.createdBy;
+
+      // GROUP EXPENSES SUBCOLLECTION: only users who have claimed a name can CRUD
+      match /expenses/{expenseId} {
+        allow create: if request.auth != null
+          && get(/databases/$(database)/documents/groups/$(groupId)).data.claimedBy.values().hasAny([request.auth.uid])
+          && request.resource.data.label is string
+          && request.resource.data.amount is number
+          && request.resource.data.paidBy is string
+          && request.resource.data.date is string
+          && request.resource.data.createdBy == request.auth.uid
+          && request.resource.data.createdAt is timestamp;
+
+        allow read, update, delete: if request.auth != null
+          && get(/databases/$(database)/documents/groups/$(groupId)).data.claimedBy.values().hasAny([request.auth.uid]);
+      }
+      
+      // Add this inside match /groups/{groupId} { ... }
+      match /settlements/{settlementId} {
+        allow create, update, delete: if request.auth != null
+          && get(/databases/$(database)/documents/groups/$(groupId)).data.claimedBy.values().hasAny([request.auth.uid]);
+        allow read: if request.auth != null
+          && get(/databases/$(database)/documents/groups/$(groupId)).data.claimedBy.values().hasAny([request.auth.uid]);
+      }
+      
+    }
+
+    // EXCHANGE RATES: world-class caching for authenticated users
+    match /exchangeRates/{rateId} {
+      allow read: if request.auth != null;
+      allow create, update: if request.auth != null
+                            && request.resource.data.keys().hasAll(['rate', 'date', 'currency', 'baseCurrency'])
+                            && request.resource.data.rate is number
+                            && request.resource.data.rate > 0
+                            && request.resource.data.rate < 10000
+                            && request.resource.data.date is string
+                            && request.resource.data.currency is string
+                            && request.resource.data.baseCurrency is string
+                            && request.resource.data.currency != request.resource.data.baseCurrency;
+      allow delete: if request.auth != null;
+    }
+
+    // GROUP RECEIPTS (legacy, flat collection): allow only users who have claimed a name to create/read/update/delete
+    match /receipts/{receiptId} {
+      allow create: if request.auth != null
+        && (
+          // Group receipt: user has claimed a name in the group
+          (
+            request.resource.data.groupId is string
+            && request.resource.data.groupId.size() > 0
+            && request.resource.data.label is string
+            && request.resource.data.amount is number
+            && request.resource.data.paidBy is string
+            && request.resource.data.date is string
+            && request.resource.data.createdBy == request.auth.uid
+            && request.resource.data.createdAt is timestamp
+            && request.auth.uid in get(/databases/$(database)/documents/groups/$(request.resource.data.groupId)).data.claimedBy.values()
+          )
+          // Personal receipt: user is the owner
+          || (
+            request.resource.data.userId == request.auth.uid
+            && request.resource.data.items is list
+            && request.resource.data.transactionDate is timestamp
+            && (
+              !('createdAt' in request.resource.data)
+              || request.resource.data.createdAt == request.time
+            )
+          )
+        );
+      allow get, update, delete: if request.auth != null
+        && (
+          // Group receipt: user has claimed a name in the group
+          (
+            resource.data.groupId is string
+            && resource.data.groupId.size() > 0
+            && request.auth.uid in get(/databases/$(database)/documents/groups/$(resource.data.groupId)).data.claimedBy.values()
+          )
+          // Personal receipt: user is the owner
+          || (resource.data.userId == request.auth.uid)
+        );
+      allow list: if request.auth != null;
+    }
+  }
+} 
