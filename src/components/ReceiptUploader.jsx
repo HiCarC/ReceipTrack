@@ -2740,14 +2740,14 @@ Reply with a JSON object enclosed in triple backticks:
                         value={activeFormData.total}
                         onChange={e => {
                           const value = e.target.value;
-                          // Only allow numbers, decimal point, and backspace
-                          if (/^[\d.]*$/.test(value) || value === '') {
+                          // Allow numbers, dot, and comma as decimal separators
+                          if (/^[\d.,]*$/.test(value) || value === '') {
                             handleFormInputChange(e);
                           }
                         }}
                         onBlur={e => {
-                          const value = e.target.value;
-                          const parsed = parseFloat(value.replace(',', '.'));
+                          const value = e.target.value.replace(',', '.');
+                          const parsed = parseFloat(value);
                           if (!isNaN(parsed)) {
                             handleFormInputChange({ target: { name: 'total', value: parsed.toFixed(2) } });
                           }
@@ -2770,14 +2770,14 @@ Reply with a JSON object enclosed in triple backticks:
                         value={activeFormData.subtotal}
                         onChange={e => {
                           const value = e.target.value;
-                          // Only allow numbers, decimal point, and backspace
-                          if (/^[\d.]*$/.test(value) || value === '') {
+                          // Allow numbers, dot, and comma as decimal separators
+                          if (/^[\d.,]*$/.test(value) || value === '') {
                             handleFormInputChange(e);
                           }
                         }}
                         onBlur={e => {
-                          const value = e.target.value;
-                          const parsed = parseFloat(value.replace(',', '.'));
+                          const value = e.target.value.replace(',', '.');
+                          const parsed = parseFloat(value);
                           if (!isNaN(parsed)) {
                             handleFormInputChange({ target: { name: 'subtotal', value: parsed.toFixed(2) } });
                           }
@@ -2863,14 +2863,14 @@ Reply with a JSON object enclosed in triple backticks:
                                 value={item.price || ''}
                                 onChange={e => {
                                   const value = e.target.value;
-                                  // Only allow numbers, decimal point, and backspace
-                                  if (/^[\d.]*$/.test(value) || value === '') {
+                                  // Allow numbers, dot, and comma as decimal separators
+                                  if (/^[\d.,]*$/.test(value) || value === '') {
                                     handleItemInputChange(e, index, 'price');
                                   }
                                 }}
                                 onBlur={e => {
-                                  const value = e.target.value;
-                                  const parsed = parseFloat(value.replace(',', '.'));
+                                  const value = e.target.value.replace(',', '.');
+                                  const parsed = parseFloat(value);
                                   if (!isNaN(parsed)) {
                                     handleItemInputChange({ target: { value: parsed.toFixed(2) } }, index, 'price');
                                   }
@@ -2925,8 +2925,8 @@ Reply with a JSON object enclosed in triple backticks:
                           value={editingReceipt ? currentNewItem.price : newItem.price}
                           onChange={e => {
                             const value = e.target.value;
-                            // Only allow numbers, decimal point, and backspace
-                            if (/^[\d.]*$/.test(value) || value === '') {
+                            // Allow numbers, dot, and comma as decimal separators
+                            if (/^[\d.,]*$/.test(value) || value === '') {
                               if (editingReceipt) {
                                 setCurrentNewItem(prev => ({ ...prev, price: value }));
                               } else {
@@ -2935,8 +2935,8 @@ Reply with a JSON object enclosed in triple backticks:
                             }
                           }}
                           onBlur={e => {
-                            const value = e.target.value;
-                            const parsed = parseFloat(value.replace(',', '.'));
+                            const value = e.target.value.replace(',', '.');
+                            const parsed = parseFloat(value);
                             if (!isNaN(parsed)) {
                               const formattedPrice = parsed.toFixed(2);
                               if (editingReceipt) {
