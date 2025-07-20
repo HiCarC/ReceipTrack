@@ -45,22 +45,42 @@ export default function useGroupBalances(groupId) {
       // Initialize balances
       const balances = {};
       allUids.forEach(uid => { balances[uid] = 0; });
-      // Process expenses
+      // Process expenses (Tricount/ledger logic: payer + (total - their share), each participant -share)
       for (const exp of currentExpenses) {
         const total = parseFloat(exp.amount) || 0;
         const paidBy = exp.paidBy;
         const splits = exp.splits || {};
-        if (paidBy) balances[paidBy] += total;
+        // Subtract each participant's share
         Object.entries(splits).forEach(([uid, amount]) => {
           const amt = parseFloat(amount || 0);
           if (!isNaN(amt)) balances[uid] -= amt;
         });
+        // Credit the payer with the total paid
+        if (paidBy) balances[paidBy] += total;
       }
-      // Process settlements
+      // Process settlements, but ignore those that have a matching reimbursement expense
+      // Build a set of reimbursement keys: `${from}_${to}_${amount}_${date}`
+      const reimbursementKeys = new Set();
+      for (const exp of currentExpenses) {
+        if (exp.expenseType === 'reimbursement' && exp.paidBy && exp.splits) {
+          const toUid = Object.keys(exp.splits)[0];
+          const amt = parseFloat(exp.amount);
+          const date = exp.date || '';
+          reimbursementKeys.add(`${exp.paidBy}_${toUid}_${amt}_${date}`);
+        }
+      }
       for (const s of currentSettlements) {
-        const { from, to, amount, settled } = s;
+        const { from, to, amount, settled, settledAt } = s;
         if (!settled || !from || !to || !amount) continue;
         const amt = parseFloat(amount);
+        // Try to match by from, to, amount, and date (if available)
+        let date = '';
+        if (settledAt && settledAt.toDate) {
+          // Firestore Timestamp
+          date = settledAt.toDate().toISOString().slice(0,10);
+        }
+        // If a reimbursement expense exists for this settlement, skip it
+        if (reimbursementKeys.has(`${from}_${to}_${amt}_${date}`)) continue;
         if (!isNaN(amt)) {
           balances[from] += amt;
           balances[to] -= amt;

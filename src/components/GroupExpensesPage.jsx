@@ -133,33 +133,26 @@ function getUnsettledOwes(group, balances, settlements, myName, positive) {
     k => k.trim().toLowerCase() === myName.trim().toLowerCase()
   ) || myName;
   if (positive) {
-    // They owe me
+    // They owe me: anyone with a negative balance (except me)
     Object.entries(balances).forEach(([name, bal]) => {
       if (name === myKey) return;
-      // If the participant is missing from claimedBy, still show them
-      const fromUid = claimedBy[name] || name;
-      const toUid = claimedBy[myKey] || myKey;
-      if (bal < 0 && (!isSettled(settlements, fromUid, toUid))) {
+      if (bal < 0) {
         owes.push([name, Math.abs(bal)]);
       }
     });
   } else {
-    // I owe them
+    // I owe them: anyone with a positive balance (except me)
     Object.entries(balances).forEach(([name, bal]) => {
       if (name === myKey) return;
-      const fromUid = claimedBy[myKey] || myKey;
-      const toUid = claimedBy[name] || name;
-      if (bal > 0 && (!isSettled(settlements, fromUid, toUid))) {
+      if (bal > 0) {
         owes.push([name, bal]);
       }
     });
   }
-  console.log('claimedBy mapping:', claimedBy);
-  console.log('Unsettled owes:', owes);
   return owes;
 }
 
-export default function GroupExpensesPage({ group, onBack, initialTab }) {
+function GroupExpensesPage({ group, onBack, initialTab }) {
   const { user } = useAuth();
   const navigate = useNavigate();
   // const { groupId } = useParams();
@@ -237,7 +230,7 @@ export default function GroupExpensesPage({ group, onBack, initialTab }) {
     const expensesCol = collection(db, 'groups', group.id, 'expenses');
     const q = query(
       expensesCol,
-      orderBy('date', 'desc')
+      orderBy('createdAt', 'desc')
     );
     const unsub = onSnapshot(q, (snapshot) => {
       setError(''); // Clear any previous error on successful snapshot
@@ -249,6 +242,9 @@ export default function GroupExpensesPage({ group, onBack, initialTab }) {
     });
     return () => unsub();
   }, [group?.id, group?.claimedBy, user?.uid]);
+
+  // Debug: log the order and timestamps of expenses
+  console.log('Expenses order:', expenses.map(e => ({ label: e.label, createdAt: e.createdAt && (e.createdAt.seconds ? new Date(e.createdAt.seconds * 1000).toISOString() : e.createdAt) })));
 
   // Add expense
   const handleAddExpense = async e => {
@@ -540,6 +536,26 @@ Please settle up when you can. Thank you!`;
         settled: true,
         settledAt: serverTimestamp(),
       });
+      // Add reimbursement expense to expenses collection
+      const payerName = getNameByUid(group, fromUid);
+      const payeeName = getNameByUid(group, toUid);
+      const now = new Date();
+      await addDoc(collection(db, 'groups', group.id, 'expenses'), {
+        label: `${payerName} paid ${payeeName}`,
+        amount: amount,
+        paidBy: fromUid,
+        date: now.toISOString().slice(0,10),
+        createdBy: user.uid, // Use the authenticated user
+        createdAt: serverTimestamp(), // Always include createdAt
+        expenseType: 'reimbursement',
+        currency: group.currency || 'EUR',
+        splitType: 'reimbursement',
+        splits: { [toUid]: amount },
+        shares: { [toUid]: 1 },
+        splitEnabled: false,
+        tag: 'reimbursement',
+        photo: '',
+      });
       setConfirmMarkPaid(null);
       setShowBreakdown(false);
     } catch (error) {
@@ -669,16 +685,35 @@ Please settle up when you can. Thank you!`;
               <div className="text-blue-200 text-center mt-2 px-4">Add an expense by tapping the "+" button to start tracking and splitting your group expenses.</div>
             </div>
           ) : tab === 'expenses' && expenses.length > 0 && (
-            <div className="w-full max-w-md mx-auto flex flex-col gap-3">
-              {expenses.map(exp => (
-                <div key={exp.id} className="flex items-center bg-slate-800 rounded-xl p-4 shadow border border-blue-700/20 gap-3 cursor-pointer hover:bg-slate-700 transition" onClick={() => setEditExpense(exp)}>
-                  <div className="flex-1 min-w-0">
-                    <div className="font-semibold text-white text-base truncate">{exp.label}</div>
-                    <div className="text-blue-200 text-sm truncate">{getNameByUid(group, exp.paidBy)} • {exp.date}</div>
+            <div className="w-full max-w-md mx-auto flex flex-col gap-3" style={{ flexDirection: 'column' }}>
+              {expenses.slice().sort((a, b) => {
+                const aTime = a.createdAt && typeof a.createdAt.seconds === 'number' ? a.createdAt.seconds : 0;
+                const bTime = b.createdAt && typeof b.createdAt.seconds === 'number' ? b.createdAt.seconds : 0;
+                return bTime - aTime;
+              }).map(exp => {
+                // Determine if current user is payer or recipient
+                const myUid = group.claimedBy[myName];
+                const isPayer = exp.paidBy === myUid;
+                const isRecipient = exp.splits && Object.keys(exp.splits).includes(myUid) && !isPayer;
+                let sign = '';
+                let colorClass = 'text-blue-300';
+                if (isPayer) {
+                  sign = '-';
+                  colorClass = 'text-red-400';
+                } else if (isRecipient) {
+                  sign = '+';
+                  colorClass = 'text-green-400';
+                }
+                return (
+                  <div key={exp.id} className="flex items-center bg-slate-800 rounded-xl p-4 shadow border border-blue-700/20 gap-3 cursor-pointer hover:bg-slate-700 transition" onClick={() => setEditExpense(exp)}>
+                    <div className="flex-1 min-w-0">
+                      <div className="font-semibold text-white text-base truncate">{exp.label}</div>
+                      <div className="text-blue-200 text-sm truncate">{getNameByUid(group, exp.paidBy)} • {exp.date}</div>
+                    </div>
+                    <div className={`font-bold text-lg flex-shrink-0 font-mono ${colorClass}`}>{sign}{parseFloat(exp.amount).toFixed(2)} {group.currency}</div>
                   </div>
-                  <div className="font-bold text-lg text-blue-300 flex-shrink-0">{exp.amount.toFixed(2)} {group.currency}</div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
           {/* BALANCES TAB */}
@@ -1805,3 +1840,5 @@ function EditExpenseForm({ editExpense, group, user, onSave, onDelete, onCancel 
     </form>
   );
 } 
+
+export default GroupExpensesPage;
