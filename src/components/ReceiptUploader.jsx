@@ -717,93 +717,7 @@ export default function ReceiptUploader({ className, showOnly, onTabChange }) {
     }
   };
 
-  // Enhanced price editing functions
-  const openPriceEditor = (index, currentPrice) => {
-    setEditingPriceIndex(index);
-    setPriceInputValue(currentPrice || '');
-    setPriceInputCursor(0);
-    setShowPriceEditor(true);
-  };
 
-  const closePriceEditor = () => {
-    setShowPriceEditor(false);
-    setEditingPriceIndex(null);
-    setPriceInputValue('');
-    setPriceInputCursor(0);
-  };
-
-  const handlePriceKeyPress = (key) => {
-    if (key === 'backspace') {
-      if (priceInputValue.length > 0) {
-        const newValue = priceInputValue.slice(0, -1);
-        setPriceInputValue(newValue);
-        setPriceInputCursor(Math.max(0, priceInputCursor - 1));
-      }
-    } else if (key === 'clear') {
-      setPriceInputValue('');
-      setPriceInputCursor(0);
-    } else if (key === 'done') {
-      savePriceEdit();
-    } else if (key === '.') {
-      // Only allow one decimal point
-      if (!priceInputValue.includes('.')) {
-        const newValue = priceInputValue + '.';
-        setPriceInputValue(newValue);
-        setPriceInputCursor(newValue.length);
-      }
-    } else if (key >= '0' && key <= '9') {
-      // Limit to reasonable length and prevent multiple leading zeros
-      if (priceInputValue.length < 10) {
-        if (priceInputValue === '0' && key === '0') return; // Prevent multiple leading zeros
-        if (priceInputValue === '0') {
-          setPriceInputValue(key);
-          setPriceInputCursor(1);
-        } else {
-          const newValue = priceInputValue + key;
-          setPriceInputValue(newValue);
-          setPriceInputCursor(newValue.length);
-        }
-      }
-    }
-  };
-
-  const savePriceEdit = () => {
-    const parsedPrice = parseFloat(priceInputValue) || 0;
-    
-    if (editingPriceIndex === 'new') {
-      // Handle new item price
-      if (editingReceipt) {
-        setCurrentNewItem(prev => ({ ...prev, price: parsedPrice.toFixed(2) }));
-      } else {
-        setNewItem(prev => ({ ...prev, price: parsedPrice.toFixed(2) }));
-      }
-    } else if (editingPriceIndex !== null) {
-      // Handle existing item price
-      const targetStateSetter = editingReceipt ? setEditForm : setFormData;
-      
-      targetStateSetter(prev => {
-        const updatedItems = [...(prev.items || [])];
-        updatedItems[editingPriceIndex] = {
-          ...updatedItems[editingPriceIndex],
-          price: parsedPrice.toFixed(2)
-        };
-        return { ...prev, items: updatedItems };
-      });
-
-      // If editing, also update currentReceipt items
-      if (editingReceipt) {
-        setCurrentReceipt(prev => {
-          const updatedItems = [...(prev.items || [])];
-          updatedItems[editingPriceIndex] = {
-            ...updatedItems[editingPriceIndex],
-            price: parsedPrice.toFixed(2)
-          };
-          return { ...prev, items: updatedItems };
-        });
-      }
-    }
-    closePriceEditor();
-  };
 
   // Update the `handleSaveReceipt` for new receipts
   const handleSaveReceiptSubmit = async () => {
@@ -1594,110 +1508,7 @@ export default function ReceiptUploader({ className, showOnly, onTabChange }) {
     );
   };
 
-  // Beautiful Price Editor Modal Component
-  const PriceEditorModal = () => {
-    if (!showPriceEditor) return null;
 
-    const keypadButtons = [
-      ['1', '2', '3'],
-      ['4', '5', '6'],
-      ['7', '8', '9'],
-      ['.', '0', 'backspace']
-    ];
-
-    const actionButtons = [
-      { key: 'clear', label: 'Clear', className: 'bg-red-600 hover:bg-red-700 text-white' },
-      { key: 'done', label: 'Done', className: 'bg-green-600 hover:bg-green-700 text-white' }
-    ];
-
-    return (
-      <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 backdrop-blur-sm">
-        <div className="w-full max-w-md bg-slate-900/95 backdrop-blur-xl border border-blue-500/30 rounded-t-3xl shadow-2xl animate-slide-up">
-          {/* Header */}
-          <div className="p-6 pb-4 border-b border-blue-700/30">
-            <div className="flex items-center justify-between mb-2">
-              <h3 className="text-xl font-bold text-white">Edit Price</h3>
-              <button
-                onClick={closePriceEditor}
-                className="text-blue-300 hover:text-white transition-colors"
-              >
-                <X className="h-6 w-6" />
-              </button>
-            </div>
-            <p className="text-blue-200/80 text-sm">
-              {editingPriceIndex === 'new' ? 'New Item Price' : `Item ${editingPriceIndex + 1} Price`}
-            </p>
-          </div>
-
-          {/* Price Display */}
-          <div className="p-6 pt-4">
-            <div className="bg-slate-800/80 border border-blue-600/40 rounded-2xl p-4 mb-6">
-              <div className="text-center">
-                <div className="text-3xl font-mono font-bold text-white mb-1">
-                  {priceInputValue || '0.00'}
-                </div>
-                <div className="text-blue-300/60 text-sm">
-                  {getCurrencySymbol(activeFormData.currency)}
-                </div>
-                {/* Cursor indicator */}
-                <div className="h-0.5 bg-blue-400 mt-2 transition-all duration-200" 
-                     style={{ 
-                       width: '2px', 
-                       marginLeft: `${Math.min(priceInputValue.length * 12, 200)}px`,
-                       opacity: priceInputValue.length > 0 ? 1 : 0.3
-                     }} />
-              </div>
-            </div>
-
-            {/* Numeric Keypad */}
-            <div className="space-y-3">
-              {keypadButtons.map((row, rowIndex) => (
-                <div key={rowIndex} className="flex gap-3">
-                  {row.map((key) => (
-                    <button
-                      key={key}
-                      onClick={() => handlePriceKeyPress(key)}
-                      className={`flex-1 h-14 rounded-2xl font-bold text-lg transition-all duration-200 active:scale-95 ${
-                        key === 'backspace' 
-                          ? 'bg-slate-700 hover:bg-slate-600 text-white' 
-                          : key === '.'
-                          ? 'bg-blue-600 hover:bg-blue-500 text-white'
-                          : 'bg-slate-800 hover:bg-slate-700 text-white border border-slate-600/50'
-                      }`}
-                    >
-                      {key === 'backspace' ? (
-                        <svg className="w-6 h-6 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2M3 12l9-9 9 9-9 9-9-9z" />
-                        </svg>
-                      ) : (
-                        key
-                      )}
-                    </button>
-                  ))}
-                </div>
-              ))}
-
-              {/* Action Buttons */}
-              <div className="flex gap-3 pt-2">
-                {actionButtons.map(({ key, label, className }) => (
-                  <button
-                    key={key}
-                    onClick={() => handlePriceKeyPress(key)}
-                    className={`flex-1 h-12 rounded-xl font-semibold transition-all duration-200 active:scale-95 ${className}`}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          {/* Safe area for mobile */}
-          <div className="h-4 bg-slate-900/95" />
-        </div>
-      </div>
-    );
-  };
 
   // Async currency conversion component
   const AsyncCurrencyConversion = ({ amount, currency, date }) => {
@@ -2316,11 +2127,7 @@ Reply with a JSON object enclosed in triple backticks:
   const swipeRefs = useRef({});
   const [showSwipeHint, setShowSwipeHint] = useState(false);
   
-  // Price editing modal state
-  const [showPriceEditor, setShowPriceEditor] = useState(false);
-  const [editingPriceIndex, setEditingPriceIndex] = useState(null);
-  const [priceInputValue, setPriceInputValue] = useState('');
-  const [priceInputCursor, setPriceInputCursor] = useState(0);
+
   
   // Show swipe hint on first visit
   useEffect(() => {
@@ -2927,13 +2734,25 @@ Reply with a JSON object enclosed in triple backticks:
                     <Input
                         id="total"
                         name="total"
-                      type="number"
+                        type="text"
                         inputMode="decimal"
-                        step="0.01"
-                      placeholder="0.00"
+                        placeholder="0.00"
                         value={activeFormData.total}
-                        onChange={handleFormInputChange}
-                        className="w-full bg-slate-800/90 border border-blue-700/40 text-white text-right focus:border-blue-400 focus:ring-2 focus:ring-blue-400 focus:bg-blue-950/80 transition-all duration-200 ease-in-out rounded-xl shadow-inner px-4 py-3 text-base placeholder-blue-200/60 outline-none"
+                        onChange={e => {
+                          const value = e.target.value;
+                          // Only allow numbers, decimal point, and backspace
+                          if (/^[\d.]*$/.test(value) || value === '') {
+                            handleFormInputChange(e);
+                          }
+                        }}
+                        onBlur={e => {
+                          const value = e.target.value;
+                          const parsed = parseFloat(value.replace(',', '.'));
+                          if (!isNaN(parsed)) {
+                            handleFormInputChange({ target: { name: 'total', value: parsed.toFixed(2) } });
+                          }
+                        }}
+                        className="w-full bg-slate-800/90 border border-blue-700/40 text-white text-right focus:border-blue-400 focus:ring-2 focus:ring-blue-400 focus:bg-blue-950/80 transition-all duration-200 ease-in-out rounded-xl shadow-inner px-4 py-3 text-base placeholder-blue-200/60 outline-none font-mono"
                       />
                       <span className="ml-2 text-blue-200 text-sm">{getCurrencySymbol(activeFormData.currency)}</span>
                     </div>
@@ -2945,13 +2764,25 @@ Reply with a JSON object enclosed in triple backticks:
                     <Input
                         id="subtotal"
                         name="subtotal"
-                        type="number"
+                        type="text"
                         inputMode="decimal"
-                        step="0.01"
                         placeholder="0.00"
                         value={activeFormData.subtotal}
-                        onChange={handleFormInputChange}
-                        className="w-full bg-slate-800/90 border border-blue-700/40 text-white text-right focus:border-blue-400 focus:ring-2 focus:ring-blue-400 focus:bg-blue-950/80 transition-all duration-200 ease-in-out rounded-xl shadow-inner px-4 py-3 text-base placeholder-blue-200/60 outline-none"
+                        onChange={e => {
+                          const value = e.target.value;
+                          // Only allow numbers, decimal point, and backspace
+                          if (/^[\d.]*$/.test(value) || value === '') {
+                            handleFormInputChange(e);
+                          }
+                        }}
+                        onBlur={e => {
+                          const value = e.target.value;
+                          const parsed = parseFloat(value.replace(',', '.'));
+                          if (!isNaN(parsed)) {
+                            handleFormInputChange({ target: { name: 'subtotal', value: parsed.toFixed(2) } });
+                          }
+                        }}
+                        className="w-full bg-slate-800/90 border border-blue-700/40 text-white text-right focus:border-blue-400 focus:ring-2 focus:ring-blue-400 focus:bg-blue-950/80 transition-all duration-200 ease-in-out rounded-xl shadow-inner px-4 py-3 text-base placeholder-blue-200/60 outline-none font-mono"
                       />
                       <span className="ml-2 text-blue-200 text-sm">{getCurrencySymbol(activeFormData.currency)}</span>
                     </div>
@@ -3025,17 +2856,27 @@ Reply with a JSON object enclosed in triple backticks:
                         autoCapitalize="words"
                         inputMode="text"
                               />
-                              <button
-                                type="button"
-                                onClick={() => openPriceEditor(index, item.price)}
-                                className="flex-[1] min-w-0 bg-slate-800/90 border border-blue-700/40 text-white text-right hover:border-blue-400 hover:bg-blue-950/80 active:bg-blue-900/60 transition-all duration-200 ease-in-out rounded-xl shadow-inner px-4 py-3 text-base placeholder-blue-200/60 outline-none focus:ring-2 focus:ring-blue-400 focus:border-blue-400"
-                              >
-                                <span className="flex items-center justify-center w-full">
-                                  <span className="font-mono">
-                                    {item.price ? parseFloat(item.price).toFixed(2) : '0.00'}
-                                  </span>
-                                </span>
-                              </button>
+                              <Input
+                                type="text"
+                                inputMode="decimal"
+                                placeholder="0.00"
+                                value={item.price || ''}
+                                onChange={e => {
+                                  const value = e.target.value;
+                                  // Only allow numbers, decimal point, and backspace
+                                  if (/^[\d.]*$/.test(value) || value === '') {
+                                    handleItemInputChange(e, index, 'price');
+                                  }
+                                }}
+                                onBlur={e => {
+                                  const value = e.target.value;
+                                  const parsed = parseFloat(value.replace(',', '.'));
+                                  if (!isNaN(parsed)) {
+                                    handleItemInputChange({ target: { value: parsed.toFixed(2) } }, index, 'price');
+                                  }
+                                }}
+                                className="flex-[1] min-w-0 bg-slate-800/90 border border-blue-700/40 text-white text-right focus:border-blue-400 focus:ring-2 focus:ring-blue-400 focus:bg-blue-950/80 transition-all duration-200 ease-in-out rounded-xl shadow-inner px-4 py-3 text-base placeholder-blue-200/60 outline-none font-mono"
+                              />
                               <span className="text-blue-200 text-sm font-medium">{getCurrencySymbol(activeFormData.currency)}</span>
                         <Button
                           type="button"
@@ -3077,23 +2918,36 @@ Reply with a JSON object enclosed in triple backticks:
                     </div>
                     <div className="w-20 md:w-28 min-w-0">
                       <Label htmlFor="new-item-price">Price</Label>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const currentPrice = editingReceipt ? currentNewItem.price : newItem.price;
-                            setEditingPriceIndex('new');
-                            setPriceInputValue(currentPrice || '');
-                            setPriceInputCursor(0);
-                            setShowPriceEditor(true);
+                        <Input
+                          type="text"
+                          inputMode="decimal"
+                          placeholder="0.00"
+                          value={editingReceipt ? currentNewItem.price : newItem.price}
+                          onChange={e => {
+                            const value = e.target.value;
+                            // Only allow numbers, decimal point, and backspace
+                            if (/^[\d.]*$/.test(value) || value === '') {
+                              if (editingReceipt) {
+                                setCurrentNewItem(prev => ({ ...prev, price: value }));
+                              } else {
+                                setNewItem(prev => ({ ...prev, price: value }));
+                              }
+                            }
                           }}
-                          className="w-full bg-slate-800/90 border border-blue-700/40 text-white text-right hover:border-blue-400 hover:bg-blue-950/80 active:bg-blue-900/60 transition-all duration-200 ease-in-out rounded-xl shadow-inner px-4 py-3 text-base placeholder-blue-200/60 outline-none focus:ring-2 focus:ring-blue-400 focus:border-blue-400"
-                        >
-                          <span className="flex items-center justify-center w-full">
-                            <span className="font-mono">
-                              {(editingReceipt ? currentNewItem.price : newItem.price) ? parseFloat(editingReceipt ? currentNewItem.price : newItem.price).toFixed(2) : '0.00'}
-                            </span>
-                          </span>
-                        </button>
+                          onBlur={e => {
+                            const value = e.target.value;
+                            const parsed = parseFloat(value.replace(',', '.'));
+                            if (!isNaN(parsed)) {
+                              const formattedPrice = parsed.toFixed(2);
+                              if (editingReceipt) {
+                                setCurrentNewItem(prev => ({ ...prev, price: formattedPrice }));
+                              } else {
+                                setNewItem(prev => ({ ...prev, price: formattedPrice }));
+                              }
+                            }
+                          }}
+                          className="w-full bg-slate-800/90 border border-blue-700/40 text-white text-right focus:border-blue-400 focus:ring-2 focus:ring-blue-400 focus:bg-blue-950/80 transition-all duration-200 ease-in-out rounded-xl shadow-inner px-4 py-3 text-base placeholder-blue-200/60 outline-none font-mono"
+                        />
                       </div>
                     <div className="flex flex-col justify-end pb-1">
                       <span className="text-blue-200 text-sm">{getCurrencySymbol(activeFormData.currency)}</span>
@@ -3485,9 +3339,6 @@ Reply with a JSON object enclosed in triple backticks:
       
       {/* Swipe Hint Tooltip */}
       <SwipeHintTooltip />
-      
-      {/* Price Editor Modal */}
-      <PriceEditorModal />
     </div>
   );
 }
