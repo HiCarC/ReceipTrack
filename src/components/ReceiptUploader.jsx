@@ -717,6 +717,94 @@ export default function ReceiptUploader({ className, showOnly, onTabChange }) {
     }
   };
 
+  // Enhanced price editing functions
+  const openPriceEditor = (index, currentPrice) => {
+    setEditingPriceIndex(index);
+    setPriceInputValue(currentPrice || '');
+    setPriceInputCursor(0);
+    setShowPriceEditor(true);
+  };
+
+  const closePriceEditor = () => {
+    setShowPriceEditor(false);
+    setEditingPriceIndex(null);
+    setPriceInputValue('');
+    setPriceInputCursor(0);
+  };
+
+  const handlePriceKeyPress = (key) => {
+    if (key === 'backspace') {
+      if (priceInputValue.length > 0) {
+        const newValue = priceInputValue.slice(0, -1);
+        setPriceInputValue(newValue);
+        setPriceInputCursor(Math.max(0, priceInputCursor - 1));
+      }
+    } else if (key === 'clear') {
+      setPriceInputValue('');
+      setPriceInputCursor(0);
+    } else if (key === 'done') {
+      savePriceEdit();
+    } else if (key === '.') {
+      // Only allow one decimal point
+      if (!priceInputValue.includes('.')) {
+        const newValue = priceInputValue + '.';
+        setPriceInputValue(newValue);
+        setPriceInputCursor(newValue.length);
+      }
+    } else if (key >= '0' && key <= '9') {
+      // Limit to reasonable length and prevent multiple leading zeros
+      if (priceInputValue.length < 10) {
+        if (priceInputValue === '0' && key === '0') return; // Prevent multiple leading zeros
+        if (priceInputValue === '0') {
+          setPriceInputValue(key);
+          setPriceInputCursor(1);
+        } else {
+          const newValue = priceInputValue + key;
+          setPriceInputValue(newValue);
+          setPriceInputCursor(newValue.length);
+        }
+      }
+    }
+  };
+
+  const savePriceEdit = () => {
+    const parsedPrice = parseFloat(priceInputValue) || 0;
+    
+    if (editingPriceIndex === 'new') {
+      // Handle new item price
+      if (editingReceipt) {
+        setCurrentNewItem(prev => ({ ...prev, price: parsedPrice.toFixed(2) }));
+      } else {
+        setNewItem(prev => ({ ...prev, price: parsedPrice.toFixed(2) }));
+      }
+    } else if (editingPriceIndex !== null) {
+      // Handle existing item price
+      const targetStateSetter = editingReceipt ? setEditForm : setFormData;
+      
+      targetStateSetter(prev => {
+        const updatedItems = [...(prev.items || [])];
+        updatedItems[editingPriceIndex] = {
+          ...updatedItems[editingPriceIndex],
+          price: parsedPrice.toFixed(2)
+        };
+        return { ...prev, items: updatedItems };
+      });
+
+      // If editing, also update currentReceipt items
+      if (editingReceipt) {
+        setCurrentReceipt(prev => {
+          const updatedItems = [...(prev.items || [])];
+          updatedItems[editingPriceIndex] = {
+            ...updatedItems[editingPriceIndex],
+            price: parsedPrice.toFixed(2)
+          };
+          return { ...prev, items: updatedItems };
+        });
+      }
+    }
+    closePriceEditor();
+  };
+
   // Update the `handleSaveReceipt` for new receipts
   const handleSaveReceiptSubmit = async () => {
     if (!user) {
@@ -1146,53 +1234,137 @@ export default function ReceiptUploader({ className, showOnly, onTabChange }) {
     const swipeThreshold = 80; // px, minimum to trigger action
     const animating = useRef(false);
 
-    const handlers = useSwipeable({
-      onSwiping: (eventData) => {
-        // Only allow horizontal swipes
-        if (Math.abs(eventData.deltaX) > Math.abs(eventData.deltaY)) {
-          setSwipeOffset(eventData.deltaX);
-          setSwipeDir(eventData.deltaX > 0 ? 'right' : 'left');
+    // Enhanced swipe handling with better UX
+    const [touchStart, setTouchStart] = useState({ x: 0, y: 0 });
+    const [touchStartTime, setTouchStartTime] = useState(0);
+    const [isSwiping, setIsSwiping] = useState(false);
+    const [swipeVelocity, setSwipeVelocity] = useState(0);
+    
+    // Improved thresholds for better UX
+    const SWIPE_THRESHOLD = 120; // Increased from 80px
+    const VELOCITY_THRESHOLD = 0.3; // pixels per millisecond
+    const MIN_SWIPE_DISTANCE = 50; // Minimum distance to start swipe
+    const MAX_VERTICAL_DRIFT = 100; // Maximum vertical movement allowed
+    
+    const handleTouchStart = (e) => {
+      const touch = e.touches[0];
+      setTouchStart({ x: touch.clientX, y: touch.clientY });
+      setTouchStartTime(Date.now());
+      setIsSwiping(false);
+      setSwipeVelocity(0);
+    };
+    
+    const handleTouchMove = (e) => {
+      const touch = e.touches[0];
+      const deltaX = touch.clientX - touchStart.x;
+      const deltaY = touch.clientY - touchStart.y;
+      const deltaTime = Date.now() - touchStartTime;
+      
+      // Calculate velocity
+      const velocity = deltaTime > 0 ? Math.abs(deltaX) / deltaTime : 0;
+      setSwipeVelocity(velocity);
+      
+      // Only start swiping if:
+      // 1. Horizontal movement is greater than vertical
+      // 2. We've moved enough distance
+      // 3. Vertical drift is within acceptable range
+      if (Math.abs(deltaX) > Math.abs(deltaY) && 
+          Math.abs(deltaX) > MIN_SWIPE_DISTANCE && 
+          Math.abs(deltaY) < MAX_VERTICAL_DRIFT) {
+        
+        if (!isSwiping) {
+          setIsSwiping(true);
+          // Add haptic feedback when swipe starts
+          try { navigator.vibrate && navigator.vibrate(10); } catch {}
         }
-      },
-      onSwiped: (eventData) => {
+        
+        // Apply resistance to make swiping feel more natural
+        const resistance = 0.8;
+        const resistedDeltaX = deltaX * resistance;
+        
+        setSwipeOffset(resistedDeltaX);
+        setSwipeDir(deltaX > 0 ? 'right' : 'left');
+        
+        // Prevent default only when we're actively swiping
+        e.preventDefault();
+      }
+    };
+    
+    const handleTouchEnd = (e) => {
+      const deltaX = swipeOffset;
+      const deltaTime = Date.now() - touchStartTime;
+      const velocity = deltaTime > 0 ? Math.abs(deltaX) / deltaTime : 0;
+      
+      // Determine if swipe should trigger action based on:
+      // 1. Distance threshold
+      // 2. Velocity threshold
+      // 3. Whether we were actively swiping
+      const shouldTrigger = isSwiping && (
+        Math.abs(deltaX) > SWIPE_THRESHOLD || 
+        velocity > VELOCITY_THRESHOLD
+      );
+      
+      if (shouldTrigger) {
         animating.current = true;
-        if (eventData.absX > swipeThreshold) {
-          // Trigger action and animate out
-          setSwipeOffset(eventData.deltaX > 0 ? 500 : -500); // animate out
-          setTimeout(() => {
-            setSwipeOffset(0);
-            animating.current = false;
-            if (eventData.deltaX > 0) {
-              handleEditClick(receipt);
-            } else {
-              setPendingDeleteId(receipt.id);
-              setShowDeleteModal(true);
-            }
-          }, 200);
-        } else {
-          // Snap back
+        // Stronger haptic feedback for successful swipe
+        try { navigator.vibrate && navigator.vibrate([20, 20, 20]); } catch {}
+        
+        // Animate out with direction
+        const animateOut = deltaX > 0 ? 300 : -300;
+        setSwipeOffset(animateOut);
+        
+        setTimeout(() => {
           setSwipeOffset(0);
           setSwipeDir(null);
-          setTimeout(() => { animating.current = false; }, 200);
-        }
-      },
-      onSwipedLeft: () => {}, // handled in onSwiped
-      onSwipedRight: () => {}, // handled in onSwiped
-      delta: 10,
-      preventScrollOnSwipe: true,
-      trackTouch: true,
-      trackMouse: false,
-    });
+          setIsSwiping(false);
+          animating.current = false;
+          
+          // Trigger action
+          if (deltaX > 0) {
+            handleEditClick(receipt);
+          } else {
+            setPendingDeleteId(receipt.id);
+            setShowDeleteModal(true);
+          }
+        }, 250);
+      } else {
+        // Snap back smoothly
+        setSwipeOffset(0);
+        setSwipeDir(null);
+        setIsSwiping(false);
+      }
+      
+      // Reset touch state
+      setTouchStart({ x: 0, y: 0 });
+      setTouchStartTime(0);
+      setSwipeVelocity(0);
+    };
+    
+    // Enhanced visual feedback based on swipe progress
+    const swipeProgress = Math.min(Math.abs(swipeOffset) / SWIPE_THRESHOLD, 1);
+    const shouldShowAction = swipeProgress > 0.3; // Show action hints at 30% progress
 
-    // Background color and icon
+    // Enhanced visual feedback with better animations
     let bgColor = 'transparent';
     let icon = null;
-    if (swipeOffset < 0) {
-      bgColor = `rgba(220,38,38,${Math.min(Math.abs(swipeOffset) / 100, 0.8)})`; // red
-      icon = <Trash2 className="h-7 w-7 text-white" style={{ opacity: Math.min(Math.abs(swipeOffset) / swipeThreshold, 1), transform: `scale(${0.8 + 0.4 * Math.min(Math.abs(swipeOffset) / swipeThreshold, 1)})` }} />;
-    } else if (swipeOffset > 0) {
-      bgColor = `rgba(37,99,235,${Math.min(Math.abs(swipeOffset) / 100, 0.8)})`; // blue
-      icon = <Edit className="h-7 w-7 text-white" style={{ opacity: Math.min(Math.abs(swipeOffset) / swipeThreshold, 1), transform: `scale(${0.8 + 0.4 * Math.min(Math.abs(swipeOffset) / swipeThreshold, 1)})` }} />;
+    let actionText = '';
+    
+    if (swipeOffset < 0 && shouldShowAction) {
+      bgColor = `rgba(220,38,38,${swipeProgress * 0.9})`; // red for delete
+      icon = <Trash2 className="h-8 w-8 text-white" style={{ 
+        opacity: swipeProgress, 
+        transform: `scale(${0.7 + 0.3 * swipeProgress})`,
+        transition: 'all 0.1s ease-out'
+      }} />;
+      actionText = 'Delete';
+    } else if (swipeOffset > 0 && shouldShowAction) {
+      bgColor = `rgba(37,99,235,${swipeProgress * 0.9})`; // blue for edit
+      icon = <Edit className="h-8 w-8 text-white" style={{ 
+        opacity: swipeProgress, 
+        transform: `scale(${0.7 + 0.3 * swipeProgress})`,
+        transition: 'all 0.1s ease-out'
+      }} />;
+      actionText = 'Edit';
     }
 
     return (
@@ -1200,30 +1372,65 @@ export default function ReceiptUploader({ className, showOnly, onTabChange }) {
         key={receipt.id}
         className="relative w-full overflow-x-hidden"
         style={{ touchAction: 'pan-y' }}
-        {...handlers}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
       >
-        {/* Animated swipe background */}
+        {/* Enhanced animated swipe background */}
         <div
-          className={`absolute inset-0 z-0 flex items-center transition-all duration-200 ${swipeDir === 'left' ? 'justify-end pr-8' : swipeDir === 'right' ? 'justify-start pl-8' : ''}`}
+          className={`absolute inset-0 z-0 flex items-center justify-center transition-all duration-150 ease-out`}
           style={{
             background: bgColor,
             borderRadius: '1rem',
             pointerEvents: 'none',
+            opacity: shouldShowAction ? 1 : 0,
           }}
         >
-          {icon}
+          <div className="flex flex-col items-center gap-2">
+            {icon}
+            {actionText && (
+              <span className="text-white font-semibold text-sm opacity-80">
+                {actionText}
+              </span>
+            )}
+          </div>
         </div>
         <Card
           id={`receipt-card-${receipt.id}`}
           style={{
             minHeight: 96,
             transform: `translateX(${swipeOffset}px)`,
-            transition: animating.current ? 'transform 0.2s cubic-bezier(0.22,1,0.36,1)' : 'transform 0.1s',
+            transition: animating.current ? 'transform 0.25s cubic-bezier(0.22,1,0.36,1)' : 'transform 0.1s ease-out',
+            // Add subtle rotation for more natural feel
+            rotate: isSwiping ? `${swipeOffset * 0.02}deg` : '0deg',
           }}
-          className={`relative bg-slate-800/90 p-5 pl-4 rounded-2xl shadow-xl text-white border border-blue-900/30 border-l-4 ${catColor} transition-all duration-300 ease-in-out animate-fade-in-up ${isExpanded ? 'ring-2 ring-blue-500/50 scale-[1.01] shadow-2xl' : 'hover:shadow-2xl hover:-translate-y-1 active:scale-90'}`}
+          className={`relative bg-slate-800/90 p-5 pl-4 rounded-2xl shadow-xl text-white border border-blue-900/30 border-l-4 ${catColor} transition-all duration-300 ease-in-out animate-fade-in-up ${isExpanded ? 'ring-2 ring-blue-500/50 scale-[1.01] shadow-2xl' : 'hover:shadow-2xl hover:-translate-y-1 active:scale-90'} ${isSwiping ? 'shadow-2xl' : ''}`}
           onClick={() => setExpandedReceiptId(isExpanded ? null : receipt.id)}
           aria-label={`Receipt for ${receipt.merchant}`}
         >
+          {/* Swipe hint indicator - subtle visual cue */}
+          {!isSwiping && swipeOffset === 0 && (
+            <div className="absolute top-2 right-2 opacity-20 hover:opacity-40 transition-opacity">
+              <div className="flex gap-1">
+                <div className="w-1 h-1 bg-blue-300 rounded-full animate-pulse"></div>
+                <div className="w-1 h-1 bg-blue-300 rounded-full animate-pulse" style={{ animationDelay: '0.2s' }}></div>
+                <div className="w-1 h-1 bg-blue-300 rounded-full animate-pulse" style={{ animationDelay: '0.4s' }}></div>
+              </div>
+            </div>
+          )}
+          
+          {/* Swipe progress indicator */}
+          {isSwiping && (
+            <div className="absolute top-2 right-2">
+              <div className="w-8 h-1 bg-slate-600 rounded-full overflow-hidden">
+                <div 
+                  className="h-full bg-blue-400 rounded-full transition-all duration-100"
+                  style={{ width: `${swipeProgress * 100}%` }}
+                ></div>
+              </div>
+            </div>
+          )}
+          
           <div className="flex items-center gap-2 min-w-0">
             <span className="text-lg font-extrabold text-blue-200 truncate max-w-[120px] md:max-w-[200px] tracking-tight" title={receipt.merchant}>{receipt.merchant}</span>
             <span className="text-xs text-blue-200/80 font-medium whitespace-nowrap">
@@ -1340,6 +1547,154 @@ export default function ReceiptUploader({ className, showOnly, onTabChange }) {
       </CardContent>
           )}
         </Card>
+      </div>
+    );
+  };
+
+  // Swipe hint tooltip component
+  const SwipeHintTooltip = () => {
+    if (!showSwipeHint) return null;
+    
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+        <div className="bg-slate-900 border border-blue-500/30 rounded-2xl p-6 max-w-sm mx-4 text-center shadow-2xl">
+          <div className="flex justify-center mb-4">
+            <div className="w-16 h-16 bg-blue-600/20 rounded-2xl flex items-center justify-center">
+              <div className="flex gap-1">
+                <div className="w-2 h-2 bg-blue-400 rounded-full animate-pulse"></div>
+                <div className="w-2 h-2 bg-blue-400 rounded-full animate-pulse" style={{ animationDelay: '0.2s' }}></div>
+                <div className="w-2 h-2 bg-blue-400 rounded-full animate-pulse" style={{ animationDelay: '0.4s' }}></div>
+              </div>
+            </div>
+          </div>
+          <h3 className="text-lg font-bold text-white mb-2">Swipe to Quick Actions</h3>
+          <p className="text-blue-200 text-sm mb-4">
+            Swipe right to edit or left to delete receipts. 
+            <br />
+            <span className="text-blue-300/80 text-xs">Vertical scrolling still works normally!</span>
+          </p>
+          <div className="flex gap-2 justify-center">
+            <div className="flex items-center gap-2 text-xs text-blue-300">
+              <div className="w-3 h-3 bg-blue-500 rounded-full"></div>
+              <span>Swipe Right → Edit</span>
+            </div>
+            <div className="flex items-center gap-2 text-xs text-red-300">
+              <div className="w-3 h-3 bg-red-500 rounded-full"></div>
+              <span>Swipe Left → Delete</span>
+            </div>
+          </div>
+          <button
+            onClick={() => setShowSwipeHint(false)}
+            className="mt-4 w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 rounded-xl transition-colors"
+          >
+            Got it!
+          </button>
+        </div>
+      </div>
+    );
+  };
+
+  // Beautiful Price Editor Modal Component
+  const PriceEditorModal = () => {
+    if (!showPriceEditor) return null;
+
+    const keypadButtons = [
+      ['1', '2', '3'],
+      ['4', '5', '6'],
+      ['7', '8', '9'],
+      ['.', '0', 'backspace']
+    ];
+
+    const actionButtons = [
+      { key: 'clear', label: 'Clear', className: 'bg-red-600 hover:bg-red-700 text-white' },
+      { key: 'done', label: 'Done', className: 'bg-green-600 hover:bg-green-700 text-white' }
+    ];
+
+    return (
+      <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 backdrop-blur-sm">
+        <div className="w-full max-w-md bg-slate-900/95 backdrop-blur-xl border border-blue-500/30 rounded-t-3xl shadow-2xl animate-slide-up">
+          {/* Header */}
+          <div className="p-6 pb-4 border-b border-blue-700/30">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-xl font-bold text-white">Edit Price</h3>
+              <button
+                onClick={closePriceEditor}
+                className="text-blue-300 hover:text-white transition-colors"
+              >
+                <X className="h-6 w-6" />
+              </button>
+            </div>
+            <p className="text-blue-200/80 text-sm">
+              {editingPriceIndex === 'new' ? 'New Item Price' : `Item ${editingPriceIndex + 1} Price`}
+            </p>
+          </div>
+
+          {/* Price Display */}
+          <div className="p-6 pt-4">
+            <div className="bg-slate-800/80 border border-blue-600/40 rounded-2xl p-4 mb-6">
+              <div className="text-center">
+                <div className="text-3xl font-mono font-bold text-white mb-1">
+                  {priceInputValue || '0.00'}
+                </div>
+                <div className="text-blue-300/60 text-sm">
+                  {getCurrencySymbol(activeFormData.currency)}
+                </div>
+                {/* Cursor indicator */}
+                <div className="h-0.5 bg-blue-400 mt-2 transition-all duration-200" 
+                     style={{ 
+                       width: '2px', 
+                       marginLeft: `${Math.min(priceInputValue.length * 12, 200)}px`,
+                       opacity: priceInputValue.length > 0 ? 1 : 0.3
+                     }} />
+              </div>
+            </div>
+
+            {/* Numeric Keypad */}
+            <div className="space-y-3">
+              {keypadButtons.map((row, rowIndex) => (
+                <div key={rowIndex} className="flex gap-3">
+                  {row.map((key) => (
+                    <button
+                      key={key}
+                      onClick={() => handlePriceKeyPress(key)}
+                      className={`flex-1 h-14 rounded-2xl font-bold text-lg transition-all duration-200 active:scale-95 ${
+                        key === 'backspace' 
+                          ? 'bg-slate-700 hover:bg-slate-600 text-white' 
+                          : key === '.'
+                          ? 'bg-blue-600 hover:bg-blue-500 text-white'
+                          : 'bg-slate-800 hover:bg-slate-700 text-white border border-slate-600/50'
+                      }`}
+                    >
+                      {key === 'backspace' ? (
+                        <svg className="w-6 h-6 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2M3 12l9-9 9 9-9 9-9-9z" />
+                        </svg>
+                      ) : (
+                        key
+                      )}
+                    </button>
+                  ))}
+                </div>
+              ))}
+
+              {/* Action Buttons */}
+              <div className="flex gap-3 pt-2">
+                {actionButtons.map(({ key, label, className }) => (
+                  <button
+                    key={key}
+                    onClick={() => handlePriceKeyPress(key)}
+                    className={`flex-1 h-12 rounded-xl font-semibold transition-all duration-200 active:scale-95 ${className}`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* Safe area for mobile */}
+          <div className="h-4 bg-slate-900/95" />
+        </div>
       </div>
     );
   };
@@ -1505,10 +1860,36 @@ export default function ReceiptUploader({ className, showOnly, onTabChange }) {
       return isNaN(parsed) ? '0.00' : parsed.toFixed(2);
     };
 
+    // Convert Firestore Timestamp to date string for the form
+    let dateString = '';
+    if (receipt.transactionDate) {
+      if (receipt.transactionDate.toDate) {
+        // It's a Firestore Timestamp
+        dateString = receipt.transactionDate.toDate().toISOString().split('T')[0];
+      } else if (typeof receipt.transactionDate === 'string') {
+        // It's already a string
+        dateString = receipt.transactionDate;
+      } else if (receipt.transactionDate instanceof Date) {
+        // It's a Date object
+        dateString = receipt.transactionDate.toISOString().split('T')[0];
+      }
+    }
+    
+    // Also check for receipt.date as fallback
+    if (!dateString && receipt.date) {
+      if (receipt.date.toDate) {
+        dateString = receipt.date.toDate().toISOString().split('T')[0];
+      } else if (typeof receipt.date === 'string') {
+        dateString = receipt.date;
+      } else if (receipt.date instanceof Date) {
+        dateString = receipt.date.toISOString().split('T')[0];
+      }
+    }
+
     setEditForm({
       merchant: receipt.merchant || '',
       total: safeParseFloat(receipt.total), // Always set 'total' as string with two decimals
-      date: receipt.transactionDate || '',
+      date: dateString,
       category: receipt.category || '',
       subtotal: receipt.subtotal ? safeParseFloat(receipt.subtotal) : '',
       payment_method: receipt.paymentMethod || '',
@@ -1933,6 +2314,24 @@ Reply with a JSON object enclosed in triple backticks:
   const [swipedId, setSwipedId] = useState(null);
   const [swipeDir, setSwipeDir] = useState(null);
   const swipeRefs = useRef({});
+  const [showSwipeHint, setShowSwipeHint] = useState(false);
+  
+  // Price editing modal state
+  const [showPriceEditor, setShowPriceEditor] = useState(false);
+  const [editingPriceIndex, setEditingPriceIndex] = useState(null);
+  const [priceInputValue, setPriceInputValue] = useState('');
+  const [priceInputCursor, setPriceInputCursor] = useState(0);
+  
+  // Show swipe hint on first visit
+  useEffect(() => {
+    const hasSeenSwipeHint = localStorage.getItem('hasSeenSwipeHint');
+    if (!hasSeenSwipeHint && receipts.length > 0) {
+      setTimeout(() => {
+        setShowSwipeHint(true);
+        localStorage.setItem('hasSeenSwipeHint', 'true');
+      }, 2000);
+    }
+  }, [receipts.length]);
 
   // Add swipe handlers:
   const handleTouchStart = (id, e) => {
@@ -2626,21 +3025,18 @@ Reply with a JSON object enclosed in triple backticks:
                         autoCapitalize="words"
                         inputMode="text"
                               />
-                              <Input
-                        id={`item-price-${index}`}
-                        type="number"
-                        inputMode="decimal"
-                        placeholder="0.00"
-                        value={item.price}
-                        onChange={e => handleItemInputChange(e, index, 'price')}
-                        onBlur={e => {
-                          const value = e.target.value;
-                          const parsed = parseFloat(value.replace(',', '.')).toFixed(2);
-                          handleItemInputChange({ target: { value: isNaN(parsed) ? '' : parsed } }, index, 'price');
-                        }}
-                        className="flex-[1] min-w-0 bg-slate-800/90 border border-blue-700/40 text-white text-right focus:border-blue-400 focus:ring-2 focus:ring-blue-400 focus:bg-blue-950/80 transition-all duration-200 ease-in-out rounded-xl shadow-inner px-4 py-3 text-base placeholder-blue-200/60 outline-none"
-                      />
-                      <span className="text-blue-200 text-sm">{getCurrencySymbol(activeFormData.currency)}</span>
+                              <button
+                                type="button"
+                                onClick={() => openPriceEditor(index, item.price)}
+                                className="flex-[1] min-w-0 bg-slate-800/90 border border-blue-700/40 text-white text-right hover:border-blue-400 hover:bg-blue-950/80 active:bg-blue-900/60 transition-all duration-200 ease-in-out rounded-xl shadow-inner px-4 py-3 text-base placeholder-blue-200/60 outline-none focus:ring-2 focus:ring-blue-400 focus:border-blue-400"
+                              >
+                                <span className="flex items-center justify-center w-full">
+                                  <span className="font-mono">
+                                    {item.price ? parseFloat(item.price).toFixed(2) : '0.00'}
+                                  </span>
+                                </span>
+                              </button>
+                              <span className="text-blue-200 text-sm font-medium">{getCurrencySymbol(activeFormData.currency)}</span>
                         <Button
                           type="button"
                         onClick={() => {
@@ -2681,15 +3077,23 @@ Reply with a JSON object enclosed in triple backticks:
                     </div>
                     <div className="w-20 md:w-28 min-w-0">
                       <Label htmlFor="new-item-price">Price</Label>
-                        <Input
-                          id="new-item-price"
-                          type="number"
-                        inputMode="decimal"
-                          placeholder="0.00"
-                        value={editingReceipt ? currentNewItem.price : newItem.price}
-                        onChange={e => editingReceipt ? setCurrentNewItem(prev => ({ ...prev, price: e.target.value })) : setNewItem(prev => ({ ...prev, price: e.target.value }))}
-                        className="w-full bg-slate-800/90 border border-blue-700/40 text-white text-right focus:border-blue-400 focus:ring-2 focus:ring-blue-400 focus:bg-blue-950/80 transition-all duration-200 ease-in-out rounded-xl shadow-inner px-4 py-3 text-base placeholder-blue-200/60 outline-none"
-                      />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const currentPrice = editingReceipt ? currentNewItem.price : newItem.price;
+                            setEditingPriceIndex('new');
+                            setPriceInputValue(currentPrice || '');
+                            setPriceInputCursor(0);
+                            setShowPriceEditor(true);
+                          }}
+                          className="w-full bg-slate-800/90 border border-blue-700/40 text-white text-right hover:border-blue-400 hover:bg-blue-950/80 active:bg-blue-900/60 transition-all duration-200 ease-in-out rounded-xl shadow-inner px-4 py-3 text-base placeholder-blue-200/60 outline-none focus:ring-2 focus:ring-blue-400 focus:border-blue-400"
+                        >
+                          <span className="flex items-center justify-center w-full">
+                            <span className="font-mono">
+                              {(editingReceipt ? currentNewItem.price : newItem.price) ? parseFloat(editingReceipt ? currentNewItem.price : newItem.price).toFixed(2) : '0.00'}
+                            </span>
+                          </span>
+                        </button>
                       </div>
                     <div className="flex flex-col justify-end pb-1">
                       <span className="text-blue-200 text-sm">{getCurrencySymbol(activeFormData.currency)}</span>
@@ -2708,13 +3112,7 @@ Reply with a JSON object enclosed in triple backticks:
                 </div>
                   {formErrors.items && <p className="text-red-400 text-xs mt-1 animate-fade-in duration-200 ease-in-out">{formErrors.items}</p>}
 
-                  {(activeFormData.items && activeFormData.items.length > 0) && (
-                    <div className="mt-4">
-                      <GroupManager />
-                      <ItemAssignment items={activeFormData.items} />
-                      <SplitSummary items={activeFormData.items} />
-                    </div>
-                  )}
+
           </div>
               </form>
             </div>
@@ -3084,6 +3482,12 @@ Reply with a JSON object enclosed in triple backticks:
           )}
         </DialogContent>
       </Dialog>
+      
+      {/* Swipe Hint Tooltip */}
+      <SwipeHintTooltip />
+      
+      {/* Price Editor Modal */}
+      <PriceEditorModal />
     </div>
   );
 }
@@ -3781,6 +4185,3 @@ function InsightsSection({ receipts = [], categoryTotals = {}, calculatedTotals 
   );
 }
 
-import GroupManager from './GroupManager';
-import ItemAssignment from './ItemAssignment';
-import SplitSummary from './SplitSummary';
