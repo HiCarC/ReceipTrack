@@ -2495,7 +2495,7 @@ function GroupInsightsGraph({ expenses, group }) {
       <div className="bg-slate-900/95 text-white shadow-2xl rounded-3xl border border-blue-400/20 p-3 md:p-5 flex flex-col items-center glass-card" style={{overflow: 'hidden', background: 'rgba(30,41,59,0.85)', boxShadow: '0 8px 32px 0 rgba(31, 38, 135, 0.18)', border: '1.5px solid rgba(99,102,241,0.12)', backdropFilter: 'blur(18px)'}}>
         {/* Title and period controls at the very top */}
         <div className="w-full flex flex-row items-center justify-between mb-2 mt-1">
-          <div className="text-lg font-bold">Expense Insights</div>
+          <div className="text-lg font-bold">Group Insights</div>
           <div className="flex items-center gap-2">
             <button onClick={() => setCurrentOffset(o => o - 1)} className="w-8 h-8 flex items-center justify-center rounded-full bg-slate-800 hover:bg-slate-700 transition-colors duration-200 border border-blue-700/40 focus:outline-none" title="Previous period" aria-label="Previous period">
               <svg className="w-4 h-4 text-blue-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
