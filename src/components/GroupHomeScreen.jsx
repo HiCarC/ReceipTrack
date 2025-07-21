@@ -269,7 +269,7 @@ export default function GroupHomeScreen({ onTabChange, onGroupEnter }) {
           <DialogTitle className="text-2xl font-bold text-center">Create a group</DialogTitle>
           <DialogDescription className="text-blue-300 text-center mb-2">
             Name your group, choose a currency, and add participants.
-          </DialogDescription>
+            </DialogDescription>
 
           <form onSubmit={handleCreate} className="flex flex-col gap-4 mt-4">
             <label className="flex flex-col gap-1">
@@ -362,7 +362,7 @@ export default function GroupHomeScreen({ onTabChange, onGroupEnter }) {
           <DialogContent className="bg-slate-900 border-none rounded-2xl shadow-2xl w-[95vw] max-w-md text-white">
             <DialogTitle><VisuallyHidden>Claim group participant name</VisuallyHidden></DialogTitle>
             <DialogDescription><VisuallyHidden>Confirm group participant identity</VisuallyHidden></DialogDescription>
-            {claimError && <p className="text-red-400">{claimError}</p>}
+              {claimError && <p className="text-red-400">{claimError}</p>}
             <DialogFooter className="mt-4 flex gap-2">
               <button
                 className="flex-1 py-3 rounded-xl bg-blue-600 hover:bg-blue-700 font-semibold shadow-lg"

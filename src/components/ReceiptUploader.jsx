@@ -1201,7 +1201,7 @@ export default function ReceiptUploader({ className, showOnly, onTabChange }) {
         
         // Prevent default only when we're actively swiping
         e.preventDefault();
-      }
+        }
     };
     
     const handleTouchEnd = (e) => {
@@ -1227,24 +1227,24 @@ export default function ReceiptUploader({ className, showOnly, onTabChange }) {
         const animateOut = deltaX > 0 ? 300 : -300;
         setSwipeOffset(animateOut);
         
-        setTimeout(() => {
-          setSwipeOffset(0);
+          setTimeout(() => {
+            setSwipeOffset(0);
           setSwipeDir(null);
           setIsSwiping(false);
-          animating.current = false;
+            animating.current = false;
           
           // Trigger action
           if (deltaX > 0) {
-            handleEditClick(receipt);
-          } else {
-            setPendingDeleteId(receipt.id);
-            setShowDeleteModal(true);
-          }
+              handleEditClick(receipt);
+            } else {
+              setPendingDeleteId(receipt.id);
+              setShowDeleteModal(true);
+            }
         }, 250);
-      } else {
+        } else {
         // Snap back smoothly
-        setSwipeOffset(0);
-        setSwipeDir(null);
+          setSwipeOffset(0);
+          setSwipeDir(null);
         setIsSwiping(false);
       }
       
@@ -1301,7 +1301,7 @@ export default function ReceiptUploader({ className, showOnly, onTabChange }) {
           }}
         >
           <div className="flex flex-col items-center gap-2">
-            {icon}
+          {icon}
             {actionText && (
               <span className="text-white font-semibold text-sm opacity-80">
                 {actionText}
@@ -2126,19 +2126,18 @@ Reply with a JSON object enclosed in triple backticks:
   const [swipeDir, setSwipeDir] = useState(null);
   const swipeRefs = useRef({});
   const [showSwipeHint, setShowSwipeHint] = useState(false);
+  const [hasShownSwipeHint, setHasShownSwipeHint] = useState(() => !!localStorage.getItem('hasSeenSwipeHint'));
   
 
   
   // Show swipe hint on first visit
   useEffect(() => {
-    const hasSeenSwipeHint = localStorage.getItem('hasSeenSwipeHint');
-    if (!hasSeenSwipeHint && receipts.length > 0) {
-      setTimeout(() => {
-        setShowSwipeHint(true);
-        localStorage.setItem('hasSeenSwipeHint', 'true');
-      }, 2000);
+    if (!hasShownSwipeHint && receipts.length > 0) {
+      setShowSwipeHint(true);
+      localStorage.setItem('hasSeenSwipeHint', 'true');
+      setHasShownSwipeHint(true);
     }
-  }, [receipts.length]);
+  }, [receipts.length, hasShownSwipeHint]);
 
   // Add swipe handlers:
   const handleTouchStart = (id, e) => {
@@ -2736,7 +2735,7 @@ Reply with a JSON object enclosed in triple backticks:
                         name="total"
                         type="text"
                         inputMode="decimal"
-                        placeholder="0.00"
+                      placeholder="0.00"
                         value={activeFormData.total}
                         onChange={e => {
                           const value = e.target.value;
@@ -2858,11 +2857,11 @@ Reply with a JSON object enclosed in triple backticks:
                               />
                               <Input
                                 type="text"
-                                inputMode="decimal"
-                                placeholder="0.00"
+                        inputMode="decimal"
+                        placeholder="0.00"
                                 value={item.price || ''}
                                 onChange={e => {
-                                  const value = e.target.value;
+                          const value = e.target.value;
                                   // Allow numbers, dot, and comma as decimal separators
                                   if (/^[\d.,]*$/.test(value) || value === '') {
                                     handleItemInputChange(e, index, 'price');
@@ -2874,9 +2873,9 @@ Reply with a JSON object enclosed in triple backticks:
                                   if (!isNaN(parsed)) {
                                     handleItemInputChange({ target: { value: parsed.toFixed(2) } }, index, 'price');
                                   }
-                                }}
+                        }}
                                 className="flex-[1] min-w-0 bg-slate-800/90 border border-blue-700/40 text-white text-right focus:border-blue-400 focus:ring-2 focus:ring-blue-400 focus:bg-blue-950/80 transition-all duration-200 ease-in-out rounded-xl shadow-inner px-4 py-3 text-base placeholder-blue-200/60 outline-none font-mono"
-                              />
+                      />
                               <span className="text-blue-200 text-sm font-medium">{getCurrencySymbol(activeFormData.currency)}</span>
                         <Button
                           type="button"
@@ -2920,9 +2919,9 @@ Reply with a JSON object enclosed in triple backticks:
                       <Label htmlFor="new-item-price">Price</Label>
                         <Input
                           type="text"
-                          inputMode="decimal"
+                        inputMode="decimal"
                           placeholder="0.00"
-                          value={editingReceipt ? currentNewItem.price : newItem.price}
+                        value={editingReceipt ? currentNewItem.price : newItem.price}
                           onChange={e => {
                             const value = e.target.value;
                             // Allow numbers, dot, and comma as decimal separators
@@ -2947,7 +2946,7 @@ Reply with a JSON object enclosed in triple backticks:
                             }
                           }}
                           className="w-full bg-slate-800/90 border border-blue-700/40 text-white text-right focus:border-blue-400 focus:ring-2 focus:ring-blue-400 focus:bg-blue-950/80 transition-all duration-200 ease-in-out rounded-xl shadow-inner px-4 py-3 text-base placeholder-blue-200/60 outline-none font-mono"
-                        />
+                      />
                       </div>
                     <div className="flex flex-col justify-end pb-1">
                       <span className="text-blue-200 text-sm">{getCurrencySymbol(activeFormData.currency)}</span>
@@ -3930,7 +3929,7 @@ function InsightsSection({ receipts = [], categoryTotals = {}, calculatedTotals 
       <div className="bg-white/90 text-gray-900 shadow-xl rounded-2xl border border-gray-200 p-6 flex flex-col items-center">
         {/* Header */}
         <div className="w-full flex flex-row items-center justify-between mb-2">
-          <div className="text-lg font-bold">Expense Insights</div>
+          <div className="text-lg font-bold">Insights</div>
           <div className="flex items-center gap-2">
             {/* Previous Arrow */}
             <button

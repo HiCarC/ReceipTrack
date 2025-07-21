@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { ArrowLeft, Plus, Trash2, MoreVertical } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { ArrowLeft, Plus, Trash2, MoreVertical, Download, Share2, HelpCircle, HeartPulse } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, DialogClose } from './ui/dialog';
 import { Dialog as UIDialog, DialogContent as UIDialogContent, DialogTitle as UIDialogTitle, DialogDescription as UIDialogDescription } from './ui/dialog';
 import { db } from '../firebase';
@@ -10,6 +10,9 @@ import { Helmet } from 'react-helmet-async';
 import useGroupBalances from '../hooks/useGroupBalances';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import QRCode from 'react-qr-code';
+import { Pie, Doughnut } from 'react-chartjs-2';
+import { Bar } from 'react-chartjs-2';
+import html2canvas from 'html2canvas';
 
 const EXPENSE_CATEGORIES = [
   { name: 'Groceries', emoji: '🛒' },
@@ -23,6 +26,7 @@ const EXPENSE_CATEGORIES = [
 ];
 
 const TABS = [
+  { key: 'overview', label: 'Overview' },
   { key: 'expenses', label: 'Expenses' },
   { key: 'balances', label: 'Balances' },
   { key: 'photos', label: 'Photos' },
@@ -672,7 +676,12 @@ Please settle up when you can. Thank you!`;
           ))}
         </div>
         
-        {/* Content area with mobile padding */}
+        {tab === 'overview' && (
+          <>
+            <GroupInsightsOverview expenses={expenses} group={group} />
+            <GroupInsightsGraph expenses={expenses} group={group} />
+          </>
+        )}
         <div className={`flex-1 transition-opacity duration-200 px-4 pb-24 ${tabFade ? 'opacity-100' : 'opacity-0'}`}>
           {loading ? (
             <div className="text-center text-blue-200/70 mt-12 text-lg">Loading expenses...</div>
@@ -705,11 +714,11 @@ Please settle up when you can. Thank you!`;
                   colorClass = 'text-green-400';
                 }
                 return (
-                  <div key={exp.id} className="flex items-center bg-slate-800 rounded-xl p-4 shadow border border-blue-700/20 gap-3 cursor-pointer hover:bg-slate-700 transition" onClick={() => setEditExpense(exp)}>
-                    <div className="flex-1 min-w-0">
-                      <div className="font-semibold text-white text-base truncate">{exp.label}</div>
-                      <div className="text-blue-200 text-sm truncate">{getNameByUid(group, exp.paidBy)} • {exp.date}</div>
-                    </div>
+                <div key={exp.id} className="flex items-center bg-slate-800 rounded-xl p-4 shadow border border-blue-700/20 gap-3 cursor-pointer hover:bg-slate-700 transition" onClick={() => setEditExpense(exp)}>
+                  <div className="flex-1 min-w-0">
+                    <div className="font-semibold text-white text-base truncate">{exp.label}</div>
+                    <div className="text-blue-200 text-sm truncate">{getNameByUid(group, exp.paidBy)} • {exp.date}</div>
+                  </div>
                     <div className={`font-bold text-lg flex-shrink-0 font-mono ${colorClass}`}>{sign}{parseFloat(exp.amount).toFixed(2)} {group.currency}</div>
                   </div>
                 );
@@ -760,8 +769,8 @@ Please settle up when you can. Thank you!`;
                           <div className={`w-10 h-10 rounded-full flex items-center justify-center text-lg font-bold mr-4 ${name === myName ? 'bg-slate-700 text-white' : 'bg-slate-600 text-blue-100'}`}>{getInitials(name)}</div>
                           <div className="flex-1 text-white text-base font-medium">{name}{name === myName ? <span className="text-blue-300 text-xs ml-1">Me</span> : ''}</div>
                           <div className={`font-semibold text-lg ${bal > 0 ? 'text-green-400' : bal < 0 ? 'text-red-400' : 'text-blue-100'}`}>{bal > 0 ? '+' : ''}{(typeof bal !== 'number' || isNaN(bal) ? '0.00' : bal.toFixed(2))} {group.currency || '€'}</div>
-                        </div>
-                      ))}
+                </div>
+              ))}
                     </div>
                   </div>
                 </>;
@@ -1840,5 +1849,759 @@ function EditExpenseForm({ editExpense, group, user, onSave, onDelete, onCancel 
     </form>
   );
 } 
+
+function GroupInsightsOverview({ expenses, group }) {
+  // Calculate category totals
+  const categoryTotals = {};
+  let totalSpent = 0;
+  expenses.forEach(exp => {
+    const cat = exp.tag || 'Other';
+    const amt = parseFloat(exp.amount) || 0;
+    totalSpent += amt;
+    categoryTotals[cat] = (categoryTotals[cat] || 0) + amt;
+  });
+  const sortedCategories = Object.entries(categoryTotals).sort((a, b) => b[1] - a[1]);
+  const categoryLabels = sortedCategories.map(([cat]) => cat);
+  const categoryData = sortedCategories.map(([, amt]) => amt);
+  const chartColors = categoryLabels.map(cat => getCategoryColor(cat));
+  const emojiMap = {
+    'Groceries': '🛒',
+    'Dining': '🍽️',
+    'Transportation': '🚌',
+    'Shopping': '🛍️',
+    'Bills': '💡',
+    'Entertainment': '🎬',
+    'Health': '💊',
+    'Other': '💸',
+    'Uncategorized': '❓'
+  };
+  const doughnutData = {
+    labels: categoryLabels,
+    datasets: [
+      {
+        data: categoryData,
+        backgroundColor: chartColors,
+        borderWidth: 3,
+        borderColor: '#181e2a',
+        hoverBorderColor: '#6366F1',
+      },
+    ],
+  };
+  const currentMonth = new Date().toLocaleDateString('en-US', { month: 'short' });
+  const currentYear = new Date().getFullYear();
+
+  const [selectedCategory, setSelectedCategory] = React.useState(null);
+  const [modalOpen, setModalOpen] = React.useState(false);
+  const [expandedExpenseId, setExpandedExpenseId] = React.useState(null);
+
+  // Helper to get recent expenses for a category
+  const getRecentExpenses = (cat) => {
+    return expenses
+      .filter(exp => (exp.tag || 'Other') === cat)
+      .sort((a, b) => {
+        const aTime = a.createdAt && typeof a.createdAt.seconds === 'number' ? a.createdAt.seconds : 0;
+        const bTime = b.createdAt && typeof b.createdAt.seconds === 'number' ? b.createdAt.seconds : 0;
+        return bTime - aTime;
+      })
+      .slice(0, 5);
+  };
+
+  return (
+    <div className="w-full max-w-2xl mx-auto mt-4 mb-4 px-2">
+      <div className="bg-slate-800/60 backdrop-blur-lg shadow-2xl rounded-3xl border border-blue-400/20 p-6 flex flex-col items-center glass-card" style={{overflow: 'hidden', background: 'rgba(30,41,59,0.65)', boxShadow: '0 8px 32px 0 rgba(31, 38, 135, 0.18)', border: '1.5px solid rgba(99,102,241,0.12)', backdropFilter: 'blur(18px)'}}>
+        {/* Modern Semi-Circle Doughnut Chart */}
+        <div className="w-full flex flex-col items-center justify-center mb-6 relative group no-scrollbar overflow-hidden" style={{height: 140, maxHeight: 180, transition: 'transform 0.3s cubic-bezier(.4,2,.3,1)', willChange: 'transform'}}>
+          <Doughnut
+            data={doughnutData}
+            options={{
+              circumference: 180,
+              rotation: -90,
+              cutout: '80%',
+              animation: { animateRotate: true, duration: 1200, easing: 'easeOutQuart' },
+              plugins: {
+                legend: { display: false },
+                tooltip: {
+                  callbacks: {
+                    label: ctx => {
+                      const value = ctx.raw;
+                      const total = ctx.dataset.data.reduce((a, b) => a + b, 0);
+                      const percent = ((value / total) * 100).toFixed(1);
+                      return `${ctx.label}: ${value.toFixed(2)} ${group.currency || '€'} (${percent}%)`;
+                    },
+                  },
+                  backgroundColor: '#22223b',
+                  titleColor: '#fff',
+                  bodyColor: '#fff',
+                  borderColor: '#6366F1',
+                  borderWidth: 1,
+                  displayColors: false,
+                  padding: 12,
+                },
+              },
+              onClick: (evt, elements, chart) => {
+                if (elements && elements.length > 0) {
+                  const idx = elements[0].index;
+                  const cat = categoryLabels[idx];
+                  setSelectedCategory({
+                    name: cat,
+                    amount: categoryData[idx],
+                    percent: totalSpent > 0 ? Math.min(100, Math.round((categoryData[idx] / totalSpent) * 100)) : 0,
+                    color: chartColors[idx],
+                    emoji: emojiMap[cat] || '💸',
+                  });
+                  setModalOpen(true);
+                }
+              },
+              elements: {
+                arc: {
+                  borderCapStyle: 'round',
+                  borderJoinStyle: 'round',
+                  borderRadius: 99,
+                  shadowBlur: 10,
+                  shadowColor: 'rgba(99,102,241,0.18)',
+                },
+              },
+              responsive: true,
+              maintainAspectRatio: false,
+            }}
+            height={140}
+            style={{overflow: 'hidden'}}
+          />
+          {/* Centered stats overlay */}
+          <div className="absolute left-0 right-0 top-0 flex flex-col items-center justify-center pointer-events-none group-hover:scale-105 group-hover:shadow-blue-400/30 transition-transform duration-200 px-2 md:px-0 no-scrollbar overflow-hidden" style={{height: 100, marginTop: 30}}>
+            <div className="text-[10px] font-medium text-blue-300/70 mb-1 tracking-wider uppercase overflow-hidden" style={{letterSpacing: 1.5}}>
+              {currentMonth} {currentYear}
+            </div>
+            <div className="text-xs font-semibold text-gray-300 mb-1 tracking-wide overflow-hidden" style={{letterSpacing: 1}}>TOTAL SPENT</div>
+            <div className="text-3xl xs:text-4xl md:text-5xl font-extrabold text-indigo-200 mb-1 text-center" style={{overflow: 'hidden', whiteSpace: 'nowrap', maxWidth: '100%', padding: '0 0.5rem'}}>{totalSpent.toFixed(2)} {group.currency || '€'}</div>
+            <div className="text-xs text-gray-400 overflow-hidden">{categoryLabels.length} categories</div>
+            <div className="text-[8px] text-blue-400/60 mt-1 tracking-wider uppercase overflow-hidden" style={{letterSpacing: 1}}>
+              THIS MONTH ONLY
+            </div>
+          </div>
+        </div>
+        {/* Category Cards Grid (mobile-friendly) */}
+        <div className="w-full grid grid-cols-1 gap-4 mb-4 md:grid-cols-2">
+          {sortedCategories.map(([cat, amt], idx) => {
+            const percent = totalSpent > 0 ? Math.min(100, Math.round((amt / totalSpent) * 100)) : 0;
+            const color = getCategoryColor(cat);
+            const emoji = emojiMap[cat] || '💸';
+            return (
+              <button
+                key={cat}
+                className="rounded-2xl bg-slate-900/80 shadow-lg p-3 flex flex-col gap-2 items-start border border-blue-400/10 relative overflow-hidden w-full focus:outline-none focus:ring-2 focus:ring-blue-400 transition-transform duration-200 hover:scale-105 hover:shadow-blue-400/30 active:scale-95"
+                style={{boxShadow: '0 2px 12px 0 rgba(99,102,241,0.08)', border: `1.5px solid ${color}33`, minHeight: 128, touchAction: 'manipulation'}}
+                tabIndex={0}
+                aria-label={`Show details for ${cat}`}
+                onClick={() => {
+                  setSelectedCategory({
+                    name: cat,
+                    amount: amt,
+                    percent,
+                    color,
+                    emoji,
+                  });
+                  setModalOpen(true);
+                }}
+              >
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-2xl">{emoji}</span>
+                  <span className="font-semibold text-base text-white/90">{cat}</span>
+                </div>
+                <div className="flex flex-col gap-1">
+                  <div className="flex items-end gap-2">
+                    <span className="text-xl md:text-2xl font-extrabold text-white">{amt.toFixed(2)} {group.currency || '€'}</span>
+                    <span className="text-xs text-green-400 font-bold">{percent}%</span>
+                  </div>
+                </div>
+                {/* Progress Bar */}
+                <div className="w-full h-2 rounded-full bg-slate-700/60 mt-1 mb-1 overflow-hidden">
+                  <div
+                    className="h-2 rounded-full transition-all duration-700"
+                    style={{ width: `${percent}%`, background: color, boxShadow: `0 0 8px 0 ${color}80` }}
+                  ></div>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+      {/* Category Modal */}
+      <Dialog open={modalOpen} onOpenChange={setModalOpen}>
+        <DialogContent className="max-w-md w-[95vw] bg-slate-900/95 text-white rounded-2xl shadow-2xl animate-fade-in-up p-0 flex flex-col overflow-hidden">
+          {selectedCategory && (
+            <>
+              <DialogHeader className="p-6 pb-4 flex-shrink-0 border-b border-white/10">
+                <DialogTitle className="flex items-center gap-3 text-2xl font-bold text-indigo-200 tracking-tight overflow-hidden">
+                  <span className="text-3xl flex-shrink-0">{selectedCategory.emoji}</span>
+                  <span className="truncate min-w-0">{selectedCategory.name}</span>
+                </DialogTitle>
+                <DialogDescription className="text-blue-200/80 mt-1 text-sm">
+                  Category breakdown, recent expenses, and stats.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="p-6 flex flex-col gap-4 overflow-x-hidden">
+                <div className="flex flex-row items-center justify-between mb-2">
+                  <div>
+                    <div className="text-2xl font-extrabold text-indigo-300">{selectedCategory.amount.toFixed(2)} {group.currency || '€'}</div>
+                    <div className="text-xs text-gray-400">{selectedCategory.percent}% of total</div>
+                  </div>
+                  <div className="w-10 h-10 rounded-full flex items-center justify-center text-2xl font-bold" style={{background: selectedCategory.color, color: '#fff'}}>{selectedCategory.emoji}</div>
+                </div>
+                {/* Recent expenses */}
+                <div className="mt-2">
+                  <div className="text-xs text-blue-200/80 mb-2">Recent expenses in this category</div>
+                  {getRecentExpenses(selectedCategory.name).length === 0 ? (
+                    <div className="text-blue-300/70 text-center py-4">No expenses in this category yet.</div>
+                  ) : (
+                    <ul className="space-y-2">
+                      {getRecentExpenses(selectedCategory.name).map((exp, idx) => {
+                        const isExpanded = expandedExpenseId === exp.id;
+                        const payerName = getNameByUid(group, exp.paidBy);
+                        const payerInitials = payerName.split(' ').map(n => n[0]).join('').toUpperCase();
+                        const payerColor = '#6366F1'; // Optionally, use a color hash for each user
+                        return (
+                          <li key={exp.id || idx} className="bg-slate-800/80 rounded-lg shadow-inner overflow-hidden transition-all duration-300 ease-in-out">
+                            <button
+                              className="w-full grid grid-cols-[auto_1fr_auto] items-center gap-x-3 px-3 py-2 text-left focus:outline-none"
+                              onClick={() => setExpandedExpenseId(isExpanded ? null : exp.id)}
+                              aria-expanded={isExpanded}
+                              aria-controls={`exp-details-${exp.id}`}
+                              aria-label={`Expand details for expense ${exp.label || ''}`}
+                            >
+                              {/* Avatar */}
+                              <div className="w-8 h-8 rounded-full flex items-center justify-center text-base font-bold mr-2" style={{background: payerColor, color: '#fff'}}>{payerInitials}</div>
+                              <div className="flex flex-col overflow-hidden">
+                                <span className="font-medium text-white text-sm truncate flex items-center gap-1">
+                                  {exp.label || 'Expense'}
+                                  {exp.tag && <span className="ml-1 text-lg">{exp.tag.split(' ')[0]}</span>}
+                                </span>
+                                <span className="text-xs text-blue-200">by {payerName}</span>
+                                <span className="text-xs text-gray-400">{formatDateFriendly(exp.date)}</span>
+                                {exp.note && <span className="text-xs text-blue-300 mt-1">{exp.note}</span>}
+                              </div>
+                              <div className="font-bold text-lg text-blue-100 ml-2">{parseFloat(exp.amount).toFixed(2)} {group.currency || '€'}</div>
+                              <div className="transition-transform duration-300 ml-2" style={{ transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)' }}>
+                                <svg className="h-5 w-5 text-blue-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+                              </div>
+                            </button>
+                            <div
+                              id={`exp-details-${exp.id}`}
+                              style={{ maxHeight: isExpanded ? '220px' : '0px', opacity: isExpanded ? 1 : 0, transform: isExpanded ? 'translateY(0)' : 'translateY(-8px)' }}
+                              className="transition-all duration-300 ease-in-out overflow-hidden bg-slate-900/90 border-t border-blue-700/30"
+                            >
+                              <div className="p-3">
+                                {exp.splits ? (
+                                  <div className="mb-2">
+                                    <div className="text-xs text-blue-200 mb-1">Participants & Splits</div>
+                                    <ul className="text-xs text-gray-300 space-y-0.5">
+                                      {Object.entries(exp.splits).map(([uid, share]) => (
+                                        <li key={uid} className="flex justify-between">
+                                          <span>{getNameByUid(group, uid)}</span>
+                                          <span>{parseFloat(share).toFixed(2)} {group.currency || '€'}</span>
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  </div>
+                                ) : (
+                                  <div className="text-xs text-gray-400 italic">No split details</div>
+                                )}
+                                {/* Add more details if needed, e.g., notes, attachments, etc. */}
+                              </div>
+                            </div>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+                </div>
+              </div>
+              <DialogFooter className="p-4 border-t border-white/10">
+                <button onClick={() => setModalOpen(false)} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 rounded-xl transition-colors">Close</button>
+              </DialogFooter>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+const getCategoryColor = (cat) => {
+  const colorMap = {
+    'Groceries': '#3b82f6',
+    'Dining': '#f472b6',
+    'Transportation': '#a78bfa',
+    'Shopping': '#818cf8',
+    'Bills': '#60a5fa',
+    'Entertainment': '#fbbf24',
+    'Health': '#10b981',
+    'Other': '#f59e42',
+    'Uncategorized': '#9ca3af'
+  };
+  return colorMap[cat] || colorMap['Uncategorized'];
+};
+
+// Helper to format date nicely
+function formatDateFriendly(dateStr) {
+  if (!dateStr) return '';
+  const d = new Date(dateStr);
+  if (isNaN(d)) return dateStr;
+  return d.toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+function GroupInsightsGraph({ expenses, group }) {
+  const [period, setPeriod] = React.useState('week');
+  const [currentOffset, setCurrentOffset] = React.useState(0);
+  const [categoryFilter, setCategoryFilter] = React.useState('All');
+  const [memberFilter, setMemberFilter] = React.useState('All');
+  const [showComparison, setShowComparison] = React.useState(false);
+  const [showCumulative, setShowCumulative] = React.useState(false);
+  const [showAverage, setShowAverage] = React.useState(true);
+  const chartRef = React.useRef(null);
+  // Helper to robustly normalize a date string/object to local midnight
+  function normalizeToLocalMidnight(d) {
+    if (!d) return null;
+    if (typeof d.toDate === 'function') { d = d.toDate(); }
+    if (typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d)) {
+      const [year, month, day] = d.split('-').map(Number);
+      return new Date(year, month - 1, day);
+    }
+    const date = new Date(d);
+    if (isNaN(date)) return null;
+    return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  }
+  // --- Date helpers ---
+  const today = new Date();
+  let periodStart, periodEnd, periodLabel;
+  const weekStartsOn = 'monday';
+  if (period === 'week') {
+    const targetDate = new Date(today);
+    targetDate.setDate(today.getDate() + (currentOffset * 7));
+    periodStart = new Date(targetDate);
+    periodStart.setHours(0, 0, 0, 0);
+    let dayOfWeek = targetDate.getDay();
+    let offset = weekStartsOn === 'monday' ? (dayOfWeek === 0 ? -6 : 1 - dayOfWeek) : -dayOfWeek;
+    periodStart.setDate(targetDate.getDate() + offset);
+    periodEnd = new Date(periodStart);
+    periodEnd.setDate(periodStart.getDate() + 6);
+    periodEnd.setHours(23, 59, 59, 999);
+    const formatShort = d => d.toLocaleDateString(undefined, { day: '2-digit', month: 'short' });
+    periodLabel = `${formatShort(periodStart)} - ${formatShort(periodEnd)}`.replace(/\b[a-z]/g, letter => letter.toUpperCase());
+  } else if (period === 'month') {
+    const targetDate = new Date(today.getFullYear(), today.getMonth() + currentOffset, 1);
+    periodStart = new Date(targetDate.getFullYear(), targetDate.getMonth(), 1, 0, 0, 0, 0);
+    periodEnd = new Date(targetDate.getFullYear(), targetDate.getMonth() + 1, 0, 23, 59, 59, 999);
+    const formatShort = d => d.toLocaleDateString(undefined, { day: '2-digit', month: 'short' });
+    periodLabel = `${formatShort(periodStart)} - ${formatShort(periodEnd)}`.replace(/\b[a-z]/g, letter => letter.toUpperCase());
+  } else {
+    const targetYear = today.getFullYear() + currentOffset;
+    periodStart = new Date(targetYear, 0, 1, 0, 0, 0, 0);
+    periodEnd = new Date(targetYear, 11, 31, 23, 59, 59, 999);
+    periodLabel = targetYear.toString();
+  }
+  // Get all categories and members
+  const allCategories = Array.from(new Set(expenses.map(e => e.tag || 'Other')));
+  const allMembers = group && group.claimedBy ? Object.keys(group.claimedBy) : [];
+  // Filter expenses for the period, category, and member
+  const periodExpenses = React.useMemo(() => {
+    return expenses.filter(e => {
+      const d = normalizeToLocalMidnight(e.date);
+      if (!(d && d >= periodStart && d <= periodEnd)) return false;
+      if (categoryFilter !== 'All' && (e.tag || 'Other') !== categoryFilter) return false;
+      if (memberFilter !== 'All' && getNameByUid(group, e.paidBy) !== memberFilter) return false;
+      return true;
+    });
+  }, [expenses, periodStart, periodEnd, categoryFilter, memberFilter, group]);
+  // Build daily/weekly/monthly data
+  let labelsWithDates = [], dailyData = [];
+  if (period === 'week') {
+    let weekDays = [1,2,3,4,5,6,0];
+    const weekDates = weekDays.map((weekday, i) => {
+      const d = new Date(periodStart);
+      d.setDate(periodStart.getDate() + i);
+      return d;
+    });
+    labelsWithDates = weekDates.map(d => ({ short: d.toLocaleDateString(undefined, { weekday: 'short' })[0], full: d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric' }) }));
+    dailyData = weekDays.map(() => ({ categories: {}, total: 0 }));
+    periodExpenses.forEach(e => {
+      const date = normalizeToLocalMidnight(e.date);
+      if (date) {
+        const dayIndex = weekDates.findIndex(d => d.getTime() === date.getTime());
+        if (dayIndex !== -1) {
+          const category = e.tag || 'Other';
+          const amount = parseFloat(e.amount) || 0;
+          dailyData[dayIndex].categories[category] = (dailyData[dayIndex].categories[category] || 0) + amount;
+          dailyData[dayIndex].total += amount;
+        }
+      }
+    });
+  } else if (period === 'month') {
+    const daysInMonth = periodEnd.getDate();
+    labelsWithDates = Array.from({ length: daysInMonth }, (_, i) => {
+      const d = new Date(periodStart.getFullYear(), periodStart.getMonth(), i + 1);
+      return { short: (i + 1).toString(), full: d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric' }) };
+    });
+    dailyData = Array.from({ length: daysInMonth }, () => ({ categories: {}, total: 0 }));
+    periodExpenses.forEach(e => {
+      const date = normalizeToLocalMidnight(e.date);
+      if (date) {
+        const dayIndex = date.getDate() - 1;
+        if (dayIndex >= 0 && dayIndex < daysInMonth) {
+          const category = e.tag || 'Other';
+          const amount = parseFloat(e.amount) || 0;
+          dailyData[dayIndex].categories[category] = (dailyData[dayIndex].categories[category] || 0) + amount;
+          dailyData[dayIndex].total += amount;
+        }
+      }
+    });
+  } else {
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const targetYear = today.getFullYear() + currentOffset;
+    labelsWithDates = months.map((month, i) => ({ short: month, full: `${month} ${targetYear}` }));
+    dailyData = Array.from({ length: 12 }, () => ({ categories: {}, total: 0 }));
+    periodExpenses.forEach(e => {
+      const date = normalizeToLocalMidnight(e.date);
+      if (date) {
+        const monthIndex = date.getMonth();
+        if (monthIndex >= 0 && monthIndex < 12) {
+          const category = e.tag || 'Other';
+          const amount = parseFloat(e.amount) || 0;
+          dailyData[monthIndex].categories[category] = (dailyData[monthIndex].categories[category] || 0) + amount;
+          dailyData[monthIndex].total += amount;
+        }
+      }
+    });
+  }
+  const chartTotals = dailyData.map(d => d.total);
+  const expensesTotal = chartTotals.reduce((a, b) => a + b, 0);
+  const spentPerDay = period === 'week' ? expensesTotal / 7 : period === 'month' ? (chartTotals.length > 0 ? expensesTotal / chartTotals.length : 0) : period === 'year' ? expensesTotal / 365 : 0;
+  // Calculate previous period for trend
+  let prevPeriodStart, prevPeriodEnd;
+  if (period === 'week') {
+    prevPeriodStart = new Date(periodStart); prevPeriodStart.setDate(periodStart.getDate() - 7);
+    prevPeriodEnd = new Date(periodEnd); prevPeriodEnd.setDate(periodEnd.getDate() - 7);
+  } else if (period === 'month') {
+    prevPeriodStart = new Date(periodStart.getFullYear(), periodStart.getMonth() - 1, 1);
+    prevPeriodEnd = new Date(periodStart.getFullYear(), periodStart.getMonth(), 0, 23, 59, 59, 999);
+  } else {
+    prevPeriodStart = new Date(periodStart.getFullYear() - 1, 0, 1);
+    prevPeriodEnd = new Date(periodStart.getFullYear() - 1, 11, 31, 23, 59, 59, 999);
+  }
+  const prevPeriodExpenses = expenses.filter(e => {
+    const d = normalizeToLocalMidnight(e.date);
+    if (!(d && d >= prevPeriodStart && d <= prevPeriodEnd)) return false;
+    if (categoryFilter !== 'All' && (e.tag || 'Other') !== categoryFilter) return false;
+    if (memberFilter !== 'All' && getNameByUid(group, e.paidBy) !== memberFilter) return false;
+    return true;
+  });
+  let prevTotal = prevPeriodExpenses.reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0);
+  let prevSpentPerDay = (period === 'week') ? prevTotal / 7 : (period === 'month' ? (prevPeriodExpenses.length > 0 ? prevTotal / chartTotals.length : 0) : (period === 'year' ? prevTotal / 365 : 0));
+  // Trend calculation
+  const trend = prevTotal > 0 ? ((expensesTotal - prevTotal) / prevTotal) * 100 : 0;
+  const trendDay = prevSpentPerDay > 0 ? ((spentPerDay - prevSpentPerDay) / prevSpentPerDay) * 100 : 0;
+  // Top spender and largest expense
+  let memberTotals = {};
+  periodExpenses.forEach(e => {
+    const name = getNameByUid(group, e.paidBy);
+    memberTotals[name] = (memberTotals[name] || 0) + (parseFloat(e.amount) || 0);
+  });
+  const topSpender = Object.entries(memberTotals).sort((a, b) => b[1] - a[1])[0];
+  const largestExpense = periodExpenses.sort((a, b) => (parseFloat(b.amount) || 0) - (parseFloat(a.amount) || 0))[0];
+  // Category legend
+  const periodCategoryTotals = periodExpenses.reduce((acc, e) => {
+    const cat = e.tag || 'Other';
+    const amt = parseFloat(e.amount) || 0;
+    acc[cat] = (acc[cat] || 0) + amt;
+    return acc;
+  }, {});
+  const legendCategories = [...new Set(Object.keys(periodCategoryTotals))];
+  // Build comparison overlay dataset
+  let comparisonDataset = null;
+  if (showComparison && prevPeriodExpenses.length > 0) {
+    let prevDailyData = [];
+    if (period === 'week') {
+      prevDailyData = Array(7).fill(0);
+      prevPeriodExpenses.forEach(e => {
+        const date = normalizeToLocalMidnight(e.date);
+        if (date) {
+          const dayIndex = (date.getDay() + 6) % 7; // Monday=0
+          prevDailyData[dayIndex] += parseFloat(e.amount) || 0;
+        }
+      });
+    } else if (period === 'month') {
+      const daysInMonth = prevPeriodEnd.getDate();
+      prevDailyData = Array(daysInMonth).fill(0);
+      prevPeriodExpenses.forEach(e => {
+        const date = normalizeToLocalMidnight(e.date);
+        if (date) {
+          const dayIndex = date.getDate() - 1;
+          if (dayIndex >= 0 && dayIndex < daysInMonth) {
+            prevDailyData[dayIndex] += parseFloat(e.amount) || 0;
+          }
+        }
+      });
+    } else {
+      prevDailyData = Array(12).fill(0);
+      prevPeriodExpenses.forEach(e => {
+        const date = normalizeToLocalMidnight(e.date);
+        if (date) {
+          const monthIndex = date.getMonth();
+          if (monthIndex >= 0 && monthIndex < 12) {
+            prevDailyData[monthIndex] += parseFloat(e.amount) || 0;
+          }
+        }
+      });
+    }
+    comparisonDataset = {
+      label: 'Previous Period',
+      data: prevDailyData,
+      backgroundColor: 'rgba(99,102,241,0.18)',
+      borderRadius: 12,
+      barPercentage: 0.6,
+      categoryPercentage: 0.7,
+      borderSkipped: false,
+      stack: 'stack0',
+    };
+  }
+  // Build cumulative line dataset
+  let cumulativeDataset = null;
+  if (showCumulative) {
+    let cum = 0;
+    const cumData = chartTotals.map(val => (cum += val));
+    cumulativeDataset = {
+      type: 'line',
+      label: 'Cumulative',
+      data: cumData,
+      borderColor: '#38bdf8',
+      backgroundColor: 'rgba(56,189,248,0.2)',
+      borderWidth: 2,
+      pointRadius: 0,
+      fill: false,
+      tension: 0.3,
+      yAxisID: 'y',
+    };
+  }
+  // Bar chart datasets
+  const barDatasets = [
+    ...legendCategories.map(category => {
+      const categoryData = dailyData.map(dayData => dayData.categories[category] || 0);
+      return {
+        label: category,
+        data: categoryData,
+        backgroundColor: getCategoryColor(category),
+        borderRadius: 12,
+        barPercentage: 0.6,
+        categoryPercentage: 0.7,
+        borderSkipped: false,
+        stack: 'stack0',
+      };
+    }),
+    ...(comparisonDataset ? [comparisonDataset] : []),
+    ...(cumulativeDataset ? [cumulativeDataset] : []),
+  ];
+  const barData = {
+    labels: labelsWithDates.map(l => l.short),
+    datasets: barDatasets,
+  };
+  const barOptions = {
+    plugins: {
+      legend: { display: false },
+      tooltip: {
+        enabled: true,
+        mode: 'index',
+        intersect: false,
+        backgroundColor: '#1e293b',
+        titleColor: '#f1f5f9',
+        titleFont: { size: 14, weight: 'bold' },
+        bodyColor: '#cbd5e1',
+        bodyFont: { size: 12 },
+        borderColor: 'rgba(99,102,241,0.5)',
+        borderWidth: 1,
+        displayColors: false,
+        padding: 12,
+        cornerRadius: 8,
+        animation: { duration: 400 },
+        callbacks: {
+          title: function(context) {
+            if (!context[0]) return '';
+            return labelsWithDates[context[0].dataIndex].full;
+          },
+          label: () => null,
+          beforeBody: function(context) {
+            const dataIndex = context[0].dataIndex;
+            const dayData = dailyData[dataIndex];
+            const sortedCategories = Object.entries(dayData.categories).sort((a, b) => b[1] - a[1]);
+            if (sortedCategories.length === 0) return ['No expenses this day.'];
+            return sortedCategories.map(([name, amount]) => `${name}: ${amount.toFixed(2)} ${group.currency || '€'}`);
+          },
+          footer: function(context) {
+            const totalAmount = context[0].raw;
+            if (totalAmount > 0) {
+              return `\nTotal: ${totalAmount.toFixed(2)} ${group.currency || '€'}`;
+            }
+            return '';
+          },
+        },
+      },
+    },
+    elements: {
+      bar: { borderRadius: 12 },
+    },
+    responsive: true,
+    maintainAspectRatio: false,
+    scales: {
+      x: { grid: { display: false } },
+      y: { grid: { color: '#334155', borderDash: [4, 4] }, beginAtZero: true },
+    },
+  };
+  // Export as image
+  const handleExport = async () => {
+    if (!chartRef.current) return;
+    const node = chartRef.current;
+    const canvas = await html2canvas(node, { backgroundColor: null, useCORS: true });
+    const link = document.createElement('a');
+    link.download = 'group-expense-insights.png';
+    link.href = canvas.toDataURL('image/png');
+    link.click();
+  };
+  // Share summary
+  const handleShare = async () => {
+    const summary = `Group: ${group.name}\nPeriod: ${periodLabel}\nTotal: ${expensesTotal.toFixed(2)} ${group.currency || '€'}\nSpent/Day: ${spentPerDay.toFixed(2)} ${group.currency || '€'}\nTop Spender: ${topSpender ? `${topSpender[0]} (${topSpender[1].toFixed(2)} ${group.currency || '€'})` : '-'}`;
+    if (navigator.share) {
+      try {
+        await navigator.share({ title: 'Group Expense Insights', text: summary });
+      } catch {}
+    } else {
+      await navigator.clipboard.writeText(summary);
+      alert('Summary copied to clipboard!');
+    }
+  };
+  // Legend
+  const legend = legendCategories.map(cat => {
+    const percent = expensesTotal ? ((periodCategoryTotals[cat] / expensesTotal) * 100).toFixed(1) : 0;
+    return { name: cat, color: getCategoryColor(cat), percent, amount: periodCategoryTotals[cat] };
+  });
+  const [showHelp, setShowHelp] = React.useState(false);
+  // Calculate group health (simple: % of members who added expenses this period)
+  const memberSet = new Set(periodExpenses.map(e => getNameByUid(group, e.paidBy)));
+  const participation = allMembers.length > 0 ? Math.round((memberSet.size / allMembers.length) * 100) : 0;
+  let healthLabel = 'Dormant', healthColor = 'bg-gray-500', healthIcon = <HeartPulse className="h-4 w-4" />;
+  if (participation >= 80) { healthLabel = 'Active'; healthColor = 'bg-green-600'; }
+  else if (participation >= 40) { healthLabel = 'Moderate'; healthColor = 'bg-yellow-500'; }
+  else if (participation > 0) { healthLabel = 'Low'; healthColor = 'bg-orange-500'; }
+  return (
+    <div className="w-full max-w-2xl mx-auto mt-1 mb-4 px-2">
+      <div className="bg-slate-900/95 text-white shadow-2xl rounded-3xl border border-blue-400/20 p-3 md:p-5 flex flex-col items-center glass-card" style={{overflow: 'hidden', background: 'rgba(30,41,59,0.85)', boxShadow: '0 8px 32px 0 rgba(31, 38, 135, 0.18)', border: '1.5px solid rgba(99,102,241,0.12)', backdropFilter: 'blur(18px)'}}>
+        {/* Title and period controls at the very top */}
+        <div className="w-full flex flex-row items-center justify-between mb-2 mt-1">
+          <div className="text-lg font-bold">Expense Insights</div>
+          <div className="flex items-center gap-2">
+            <button onClick={() => setCurrentOffset(o => o - 1)} className="w-8 h-8 flex items-center justify-center rounded-full bg-slate-800 hover:bg-slate-700 transition-colors duration-200 border border-blue-700/40 focus:outline-none" title="Previous period" aria-label="Previous period">
+              <svg className="w-4 h-4 text-blue-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
+            </button>
+            <select className="bg-slate-800 rounded-full px-3 py-1 text-sm font-semibold border border-blue-700/40 focus:outline-none" value={period} onChange={e => setPeriod(e.target.value)} aria-label="Select period">
+              <option value="week">week</option>
+              <option value="month">month</option>
+              <option value="year">year</option>
+            </select>
+            {currentOffset < 0 && (
+              <button onClick={() => setCurrentOffset(o => o + 1)} className="w-8 h-8 flex items-center justify-center rounded-full bg-slate-800 hover:bg-slate-700 transition-colors duration-200 border border-blue-700/40 focus:outline-none" title="Next period" aria-label="Next period">
+                <svg className="w-4 h-4 text-blue-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+              </button>
+            )}
+            {currentOffset !== 0 && (
+              <button onClick={() => setCurrentOffset(0)} className="px-2 py-1 text-xs font-medium text-blue-400 hover:text-blue-200 hover:bg-blue-700/20 rounded-full transition-colors duration-200" title="Go to current period" aria-label="Go to current period">Today</button>
+            )}
+          </div>
+        </div>
+        {/* Filters & Toolbar Row (now below title) */}
+        <div className="w-full flex flex-row items-center justify-between gap-2 mb-1">
+          <div className="flex flex-row gap-1 overflow-x-auto pb-1 scrollbar-hide">
+            <button className={`px-3 py-1 rounded-full text-xs font-semibold border ${categoryFilter === 'All' ? 'bg-blue-600 text-white border-blue-600' : 'bg-slate-800 text-blue-200 border-slate-700 hover:bg-blue-700 hover:text-white'}`} onClick={() => setCategoryFilter('All')} aria-label="Show all categories">All</button>
+            {allCategories.map(cat => (
+              <button key={cat} className={`px-3 py-1 rounded-full text-xs font-semibold border ${categoryFilter === cat ? 'bg-blue-600 text-white border-blue-600' : 'bg-slate-800 text-blue-200 border-slate-700 hover:bg-blue-700 hover:text-white'}`} onClick={() => setCategoryFilter(cat)} aria-label={`Filter by ${cat}`}>{cat}</button>
+            ))}
+          </div>
+          {/* Horizontal Toolbar + Health badge */}
+          <div className="flex flex-row items-center gap-2 ml-2">
+            <div className="flex flex-row gap-1 bg-slate-800/90 rounded-full shadow-lg px-2 py-1 border border-blue-700/30">
+              <button onClick={handleExport} className="p-2 rounded-full bg-blue-700 hover:bg-blue-800 text-white border border-blue-800 transition-colors" aria-label="Export graph as image" title="Export as image"><Download className="h-4 w-4" /></button>
+              <button onClick={handleShare} className="p-2 rounded-full bg-blue-700 hover:bg-blue-800 text-white border border-blue-800 transition-colors" aria-label="Share summary" title="Share summary"><Share2 className="h-4 w-4" /></button>
+              <button onClick={() => setShowHelp(true)} className="p-2 rounded-full bg-blue-700 hover:bg-blue-800 text-white border border-blue-800 transition-colors" aria-label="Help/Info" title="Help/Info"><HelpCircle className="h-4 w-4" /></button>
+            </div>
+            <span className={`flex items-center gap-1 px-2 py-1 rounded-full text-xs font-semibold text-white ${healthColor} shadow`} title={`Group Health: ${healthLabel} (${participation}% participation)`} aria-label={`Group Health: ${healthLabel} (${participation}% participation)`}>{healthIcon}<span>{healthLabel}</span><span className="ml-1">{participation}%</span></span>
+          </div>
+          {/* Help Tooltip/Modal */}
+          {showHelp && (
+            <div className="absolute top-16 right-4 z-50 bg-slate-900/95 border border-blue-700/30 rounded-xl shadow-xl p-4 w-72 text-xs text-blue-100 animate-fade-in-up">
+              <div className="flex items-center justify-between mb-2">
+                <span className="font-bold text-blue-200">Insights Help</span>
+                <button onClick={() => setShowHelp(false)} className="text-blue-400 hover:text-blue-200 p-1 rounded-full" aria-label="Close help">✕</button>
+              </div>
+              <ul className="list-disc pl-4 space-y-1">
+                <li><b>Filters:</b> Use the chips to filter by category or member for deep-dive analytics.</li>
+                <li><b>Export/Share:</b> Download the graph as an image or share a summary with your group.</li>
+                <li><b>Toggles:</b> Comparison overlays, cumulative view, and average line help you spot trends.</li>
+                <li><b>Group Health:</b> Shows how many members participated this period. Green = high, yellow = moderate, orange = low, gray = dormant.</li>
+                <li><b>Accessibility:</b> All controls are keyboard and screen reader friendly. Use Tab/Shift+Tab to navigate.</li>
+              </ul>
+            </div>
+          )}
+        </div>
+        {/* Member filter row */}
+        <div className="w-full flex flex-row gap-1 overflow-x-auto pb-1 scrollbar-hide mt-2 mb-2">
+          <button className={`px-3 py-1 rounded-full text-xs font-semibold border ${memberFilter === 'All' ? 'bg-blue-600 text-white border-blue-600' : 'bg-slate-800 text-blue-200 border-slate-700 hover:bg-blue-700 hover:text-white'}`} onClick={() => setMemberFilter('All')} aria-label="Show all members">All</button>
+          {allMembers.map(name => (
+            <button key={name} className={`px-3 py-1 rounded-full text-xs font-semibold border ${memberFilter === name ? 'bg-blue-600 text-white border-blue-600' : 'bg-slate-800 text-blue-200 border-slate-700 hover:bg-blue-700 hover:text-white'}`} onClick={() => setMemberFilter(name)} aria-label={`Filter by ${name}`}>{name}</button>
+          ))}
+        </div>
+        {/* Toggles */}
+        <div className="w-full flex flex-wrap gap-2 mb-2 justify-center items-center">
+          <label className={`flex items-center gap-1 text-xs px-3 py-1 rounded-full cursor-pointer ${showComparison ? 'bg-blue-700/30 text-blue-200' : 'bg-slate-800/80 text-blue-200'}`}> <input type="checkbox" checked={showComparison} onChange={e => setShowComparison(e.target.checked)} className="accent-blue-600" />Comparison</label>
+          <label className={`flex items-center gap-1 text-xs px-3 py-1 rounded-full cursor-pointer ${showCumulative ? 'bg-blue-700/30 text-blue-200' : 'bg-slate-800/80 text-blue-200'}`}> <input type="checkbox" checked={showCumulative} onChange={e => setShowCumulative(e.target.checked)} className="accent-blue-600" />Cumulative</label>
+          <label className={`flex items-center gap-1 text-xs px-3 py-1 rounded-full cursor-pointer ${showAverage ? 'bg-blue-700/30 text-blue-200' : 'bg-slate-800/80 text-blue-200'}`}> <input type="checkbox" checked={showAverage} onChange={e => setShowAverage(e.target.checked)} className="accent-blue-600" />Average</label>
+        </div>
+        {/* Date range and stats */}
+        <div className="w-full flex flex-row items-center justify-between mb-2 text-xs font-semibold text-blue-200/80">
+          <span>{periodLabel}</span>
+          <span>SPENT/DAY</span>
+        </div>
+        <div className="w-full flex flex-row items-center justify-between mb-2">
+          <span className="text-2xl font-bold text-blue-400 flex items-center">{expensesTotal.toFixed(2)} {group.currency || '€'}
+            {trend !== 0 && (
+              <span className={`ml-2 text-sm font-semibold ${trend > 0 ? 'text-green-400' : 'text-red-400'}`}>{trend > 0 ? '▲' : '▼'} {Math.abs(trend).toFixed(1)}%</span>
+            )}
+          </span>
+          <span className="text-2xl font-bold text-white flex items-center">{spentPerDay.toFixed(2)} {group.currency || '€'}
+            {trendDay !== 0 && (
+              <span className={`ml-2 text-sm font-semibold ${trendDay > 0 ? 'text-green-400' : 'text-red-400'}`}>{trendDay > 0 ? '▲' : '▼'} {Math.abs(trendDay).toFixed(1)}%</span>
+            )}
+          </span>
+        </div>
+        {/* Top spender and largest expense */}
+        <div className="w-full flex flex-row flex-wrap items-center justify-between mb-3 gap-2 text-xs text-blue-200/80">
+          <span className="bg-blue-800/40 rounded-full px-3 py-1 flex items-center gap-2"><span className="font-bold">Top spender:</span> {topSpender ? <><span className="bg-blue-700/80 rounded-full px-2 py-0.5 text-white font-semibold text-xs">{topSpender[0]}</span> <span>({topSpender[1].toFixed(2)} {group.currency || '€'})</span></> : '-'}</span>
+          <span className="bg-blue-800/40 rounded-full px-3 py-1 flex items-center gap-2"><span className="font-bold">Largest expense:</span> {largestExpense ? <><span className="bg-blue-700/80 rounded-full px-2 py-0.5 text-white font-semibold text-xs">{largestExpense.label || 'Expense'}</span> <span>({parseFloat(largestExpense.amount).toFixed(2)} {group.currency || '€'})</span></> : '-'}</span>
+        </div>
+        {/* Bar Chart */}
+        <div className="w-full h-40 md:h-48 mb-2 rounded-2xl bg-slate-800/80 p-2" ref={chartRef}>
+          <Bar data={barData} options={barOptions} />
+        </div>
+        {/* Category Legend */}
+        <div className="flex flex-row flex-wrap items-center justify-center gap-4 mt-2 w-full overflow-x-auto scrollbar-hide">
+          {legend.map(l => (
+            <div key={l.name} className="flex items-center gap-2 bg-slate-800/60 rounded-full px-3 py-1">
+              <span className="inline-block w-4 h-2 rounded-full" style={{background: l.color}}></span>
+              <span className="text-xs font-semibold text-blue-100">{l.name}</span>
+              <span className="text-xs text-blue-300">{l.percent}%</span>
+              <span className="text-xs text-blue-200 font-medium">{l.amount.toFixed(2)} {group.currency || '€'}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export default GroupExpensesPage;
