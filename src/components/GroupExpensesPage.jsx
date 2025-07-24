@@ -626,6 +626,23 @@ Please settle up when you can. Thank you!`;
 
   const [showNotOwnerDelete, setShowNotOwnerDelete] = useState(false);
 
+  // In GroupExpensesPage, add these states at the top level (before return):
+  const [selectedCategory, setSelectedCategory] = useState(null);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [expandedExpenseId, setExpandedExpenseId] = useState(null);
+
+  // Add at the top level, after other helpers:
+  function getRecentExpenses(expenses, cat) {
+    return expenses
+      .filter(exp => (exp.tag || 'Other') === cat)
+      .sort((a, b) => {
+        const aTime = a.createdAt && typeof a.createdAt.seconds === 'number' ? a.createdAt.seconds : 0;
+        const bTime = b.createdAt && typeof b.createdAt.seconds === 'number' ? b.createdAt.seconds : 0;
+        return bTime - aTime;
+      })
+      .slice(0, 5);
+  }
+
   return (
     <>
       <Helmet>
@@ -678,7 +695,16 @@ Please settle up when you can. Thank you!`;
         
         {tab === 'overview' && (
           <>
-            <GroupInsightsOverview expenses={expenses} group={group} />
+            <GroupInsightsOverview
+              expenses={expenses}
+              group={group}
+              selectedCategory={selectedCategory}
+              setSelectedCategory={setSelectedCategory}
+              modalOpen={modalOpen}
+              setModalOpen={setModalOpen}
+              expandedExpenseId={expandedExpenseId}
+              setExpandedExpenseId={setExpandedExpenseId}
+            />
             <GroupInsightsGraph expenses={expenses} group={group} />
           </>
         )}
@@ -1359,6 +1385,127 @@ Please settle up when you can. Thank you!`;
           </DialogContent>
         </Dialog>
       )}
+      <Dialog open={modalOpen} onOpenChange={setModalOpen}>
+        <DialogContent className="max-w-md w-[95vw] bg-slate-900/95 text-white rounded-2xl shadow-2xl animate-fade-in-up p-0 flex flex-col min-h-[60vh] max-h-[90vh] h-full">
+          {selectedCategory && (
+            <>
+              {/* Sticky header */}
+              <DialogHeader className="p-6 pb-4 flex-shrink-0 border-b border-white/10 relative sticky top-0 z-20 bg-slate-900/95 backdrop-blur-xl">
+                <DialogTitle className="flex items-center gap-3 text-2xl font-bold text-indigo-200 tracking-tight overflow-hidden">
+                  <span className="text-3xl flex-shrink-0">{selectedCategory.emoji}</span>
+                  <span className="truncate min-w-0">{selectedCategory.name}</span>
+                </DialogTitle>
+                <DialogDescription className="text-blue-200/80 mt-1 text-sm">
+                  Category breakdown, recent expenses, and stats.
+                </DialogDescription>
+                {/* Top-right X close button */}
+                <DialogClose asChild>
+                  <button
+                    className="absolute right-4 top-4 rounded-full p-2 bg-slate-800 hover:bg-slate-700 text-blue-200 hover:text-white transition-colors focus:outline-none focus:ring-2 focus:ring-blue-400"
+                    aria-label="Close"
+                  >
+                    <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                  </button>
+                </DialogClose>
+              </DialogHeader>
+              {/* Stats/info row for modal */}
+              <div className="flex flex-row items-center justify-between px-6 pt-2 pb-3 bg-slate-900/95 z-10" style={{borderBottom: '1px solid rgba(255,255,255,0.06)'}}>
+                <div>
+                  <div className="text-2xl font-extrabold text-indigo-100 leading-tight">{selectedCategory.amount?.toFixed(2)} {group.currency || '€'}</div>
+                  <div className="text-xs text-blue-200/80 font-semibold">{selectedCategory.percent}% of total</div>
+                </div>
+                <div className="w-12 h-12 rounded-full flex items-center justify-center text-3xl font-bold ml-2" style={{background: selectedCategory.color, color: '#fff'}}>{selectedCategory.emoji}</div>
+              </div>
+              {/* Scrollable content */}
+              <div className="flex-1 overflow-y-auto p-6 flex flex-col gap-4">
+                {/* Recent expenses */}
+                <div className="mt-2">
+                  <div className="text-xs text-blue-200/80 mb-2">Recent expenses in this category</div>
+                  {(() => {
+                    const recent = getRecentExpenses(expenses, selectedCategory.name);
+                    const grouped = groupExpensesByMonth(recent);
+                    if (grouped.length === 0) {
+                      return <div className="text-blue-300/70 text-center py-4">No expenses in this category yet.</div>;
+                    }
+                    return grouped.map((monthGroup, monthIdx) => (
+                      <div key={monthIdx} className="space-y-2">
+                        {/* Month delimiter */}
+                        <div className="flex items-center gap-2 py-1">
+                          <div className="flex-1 h-px bg-gradient-to-r from-transparent via-blue-400/30 to-transparent"></div>
+                          <span className="text-xs font-semibold text-blue-300/80 px-2 py-1 bg-blue-400/10 rounded-full">{monthGroup.label}</span>
+                          <div className="flex-1 h-px bg-gradient-to-r from-transparent via-blue-400/30 to-transparent"></div>
+                        </div>
+                        {/* Expenses for this month */}
+                        {monthGroup.expenses.map((exp, idx) => {
+                          const isExpanded = expandedExpenseId === exp.id;
+                          const payerName = getNameByUid(group, exp.paidBy);
+                          const payerInitials = payerName.split(' ').map(n => n[0]).join('').toUpperCase();
+                          const payerColor = '#6366F1';
+                          return (
+                            <li key={exp.id || idx} className="bg-slate-800/80 rounded-lg shadow-inner overflow-hidden transition-all duration-300 ease-in-out">
+                              <button
+                                className="w-full grid grid-cols-[auto_1fr_auto] items-center gap-x-3 px-3 py-2 text-left focus:outline-none"
+                                onClick={() => setExpandedExpenseId(isExpanded ? null : exp.id)}
+                                aria-expanded={isExpanded}
+                                aria-controls={`exp-details-${exp.id}`}
+                                aria-label={`Expand details for expense ${exp.label || ''}`}
+                              >
+                                {/* Avatar */}
+                                <div className="w-8 h-8 rounded-full flex items-center justify-center text-base font-bold mr-2" style={{background: payerColor, color: '#fff'}}>{payerInitials}</div>
+                                <div className="flex flex-col overflow-hidden">
+                                  <span className="font-medium text-white text-sm truncate flex items-center gap-1">
+                                    {exp.label || 'Expense'}
+                                    {exp.tag && <span className="ml-1 text-lg">{exp.tag.split(' ')[0]}</span>}
+                                  </span>
+                                  <span className="text-xs text-blue-200">by {payerName}</span>
+                                  <span className="text-xs text-gray-400">{formatDateFriendly(exp.date)}</span>
+                                  {exp.note && <span className="text-xs text-blue-300 mt-1">{exp.note}</span>}
+                                </div>
+                                <div className="font-bold text-lg text-blue-100 ml-2">{parseFloat(exp.amount).toFixed(2)} {group.currency || '€'}</div>
+                                <div className="transition-transform duration-300 ml-2" style={{ transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)' }}>
+                                  <svg className="h-5 w-5 text-blue-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+                                </div>
+                              </button>
+                              <div
+                                id={`exp-details-${exp.id}`}
+                                style={{ maxHeight: isExpanded ? '220px' : '0px', opacity: isExpanded ? 1 : 0, transform: isExpanded ? 'translateY(0)' : 'translateY(-8px)' }}
+                                className="transition-all duration-300 ease-in-out overflow-hidden bg-slate-900/90 border-t border-blue-700/30"
+                              >
+                                <div className="p-3">
+                                  {exp.splits ? (
+                                    <div className="mb-2">
+                                      <div className="text-xs text-blue-200 mb-1">Participants & Splits</div>
+                                      <ul className="text-xs text-gray-300 space-y-0.5">
+                                        {Object.entries(exp.splits).map(([uid, share]) => (
+                                          <li key={uid} className="flex justify-between">
+                                            <span>{getNameByUid(group, uid)}</span>
+                                            <span>{parseFloat(share).toFixed(2)} {group.currency || '€'}</span>
+                                          </li>
+                                        ))}
+                                      </ul>
+                                    </div>
+                                  ) : (
+                                    <div className="text-xs text-gray-400 italic">No split details</div>
+                                  )}
+                                  {/* Add more details if needed, e.g., notes, attachments, etc. */}
+                                </div>
+                              </div>
+                            </li>
+                          );
+                        })}
+                      </div>
+                    ));
+                  })()}
+                </div>
+              </div>
+              {/* Sticky footer */}
+              <DialogFooter className="p-4 border-t border-white/10 sticky bottom-0 z-20 bg-slate-900/95 backdrop-blur-xl flex-shrink-0">
+                <button onClick={() => setModalOpen(false)} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 rounded-xl transition-colors">Close</button>
+              </DialogFooter>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
     </>
   );
 }
@@ -1850,7 +1997,7 @@ function EditExpenseForm({ editExpense, group, user, onSave, onDelete, onCancel 
   );
 } 
 
-function GroupInsightsOverview({ expenses, group }) {
+function GroupInsightsOverview({ expenses, group, selectedCategory, setSelectedCategory, modalOpen, setModalOpen, expandedExpenseId, setExpandedExpenseId }) {
   // Calculate category totals
   const categoryTotals = {};
   let totalSpent = 0;
@@ -1890,12 +2037,8 @@ function GroupInsightsOverview({ expenses, group }) {
   const currentMonth = new Date().toLocaleDateString('en-US', { month: 'short' });
   const currentYear = new Date().getFullYear();
 
-  const [selectedCategory, setSelectedCategory] = React.useState(null);
-  const [modalOpen, setModalOpen] = React.useState(false);
-  const [expandedExpenseId, setExpandedExpenseId] = React.useState(null);
-
   // Helper to get recent expenses for a category
-  const getRecentExpenses = (cat) => {
+  const getRecentExpenses = (expenses, cat) => {
     return expenses
       .filter(exp => (exp.tag || 'Other') === cat)
       .sort((a, b) => {
@@ -2028,10 +2171,11 @@ function GroupInsightsOverview({ expenses, group }) {
       </div>
       {/* Category Modal */}
       <Dialog open={modalOpen} onOpenChange={setModalOpen}>
-        <DialogContent className="max-w-md w-[95vw] bg-slate-900/95 text-white rounded-2xl shadow-2xl animate-fade-in-up p-0 flex flex-col overflow-hidden">
+        <DialogContent className="max-w-md w-[95vw] bg-slate-900/95 text-white rounded-2xl shadow-2xl animate-fade-in-up p-0 flex flex-col min-h-[60vh] max-h-[90vh] h-full">
           {selectedCategory && (
             <>
-              <DialogHeader className="p-6 pb-4 flex-shrink-0 border-b border-white/10">
+              {/* Sticky header */}
+              <DialogHeader className="p-6 pb-4 flex-shrink-0 border-b border-white/10 relative sticky top-0 z-20 bg-slate-900/95 backdrop-blur-xl">
                 <DialogTitle className="flex items-center gap-3 text-2xl font-bold text-indigo-200 tracking-tight overflow-hidden">
                   <span className="text-3xl flex-shrink-0">{selectedCategory.emoji}</span>
                   <span className="truncate min-w-0">{selectedCategory.name}</span>
@@ -2039,84 +2183,108 @@ function GroupInsightsOverview({ expenses, group }) {
                 <DialogDescription className="text-blue-200/80 mt-1 text-sm">
                   Category breakdown, recent expenses, and stats.
                 </DialogDescription>
+                {/* Top-right X close button */}
+                <DialogClose asChild>
+                  <button
+                    className="absolute right-4 top-4 rounded-full p-2 bg-slate-800 hover:bg-slate-700 text-blue-200 hover:text-white transition-colors focus:outline-none focus:ring-2 focus:ring-blue-400"
+                    aria-label="Close"
+                  >
+                    <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                  </button>
+                </DialogClose>
               </DialogHeader>
-              <div className="p-6 flex flex-col gap-4 overflow-x-hidden">
-                <div className="flex flex-row items-center justify-between mb-2">
-                  <div>
-                    <div className="text-2xl font-extrabold text-indigo-300">{selectedCategory.amount.toFixed(2)} {group.currency || '€'}</div>
-                    <div className="text-xs text-gray-400">{selectedCategory.percent}% of total</div>
-                  </div>
-                  <div className="w-10 h-10 rounded-full flex items-center justify-center text-2xl font-bold" style={{background: selectedCategory.color, color: '#fff'}}>{selectedCategory.emoji}</div>
+              {/* Stats/info row for modal */}
+              <div className="flex flex-row items-center justify-between px-6 pt-2 pb-3 bg-slate-900/95 z-10" style={{borderBottom: '1px solid rgba(255,255,255,0.06)'}}>
+                <div>
+                  <div className="text-2xl font-extrabold text-indigo-100 leading-tight">{selectedCategory.amount?.toFixed(2)} {group.currency || '€'}</div>
+                  <div className="text-xs text-blue-200/80 font-semibold">{selectedCategory.percent}% of total</div>
                 </div>
+                <div className="w-12 h-12 rounded-full flex items-center justify-center text-3xl font-bold ml-2" style={{background: selectedCategory.color, color: '#fff'}}>{selectedCategory.emoji}</div>
+              </div>
+              {/* Scrollable content */}
+              <div className="flex-1 overflow-y-auto p-6 flex flex-col gap-4">
                 {/* Recent expenses */}
                 <div className="mt-2">
                   <div className="text-xs text-blue-200/80 mb-2">Recent expenses in this category</div>
-                  {getRecentExpenses(selectedCategory.name).length === 0 ? (
-                    <div className="text-blue-300/70 text-center py-4">No expenses in this category yet.</div>
-                  ) : (
-                    <ul className="space-y-2">
-                      {getRecentExpenses(selectedCategory.name).map((exp, idx) => {
-                        const isExpanded = expandedExpenseId === exp.id;
-                        const payerName = getNameByUid(group, exp.paidBy);
-                        const payerInitials = payerName.split(' ').map(n => n[0]).join('').toUpperCase();
-                        const payerColor = '#6366F1'; // Optionally, use a color hash for each user
-                        return (
-                          <li key={exp.id || idx} className="bg-slate-800/80 rounded-lg shadow-inner overflow-hidden transition-all duration-300 ease-in-out">
-                            <button
-                              className="w-full grid grid-cols-[auto_1fr_auto] items-center gap-x-3 px-3 py-2 text-left focus:outline-none"
-                              onClick={() => setExpandedExpenseId(isExpanded ? null : exp.id)}
-                              aria-expanded={isExpanded}
-                              aria-controls={`exp-details-${exp.id}`}
-                              aria-label={`Expand details for expense ${exp.label || ''}`}
-                            >
-                              {/* Avatar */}
-                              <div className="w-8 h-8 rounded-full flex items-center justify-center text-base font-bold mr-2" style={{background: payerColor, color: '#fff'}}>{payerInitials}</div>
-                              <div className="flex flex-col overflow-hidden">
-                                <span className="font-medium text-white text-sm truncate flex items-center gap-1">
-                                  {exp.label || 'Expense'}
-                                  {exp.tag && <span className="ml-1 text-lg">{exp.tag.split(' ')[0]}</span>}
-                                </span>
-                                <span className="text-xs text-blue-200">by {payerName}</span>
-                                <span className="text-xs text-gray-400">{formatDateFriendly(exp.date)}</span>
-                                {exp.note && <span className="text-xs text-blue-300 mt-1">{exp.note}</span>}
+                  {(() => {
+                    const recent = getRecentExpenses(expenses, selectedCategory.name);
+                    const grouped = groupExpensesByMonth(recent);
+                    if (grouped.length === 0) {
+                      return <div className="text-blue-300/70 text-center py-4">No expenses in this category yet.</div>;
+                    }
+                    return grouped.map((monthGroup, monthIdx) => (
+                      <div key={monthIdx} className="space-y-2">
+                        {/* Month delimiter */}
+                        <div className="flex items-center gap-2 py-1">
+                          <div className="flex-1 h-px bg-gradient-to-r from-transparent via-blue-400/30 to-transparent"></div>
+                          <span className="text-xs font-semibold text-blue-300/80 px-2 py-1 bg-blue-400/10 rounded-full">{monthGroup.label}</span>
+                          <div className="flex-1 h-px bg-gradient-to-r from-transparent via-blue-400/30 to-transparent"></div>
+                        </div>
+                        {/* Expenses for this month */}
+                        {monthGroup.expenses.map((exp, idx) => {
+                          const isExpanded = expandedExpenseId === exp.id;
+                          const payerName = getNameByUid(group, exp.paidBy);
+                          const payerInitials = payerName.split(' ').map(n => n[0]).join('').toUpperCase();
+                          const payerColor = '#6366F1';
+                          return (
+                            <li key={exp.id || idx} className="bg-slate-800/80 rounded-lg shadow-inner overflow-hidden transition-all duration-300 ease-in-out">
+                              <button
+                                className="w-full grid grid-cols-[auto_1fr_auto] items-center gap-x-3 px-3 py-2 text-left focus:outline-none"
+                                onClick={() => setExpandedExpenseId(isExpanded ? null : exp.id)}
+                                aria-expanded={isExpanded}
+                                aria-controls={`exp-details-${exp.id}`}
+                                aria-label={`Expand details for expense ${exp.label || ''}`}
+                              >
+                                {/* Avatar */}
+                                <div className="w-8 h-8 rounded-full flex items-center justify-center text-base font-bold mr-2" style={{background: payerColor, color: '#fff'}}>{payerInitials}</div>
+                                <div className="flex flex-col overflow-hidden">
+                                  <span className="font-medium text-white text-sm truncate flex items-center gap-1">
+                                    {exp.label || 'Expense'}
+                                    {exp.tag && <span className="ml-1 text-lg">{exp.tag.split(' ')[0]}</span>}
+                                  </span>
+                                  <span className="text-xs text-blue-200">by {payerName}</span>
+                                  <span className="text-xs text-gray-400">{formatDateFriendly(exp.date)}</span>
+                                  {exp.note && <span className="text-xs text-blue-300 mt-1">{exp.note}</span>}
+                                </div>
+                                <div className="font-bold text-lg text-blue-100 ml-2">{parseFloat(exp.amount).toFixed(2)} {group.currency || '€'}</div>
+                                <div className="transition-transform duration-300 ml-2" style={{ transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)' }}>
+                                  <svg className="h-5 w-5 text-blue-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+                                </div>
+                              </button>
+                              <div
+                                id={`exp-details-${exp.id}`}
+                                style={{ maxHeight: isExpanded ? '220px' : '0px', opacity: isExpanded ? 1 : 0, transform: isExpanded ? 'translateY(0)' : 'translateY(-8px)' }}
+                                className="transition-all duration-300 ease-in-out overflow-hidden bg-slate-900/90 border-t border-blue-700/30"
+                              >
+                                <div className="p-3">
+                                  {exp.splits ? (
+                                    <div className="mb-2">
+                                      <div className="text-xs text-blue-200 mb-1">Participants & Splits</div>
+                                      <ul className="text-xs text-gray-300 space-y-0.5">
+                                        {Object.entries(exp.splits).map(([uid, share]) => (
+                                          <li key={uid} className="flex justify-between">
+                                            <span>{getNameByUid(group, uid)}</span>
+                                            <span>{parseFloat(share).toFixed(2)} {group.currency || '€'}</span>
+                                          </li>
+                                        ))}
+                                      </ul>
+                                    </div>
+                                  ) : (
+                                    <div className="text-xs text-gray-400 italic">No split details</div>
+                                  )}
+                                  {/* Add more details if needed, e.g., notes, attachments, etc. */}
+                                </div>
                               </div>
-                              <div className="font-bold text-lg text-blue-100 ml-2">{parseFloat(exp.amount).toFixed(2)} {group.currency || '€'}</div>
-                              <div className="transition-transform duration-300 ml-2" style={{ transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)' }}>
-                                <svg className="h-5 w-5 text-blue-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
-                              </div>
-                            </button>
-                            <div
-                              id={`exp-details-${exp.id}`}
-                              style={{ maxHeight: isExpanded ? '220px' : '0px', opacity: isExpanded ? 1 : 0, transform: isExpanded ? 'translateY(0)' : 'translateY(-8px)' }}
-                              className="transition-all duration-300 ease-in-out overflow-hidden bg-slate-900/90 border-t border-blue-700/30"
-                            >
-                              <div className="p-3">
-                                {exp.splits ? (
-                                  <div className="mb-2">
-                                    <div className="text-xs text-blue-200 mb-1">Participants & Splits</div>
-                                    <ul className="text-xs text-gray-300 space-y-0.5">
-                                      {Object.entries(exp.splits).map(([uid, share]) => (
-                                        <li key={uid} className="flex justify-between">
-                                          <span>{getNameByUid(group, uid)}</span>
-                                          <span>{parseFloat(share).toFixed(2)} {group.currency || '€'}</span>
-                                        </li>
-                                      ))}
-                                    </ul>
-                                  </div>
-                                ) : (
-                                  <div className="text-xs text-gray-400 italic">No split details</div>
-                                )}
-                                {/* Add more details if needed, e.g., notes, attachments, etc. */}
-                              </div>
-                            </div>
-                          </li>
-                        );
-                      })}
-                    </ul>
-                  )}
+                            </li>
+                          );
+                        })}
+                      </div>
+                    ));
+                  })()}
                 </div>
               </div>
-              <DialogFooter className="p-4 border-t border-white/10">
+              {/* Sticky footer */}
+              <DialogFooter className="p-4 border-t border-white/10 sticky bottom-0 z-20 bg-slate-900/95 backdrop-blur-xl flex-shrink-0">
                 <button onClick={() => setModalOpen(false)} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 rounded-xl transition-colors">Close</button>
               </DialogFooter>
             </>
@@ -2602,6 +2770,36 @@ function GroupInsightsGraph({ expenses, group }) {
       </div>
     </div>
   );
+}
+
+// Add this after the other helper functions, before any component definitions:
+function groupExpensesByMonth(expenses) {
+  const grouped = [];
+  let currentMonth = null;
+  let currentMonthLabel = null;
+  let currentMonthExpenses = [];
+  expenses.forEach((exp, idx) => {
+    const dateObj = exp.date ? new Date(exp.date) : null;
+    if (!dateObj || isNaN(dateObj)) return;
+    const year = dateObj.getFullYear();
+    const month = dateObj.getMonth();
+    const monthKey = `${year}-${month}`;
+    const monthLabel = dateObj.toLocaleDateString(undefined, { month: 'long', year: 'numeric' }).replace(/^[a-z]/, l => l.toUpperCase());
+    if (monthKey !== currentMonth) {
+      if (currentMonthExpenses.length > 0 && currentMonthLabel) {
+        grouped.push({ type: 'month', label: currentMonthLabel, expenses: currentMonthExpenses });
+      }
+      currentMonth = monthKey;
+      currentMonthLabel = monthLabel;
+      currentMonthExpenses = [exp];
+    } else {
+      currentMonthExpenses.push(exp);
+    }
+  });
+  if (currentMonthExpenses.length > 0 && currentMonthLabel) {
+    grouped.push({ type: 'month', label: currentMonthLabel, expenses: currentMonthExpenses });
+  }
+  return grouped;
 }
 
 export default GroupExpensesPage;
