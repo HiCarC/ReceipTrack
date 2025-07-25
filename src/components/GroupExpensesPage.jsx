@@ -2325,7 +2325,7 @@ function GroupInsightsGraph({ expenses, group }) {
   const [memberFilter, setMemberFilter] = React.useState('All');
   const [showComparison, setShowComparison] = React.useState(false);
   //const [showCumulative, setShowCumulative] = React.useState(false);
-  const [showAverage, setShowAverage] = React.useState(true);
+  //const [showAverage, setShowAverage] = React.useState(true);
   const chartRef = React.useRef(null);
   // --- Comparison state ---
   const [comparisonType, setComparisonType] = React.useState('member');
@@ -2854,13 +2854,13 @@ function GroupInsightsGraph({ expenses, group }) {
         <div className="w-full flex flex-wrap gap-2 mb-4 justify-center items-center border-b border-blue-700/20 pb-2">
           <label className={`flex items-center gap-1 text-xs px-3 py-1 rounded-full cursor-pointer ${showComparison ? 'bg-blue-700/30 text-blue-200' : 'bg-slate-800/80 text-blue-200'}`}> <input type="checkbox" checked={showComparison} onChange={e => setShowComparison(e.target.checked)} className="accent-blue-600" />Comparison</label>
           {/* <label className={`flex items-center gap-1 text-xs px-3 py-1 rounded-full cursor-pointer ${showCumulative ? 'bg-blue-700/30 text-blue-200' : 'bg-slate-800/80 text-blue-200'}`}> <input type="checkbox" checked={showCumulative} onChange={e => setShowCumulative(e.target.checked)} className="accent-blue-600" />Cumulative</label> */} 
-          <label className={`flex items-center gap-1 text-xs px-3 py-1 rounded-full cursor-pointer ${showAverage ? 'bg-blue-700/30 text-blue-200' : 'bg-slate-800/80 text-blue-200'}`}> <input type="checkbox" checked={showAverage} onChange={e => setShowAverage(e.target.checked)} className="accent-blue-600" />Average</label>
+          {/* <label className={`flex items-center gap-1 text-xs px-3 py-1 rounded-full cursor-pointer ${showAverage ? 'bg-blue-700/30 text-blue-200' : 'bg-slate-800/80 text-blue-200'}`}> <input type="checkbox" checked={showAverage} onChange={e => setShowAverage(e.target.checked)} className="accent-blue-600" />Average</label> */}
         </div>
         {/* --- Stats Row: Period, Total, Spent/Day --- */}
         <div className="w-full flex flex-row items-center justify-between mb-2 text-xs font-semibold text-blue-200/80 bg-slate-800/60 rounded-xl px-4 py-2">
           <span>{periodLabel}</span>
           <span className="text-blue-400 font-bold text-lg">{expensesTotal.toFixed(2)} {group.currency || '€'}</span>
-          <span className="text-white font-bold text-lg">{spentPerDay.toFixed(2)} {group.currency || '€'}</span>
+          <span className="text-white font-bold text-lg"> Average: {spentPerDay.toFixed(2)} {group.currency || '€'} </span>
         </div>
         {/* --- Info Bar: Top Spender & Largest Expense --- */}
         {/* <div className="w-full flex flex-row gap-2 overflow-x-auto scrollbar-hide mb-2">
