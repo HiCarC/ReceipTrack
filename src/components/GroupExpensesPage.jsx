@@ -2324,7 +2324,7 @@ function GroupInsightsGraph({ expenses, group }) {
   const [categoryFilter, setCategoryFilter] = React.useState('All');
   const [memberFilter, setMemberFilter] = React.useState('All');
   const [showComparison, setShowComparison] = React.useState(false);
-  const [showCumulative, setShowCumulative] = React.useState(false);
+  //const [showCumulative, setShowCumulative] = React.useState(false);
   const [showAverage, setShowAverage] = React.useState(true);
   const chartRef = React.useRef(null);
   // --- Comparison state ---
@@ -2546,6 +2546,7 @@ function GroupInsightsGraph({ expenses, group }) {
     };
   }
   // Build cumulative line dataset
+  /*
   let cumulativeDataset = null;
   if (showCumulative) {
     let cum = 0;
@@ -2563,6 +2564,7 @@ function GroupInsightsGraph({ expenses, group }) {
       yAxisID: 'y',
     };
   }
+  */
   // --- Smart Comparison Datasets ---
   let comparisonBarDatasets = null;
   if (showComparison) {
@@ -2692,7 +2694,7 @@ function GroupInsightsGraph({ expenses, group }) {
         stack: 'stack0',
       };
     }),
-    ...(cumulativeDataset ? [cumulativeDataset] : []),
+    //...(cumulativeDataset ? [cumulativeDataset] : []),
   ];
   const barData = {
     labels: labelsWithDates.map(l => l.short),
@@ -2851,7 +2853,7 @@ function GroupInsightsGraph({ expenses, group }) {
         {/* --- Toggles: Visually Separated --- */}
         <div className="w-full flex flex-wrap gap-2 mb-4 justify-center items-center border-b border-blue-700/20 pb-2">
           <label className={`flex items-center gap-1 text-xs px-3 py-1 rounded-full cursor-pointer ${showComparison ? 'bg-blue-700/30 text-blue-200' : 'bg-slate-800/80 text-blue-200'}`}> <input type="checkbox" checked={showComparison} onChange={e => setShowComparison(e.target.checked)} className="accent-blue-600" />Comparison</label>
-          <label className={`flex items-center gap-1 text-xs px-3 py-1 rounded-full cursor-pointer ${showCumulative ? 'bg-blue-700/30 text-blue-200' : 'bg-slate-800/80 text-blue-200'}`}> <input type="checkbox" checked={showCumulative} onChange={e => setShowCumulative(e.target.checked)} className="accent-blue-600" />Cumulative</label>
+          {/* <label className={`flex items-center gap-1 text-xs px-3 py-1 rounded-full cursor-pointer ${showCumulative ? 'bg-blue-700/30 text-blue-200' : 'bg-slate-800/80 text-blue-200'}`}> <input type="checkbox" checked={showCumulative} onChange={e => setShowCumulative(e.target.checked)} className="accent-blue-600" />Cumulative</label> */} 
           <label className={`flex items-center gap-1 text-xs px-3 py-1 rounded-full cursor-pointer ${showAverage ? 'bg-blue-700/30 text-blue-200' : 'bg-slate-800/80 text-blue-200'}`}> <input type="checkbox" checked={showAverage} onChange={e => setShowAverage(e.target.checked)} className="accent-blue-600" />Average</label>
         </div>
         {/* --- Stats Row: Period, Total, Spent/Day --- */}
