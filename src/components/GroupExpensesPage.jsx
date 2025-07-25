@@ -2327,6 +2327,14 @@ function GroupInsightsGraph({ expenses, group }) {
   const [showCumulative, setShowCumulative] = React.useState(false);
   const [showAverage, setShowAverage] = React.useState(true);
   const chartRef = React.useRef(null);
+  // --- Comparison state ---
+  const [comparisonType, setComparisonType] = React.useState('member');
+  const [comparisonMemberA, setComparisonMemberA] = React.useState('');
+  const [comparisonMemberB, setComparisonMemberB] = React.useState('');
+  const [comparisonCategoryA, setComparisonCategoryA] = React.useState('');
+  const [comparisonCategoryB, setComparisonCategoryB] = React.useState('');
+  const [comparisonPeriodA, setComparisonPeriodA] = React.useState('');
+  const [comparisonPeriodB, setComparisonPeriodB] = React.useState('');
   // Helper to robustly normalize a date string/object to local midnight
   function normalizeToLocalMidnight(d) {
     if (!d) return null;
@@ -2484,6 +2492,11 @@ function GroupInsightsGraph({ expenses, group }) {
     return acc;
   }, {});
   const legendCategories = [...new Set(Object.keys(periodCategoryTotals))];
+  // Legend
+  const legend = legendCategories.map(cat => {
+    const percent = expensesTotal ? ((periodCategoryTotals[cat] / expensesTotal) * 100).toFixed(1) : 0;
+    return { name: cat, color: getCategoryColor(cat), percent, amount: periodCategoryTotals[cat] };
+  });
   // Build comparison overlay dataset
   let comparisonDataset = null;
   if (showComparison && prevPeriodExpenses.length > 0) {
@@ -2550,8 +2563,122 @@ function GroupInsightsGraph({ expenses, group }) {
       yAxisID: 'y',
     };
   }
+  // --- Smart Comparison Datasets ---
+  let comparisonBarDatasets = null;
+  if (showComparison) {
+    if (comparisonType === 'member' && comparisonMemberA && comparisonMemberB) {
+      // Member comparison: two datasets, one for each member
+      const memberData = [comparisonMemberA, comparisonMemberB].map((member, idx) => {
+        // Build daily/period data for this member
+        let data = labelsWithDates.map((_, i) => 0);
+        periodExpenses.forEach(e => {
+          if (getNameByUid(group, e.paidBy) === member) {
+            const date = normalizeToLocalMidnight(e.date);
+            let idxDate = -1;
+            if (period === 'week') {
+              const weekDays = [1,2,3,4,5,6,0];
+              const weekDates = weekDays.map((weekday, i) => { const d = new Date(periodStart); d.setDate(periodStart.getDate() + i); return d; });
+              idxDate = weekDates.findIndex(d => d.getTime() === date.getTime());
+            } else if (period === 'month') {
+              idxDate = date.getDate() - 1;
+            } else {
+              idxDate = date.getMonth();
+            }
+            if (idxDate >= 0 && idxDate < data.length) {
+              data[idxDate] += parseFloat(e.amount) || 0;
+            }
+          }
+        });
+        return {
+          label: member,
+          data,
+          backgroundColor: idx === 0 ? '#6366F1' : '#F59E42',
+          borderRadius: 12,
+          barPercentage: 0.6,
+          categoryPercentage: 0.7,
+          borderSkipped: false,
+          stack: undefined,
+        };
+      });
+      comparisonBarDatasets = memberData;
+    } else if (comparisonType === 'category' && comparisonCategoryA && comparisonCategoryB) {
+      // Category comparison: two datasets, one for each category
+      const catData = [comparisonCategoryA, comparisonCategoryB].map((cat, idx) => {
+        let data = labelsWithDates.map((_, i) => 0);
+        periodExpenses.forEach(e => {
+          if ((e.tag || 'Other') === cat) {
+            const date = normalizeToLocalMidnight(e.date);
+            let idxDate = -1;
+            if (period === 'week') {
+              const weekDays = [1,2,3,4,5,6,0];
+              const weekDates = weekDays.map((weekday, i) => { const d = new Date(periodStart); d.setDate(periodStart.getDate() + i); return d; });
+              idxDate = weekDates.findIndex(d => d.getTime() === date.getTime());
+            } else if (period === 'month') {
+              idxDate = date.getDate() - 1;
+            } else {
+              idxDate = date.getMonth();
+            }
+            if (idxDate >= 0 && idxDate < data.length) {
+              data[idxDate] += parseFloat(e.amount) || 0;
+            }
+          }
+        });
+        return {
+          label: cat,
+          data,
+          backgroundColor: idx === 0 ? '#6366F1' : '#F59E42',
+          borderRadius: 12,
+          barPercentage: 0.6,
+          categoryPercentage: 0.7,
+          borderSkipped: false,
+          stack: undefined,
+        };
+      });
+      comparisonBarDatasets = catData;
+    } else if (comparisonType === 'period' && comparisonPeriodA && comparisonPeriodB) {
+      // Period comparison: two datasets, one for each period
+      const periods = [comparisonPeriodA, comparisonPeriodB].map((start, idx) => {
+        // For simplicity, compare 7 days from each start date (week)
+        const startDate = new Date(start);
+        let periodDates = [];
+        if (period === 'week' || period === 'month') {
+          for (let i = 0; i < labelsWithDates.length; i++) {
+            const d = new Date(startDate);
+            if (period === 'week') d.setDate(startDate.getDate() + i);
+            else d.setDate(startDate.getDate() + i);
+            periodDates.push(d);
+          }
+        } else {
+          for (let i = 0; i < labelsWithDates.length; i++) {
+            const d = new Date(startDate.getFullYear(), i, 1);
+            periodDates.push(d);
+          }
+        }
+        let data = labelsWithDates.map((_, i) => 0);
+        expenses.forEach(e => {
+          const date = normalizeToLocalMidnight(e.date);
+          for (let i = 0; i < periodDates.length; i++) {
+            if (date && date.getFullYear() === periodDates[i].getFullYear() && date.getMonth() === periodDates[i].getMonth() && date.getDate() === periodDates[i].getDate()) {
+              data[i] += parseFloat(e.amount) || 0;
+            }
+          }
+        });
+        return {
+          label: `Period ${idx + 1}`,
+          data,
+          backgroundColor: idx === 0 ? '#6366F1' : '#F59E42',
+          borderRadius: 12,
+          barPercentage: 0.6,
+          categoryPercentage: 0.7,
+          borderSkipped: false,
+          stack: undefined,
+        };
+      });
+      comparisonBarDatasets = periods;
+    }
+  }
   // Bar chart datasets
-  const barDatasets = [
+  const barDatasets = comparisonBarDatasets || [
     ...legendCategories.map(category => {
       const categoryData = dailyData.map(dayData => dayData.categories[category] || 0);
       return {
@@ -2565,7 +2692,6 @@ function GroupInsightsGraph({ expenses, group }) {
         stack: 'stack0',
       };
     }),
-    ...(comparisonDataset ? [comparisonDataset] : []),
     ...(cumulativeDataset ? [cumulativeDataset] : []),
   ];
   const barData = {
@@ -2635,7 +2761,11 @@ function GroupInsightsGraph({ expenses, group }) {
   };
   // Share summary
   const handleShare = async () => {
-    const summary = `Group: ${group.name}\nPeriod: ${periodLabel}\nTotal: ${expensesTotal.toFixed(2)} ${group.currency || '€'}\nSpent/Day: ${spentPerDay.toFixed(2)} ${group.currency || '€'}\nTop Spender: ${topSpender ? `${topSpender[0]} (${topSpender[1].toFixed(2)} ${group.currency || '€'})` : '-'}`;
+    const summary = `Group: ${group.name}
+    \nPeriod: ${periodLabel}
+    \nTotal: ${expensesTotal.toFixed(2)} ${group.currency || '€'}
+    \nSpent/Day: ${spentPerDay.toFixed(2)} ${group.currency || '€'}
+    \nTop Spender: ${topSpender ? `${topSpender[0]} (${topSpender[1].toFixed(2)} ${group.currency || '€'})` : '-'}`;
     if (navigator.share) {
       try {
         await navigator.share({ title: 'Group Expense Insights', text: summary });
@@ -2645,12 +2775,27 @@ function GroupInsightsGraph({ expenses, group }) {
       alert('Summary copied to clipboard!');
     }
   };
-  // Legend
-  const legend = legendCategories.map(cat => {
-    const percent = expensesTotal ? ((periodCategoryTotals[cat] / expensesTotal) * 100).toFixed(1) : 0;
-    return { name: cat, color: getCategoryColor(cat), percent, amount: periodCategoryTotals[cat] };
-  });
-  const [showHelp, setShowHelp] = React.useState(false);
+  // --- Dynamic Legend for Comparison ---
+  let dynamicLegend = [];
+  if (showComparison && comparisonBarDatasets && comparisonBarDatasets.length === 2) {
+    // Show only the two compared items
+    dynamicLegend = comparisonBarDatasets.map((ds, idx) => {
+      const total = ds.data.reduce((a, b) => a + b, 0);
+      return {
+        name: ds.label,
+        color: ds.backgroundColor,
+        amount: total,
+      };
+    });
+  } else {
+    // Default legend
+    dynamicLegend = legend.map(l => ({
+      name: l.name,
+      color: l.color,
+      amount: l.amount,
+      percent: l.percent,
+    }));
+  }
   // Calculate group health (simple: % of members who added expenses this period)
   const memberSet = new Set(periodExpenses.map(e => getNameByUid(group, e.paidBy)));
   const participation = allMembers.length > 0 ? Math.round((memberSet.size / allMembers.length) * 100) : 0;
@@ -2660,10 +2805,10 @@ function GroupInsightsGraph({ expenses, group }) {
   else if (participation > 0) { healthLabel = 'Low'; healthColor = 'bg-orange-500'; }
   return (
     <div className="w-full max-w-2xl mx-auto mt-1 mb-4 px-2">
-      <div className="bg-slate-900/95 text-white shadow-2xl rounded-3xl border border-blue-400/20 p-3 md:p-5 flex flex-col items-center glass-card" style={{overflow: 'hidden', background: 'rgba(30,41,59,0.85)', boxShadow: '0 8px 32px 0 rgba(31, 38, 135, 0.18)', border: '1.5px solid rgba(99,102,241,0.12)', backdropFilter: 'blur(18px)'}}>
-        {/* Title and period controls at the very top */}
-        <div className="w-full flex flex-row items-center justify-between mb-2 mt-1">
-          <div className="text-lg font-bold">Group Insights</div>
+      <div className="bg-slate-900/95 text-white shadow-2xl rounded-3xl border border-blue-400/20 p-3 md:p-6 flex flex-col items-center glass-card" style={{overflow: 'hidden', background: 'rgba(30,41,59,0.85)', boxShadow: '0 8px 32px 0 rgba(31, 38, 135, 0.18)', border: '1.5px solid rgba(99,102,241,0.12)', backdropFilter: 'blur(18px)'}}>
+        {/* --- Header: Title & Period Controls --- */}
+        <div className="w-full flex flex-row items-center justify-between mb-4 mt-1">
+          <div className="text-lg font-bold tracking-tight">Group Insights</div>
           <div className="flex items-center gap-2">
             <button onClick={() => setCurrentOffset(o => o - 1)} className="w-8 h-8 flex items-center justify-center rounded-full bg-slate-800 hover:bg-slate-700 transition-colors duration-200 border border-blue-700/40 focus:outline-none" title="Previous period" aria-label="Previous period">
               <svg className="w-4 h-4 text-blue-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
@@ -2683,86 +2828,138 @@ function GroupInsightsGraph({ expenses, group }) {
             )}
           </div>
         </div>
-        {/* Filters & Toolbar Row (now below title) */}
-        <div className="w-full flex flex-row items-center justify-between gap-2 mb-1">
-          <div className="flex flex-row gap-1 overflow-x-auto pb-1 scrollbar-hide">
-            <button className={`px-3 py-1 rounded-full text-xs font-semibold border ${categoryFilter === 'All' ? 'bg-blue-600 text-white border-blue-600' : 'bg-slate-800 text-blue-200 border-slate-700 hover:bg-blue-700 hover:text-white'}`} onClick={() => setCategoryFilter('All')} aria-label="Show all categories">All</button>
-            {allCategories.map(cat => (
-              <button key={cat} className={`px-3 py-1 rounded-full text-xs font-semibold border ${categoryFilter === cat ? 'bg-blue-600 text-white border-blue-600' : 'bg-slate-800 text-blue-200 border-slate-700 hover:bg-blue-700 hover:text-white'}`} onClick={() => setCategoryFilter(cat)} aria-label={`Filter by ${cat}`}>{cat}</button>
-            ))}
-          </div>
-          {/* Horizontal Toolbar + Health badge */}
-          <div className="flex flex-row items-center gap-2 ml-2">
-            <div className="flex flex-row gap-1 bg-slate-800/90 rounded-full shadow-lg px-2 py-1 border border-blue-700/30">
-              <button onClick={handleExport} className="p-2 rounded-full bg-blue-700 hover:bg-blue-800 text-white border border-blue-800 transition-colors" aria-label="Export graph as image" title="Export as image"><Download className="h-4 w-4" /></button>
-              <button onClick={handleShare} className="p-2 rounded-full bg-blue-700 hover:bg-blue-800 text-white border border-blue-800 transition-colors" aria-label="Share summary" title="Share summary"><Share2 className="h-4 w-4" /></button>
-              <button onClick={() => setShowHelp(true)} className="p-2 rounded-full bg-blue-700 hover:bg-blue-800 text-white border border-blue-800 transition-colors" aria-label="Help/Info" title="Help/Info"><HelpCircle className="h-4 w-4" /></button>
-            </div>
-            <span className={`flex items-center gap-1 px-2 py-1 rounded-full text-xs font-semibold text-white ${healthColor} shadow`} title={`Group Health: ${healthLabel} (${participation}% participation)`} aria-label={`Group Health: ${healthLabel} (${participation}% participation)`}>{healthIcon}<span>{healthLabel}</span><span className="ml-1">{participation}%</span></span>
-          </div>
-          {/* Help Tooltip/Modal */}
-          {showHelp && (
-            <div className="absolute top-16 right-4 z-50 bg-slate-900/95 border border-blue-700/30 rounded-xl shadow-xl p-4 w-72 text-xs text-blue-100 animate-fade-in-up">
-              <div className="flex items-center justify-between mb-2">
-                <span className="font-bold text-blue-200">Insights Help</span>
-                <button onClick={() => setShowHelp(false)} className="text-blue-400 hover:text-blue-200 p-1 rounded-full" aria-label="Close help">✕</button>
-              </div>
-              <ul className="list-disc pl-4 space-y-1">
-                <li><b>Filters:</b> Use the chips to filter by category or member for deep-dive analytics.</li>
-                <li><b>Export/Share:</b> Download the graph as an image or share a summary with your group.</li>
-                <li><b>Toggles:</b> Comparison overlays, cumulative view, and average line help you spot trends.</li>
-                <li><b>Group Health:</b> Shows how many members participated this period. Green = high, yellow = moderate, orange = low, gray = dormant.</li>
-                <li><b>Accessibility:</b> All controls are keyboard and screen reader friendly. Use Tab/Shift+Tab to navigate.</li>
-              </ul>
-            </div>
-          )}
-        </div>
-        {/* Member filter row */}
-        <div className="w-full flex flex-row gap-1 overflow-x-auto pb-1 scrollbar-hide mt-2 mb-2">
-          <button className={`px-3 py-1 rounded-full text-xs font-semibold border ${memberFilter === 'All' ? 'bg-blue-600 text-white border-blue-600' : 'bg-slate-800 text-blue-200 border-slate-700 hover:bg-blue-700 hover:text-white'}`} onClick={() => setMemberFilter('All')} aria-label="Show all members">All</button>
-          {allMembers.map(name => (
-            <button key={name} className={`px-3 py-1 rounded-full text-xs font-semibold border ${memberFilter === name ? 'bg-blue-600 text-white border-blue-600' : 'bg-slate-800 text-blue-200 border-slate-700 hover:bg-blue-700 hover:text-white'}`} onClick={() => setMemberFilter(name)} aria-label={`Filter by ${name}`}>{name}</button>
+        {/* --- Category Filter: Horizontal Scrollable Chips --- */}
+        <div className="w-full flex flex-row gap-2 overflow-x-auto pb-2 scrollbar-hide mb-2">
+          <button className={`px-3 py-1 rounded-full text-xs font-semibold border ${categoryFilter === 'All' ? 'bg-blue-600 text-white border-blue-600' : 'bg-slate-800 text-blue-200 border-slate-700 hover:bg-blue-700 hover:text-white'}`} onClick={() => setCategoryFilter('All')} aria-label="Show all categories">All</button>
+          {allCategories.map(cat => (
+            <button key={cat} className={`px-3 py-1 rounded-full text-xs font-semibold border flex items-center gap-2 ${categoryFilter === cat ? 'bg-blue-600 text-white border-blue-600' : 'bg-slate-800 text-blue-200 border-slate-700 hover:bg-blue-700 hover:text-white'}`} onClick={() => setCategoryFilter(cat)} aria-label={`Filter by ${cat}`}>
+              <span className="inline-block w-3 h-3 rounded-full" style={{background: getCategoryColor(cat)}}></span>
+              {cat}
+            </button>
           ))}
         </div>
-        {/* Toggles */}
-        <div className="w-full flex flex-wrap gap-2 mb-2 justify-center items-center">
+        {/* --- Member Filter: Horizontal Scrollable Avatars/Initials --- */}
+        <div className="w-full flex flex-row gap-2 overflow-x-auto pb-2 scrollbar-hide mb-2">
+          <button className={`px-3 py-1 rounded-full text-xs font-semibold border ${memberFilter === 'All' ? 'bg-blue-600 text-white border-blue-600' : 'bg-slate-800 text-blue-200 border-slate-700 hover:bg-blue-700 hover:text-white'}`} onClick={() => setMemberFilter('All')} aria-label="Show all members">All</button>
+          {allMembers.map(name => (
+            <button key={name} className={`px-3 py-1 rounded-full text-xs font-semibold border flex items-center gap-2 ${memberFilter === name ? 'bg-blue-600 text-white border-blue-600' : 'bg-slate-800 text-blue-200 border-slate-700 hover:bg-blue-700 hover:text-white'}`} onClick={() => setMemberFilter(name)} aria-label={`Filter by ${name}`}>
+              <span className="inline-block w-6 h-6 rounded-full bg-blue-700 text-white flex items-center justify-center font-bold text-xs">{name[0]}</span>
+              {name}
+            </button>
+          ))}
+        </div>
+        {/* --- Toggles: Visually Separated --- */}
+        <div className="w-full flex flex-wrap gap-2 mb-4 justify-center items-center border-b border-blue-700/20 pb-2">
           <label className={`flex items-center gap-1 text-xs px-3 py-1 rounded-full cursor-pointer ${showComparison ? 'bg-blue-700/30 text-blue-200' : 'bg-slate-800/80 text-blue-200'}`}> <input type="checkbox" checked={showComparison} onChange={e => setShowComparison(e.target.checked)} className="accent-blue-600" />Comparison</label>
           <label className={`flex items-center gap-1 text-xs px-3 py-1 rounded-full cursor-pointer ${showCumulative ? 'bg-blue-700/30 text-blue-200' : 'bg-slate-800/80 text-blue-200'}`}> <input type="checkbox" checked={showCumulative} onChange={e => setShowCumulative(e.target.checked)} className="accent-blue-600" />Cumulative</label>
           <label className={`flex items-center gap-1 text-xs px-3 py-1 rounded-full cursor-pointer ${showAverage ? 'bg-blue-700/30 text-blue-200' : 'bg-slate-800/80 text-blue-200'}`}> <input type="checkbox" checked={showAverage} onChange={e => setShowAverage(e.target.checked)} className="accent-blue-600" />Average</label>
         </div>
-        {/* Date range and stats */}
-        <div className="w-full flex flex-row items-center justify-between mb-2 text-xs font-semibold text-blue-200/80">
+        {/* --- Stats Row: Period, Total, Spent/Day --- */}
+        <div className="w-full flex flex-row items-center justify-between mb-2 text-xs font-semibold text-blue-200/80 bg-slate-800/60 rounded-xl px-4 py-2">
           <span>{periodLabel}</span>
-          <span>SPENT/DAY</span>
+          <span className="text-blue-400 font-bold text-lg">{expensesTotal.toFixed(2)} {group.currency || '€'}</span>
+          <span className="text-white font-bold text-lg">{spentPerDay.toFixed(2)} {group.currency || '€'}</span>
         </div>
-        <div className="w-full flex flex-row items-center justify-between mb-2">
-          <span className="text-2xl font-bold text-blue-400 flex items-center">{expensesTotal.toFixed(2)} {group.currency || '€'}
-            {trend !== 0 && (
-              <span className={`ml-2 text-sm font-semibold ${trend > 0 ? 'text-green-400' : 'text-red-400'}`}>{trend > 0 ? '▲' : '▼'} {Math.abs(trend).toFixed(1)}%</span>
+        {/* --- Info Bar: Top Spender & Largest Expense --- */}
+        {/* <div className="w-full flex flex-row gap-2 overflow-x-auto scrollbar-hide mb-2">
+          <span className="bg-blue-800/40 rounded-full px-3 py-1 flex items-center gap-2 min-w-max"><span className="font-bold">Top spender:</span> {topSpender ? <><span className="bg-blue-700/80 rounded-full px-2 py-0.5 text-white font-semibold text-xs">{topSpender[0]}</span> <span>({topSpender[1].toFixed(2)} {group.currency || '€'})</span></> : '-'}</span>
+          <span className="bg-blue-800/40 rounded-full px-3 py-1 flex items-center gap-2 min-w-max"><span className="font-bold">Largest expense:</span> {largestExpense ? <><span className="bg-blue-700/80 rounded-full px-2 py-0.5 text-white font-semibold text-xs">{largestExpense.label || 'Expense'}</span> <span>({parseFloat(largestExpense.amount).toFixed(2)} {group.currency || '€'})</span></> : '-'}</span>
+        </div> */}
+        {/* --- Comparison Mode: World-Class Interactive Selector --- */}
+        {showComparison && (
+          <div className="w-full flex flex-col gap-2 mb-2">
+            <div className="flex flex-row gap-2 items-center justify-center">
+              <span className="text-xs font-semibold text-blue-200">Compare:</span>
+              <select
+                className="bg-slate-800 rounded-full px-3 py-1 text-xs font-semibold border border-blue-700/40 focus:outline-none"
+                value={comparisonType}
+                onChange={e => setComparisonType(e.target.value)}
+                aria-label="Select comparison type"
+              >
+                <option value="member">Members</option>
+                <option value="category">Categories</option>
+                <option value="period">Periods</option>
+              </select>
+            </div>
+            {/* Comparison selectors */}
+            {comparisonType === 'member' && (
+              <div className="flex flex-row gap-2 items-center justify-center">
+                <select
+                  className="bg-blue-800/80 rounded-full px-3 py-1 text-xs font-semibold border border-blue-700/40 focus:outline-none"
+                  value={comparisonMemberA}
+                  onChange={e => setComparisonMemberA(e.target.value)}
+                  aria-label="Select first member"
+                >
+                  <option value="">Select member</option>
+                  {allMembers.map(name => <option key={name} value={name}>{name}</option>)}
+                </select>
+                <span className="text-blue-300 font-bold">vs</span>
+                <select
+                  className="bg-blue-800/80 rounded-full px-3 py-1 text-xs font-semibold border border-blue-700/40 focus:outline-none"
+                  value={comparisonMemberB}
+                  onChange={e => setComparisonMemberB(e.target.value)}
+                  aria-label="Select second member"
+                >
+                  <option value="">Select member</option>
+                  {allMembers.map(name => <option key={name} value={name}>{name}</option>)}
+                </select>
+              </div>
             )}
-          </span>
-          <span className="text-2xl font-bold text-white flex items-center">{spentPerDay.toFixed(2)} {group.currency || '€'}
-            {trendDay !== 0 && (
-              <span className={`ml-2 text-sm font-semibold ${trendDay > 0 ? 'text-green-400' : 'text-red-400'}`}>{trendDay > 0 ? '▲' : '▼'} {Math.abs(trendDay).toFixed(1)}%</span>
+            {comparisonType === 'category' && (
+              <div className="flex flex-row gap-2 items-center justify-center">
+                <select
+                  className="bg-blue-800/80 rounded-full px-3 py-1 text-xs font-semibold border border-blue-700/40 focus:outline-none"
+                  value={comparisonCategoryA}
+                  onChange={e => setComparisonCategoryA(e.target.value)}
+                  aria-label="Select first category"
+                >
+                  <option value="">Select category</option>
+                  {allCategories.map(cat => <option key={cat} value={cat}>{cat}</option>)}
+                </select>
+                <span className="text-blue-300 font-bold">vs</span>
+                <select
+                  className="bg-blue-800/80 rounded-full px-3 py-1 text-xs font-semibold border border-blue-700/40 focus:outline-none"
+                  value={comparisonCategoryB}
+                  onChange={e => setComparisonCategoryB(e.target.value)}
+                  aria-label="Select second category"
+                >
+                  <option value="">Select category</option>
+                  {allCategories.map(cat => <option key={cat} value={cat}>{cat}</option>)}
+                </select>
+              </div>
             )}
-          </span>
-        </div>
-        {/* Top spender and largest expense */}
-        <div className="w-full flex flex-row flex-wrap items-center justify-between mb-3 gap-2 text-xs text-blue-200/80">
-          <span className="bg-blue-800/40 rounded-full px-3 py-1 flex items-center gap-2"><span className="font-bold">Top spender:</span> {topSpender ? <><span className="bg-blue-700/80 rounded-full px-2 py-0.5 text-white font-semibold text-xs">{topSpender[0]}</span> <span>({topSpender[1].toFixed(2)} {group.currency || '€'})</span></> : '-'}</span>
-          <span className="bg-blue-800/40 rounded-full px-3 py-1 flex items-center gap-2"><span className="font-bold">Largest expense:</span> {largestExpense ? <><span className="bg-blue-700/80 rounded-full px-2 py-0.5 text-white font-semibold text-xs">{largestExpense.label || 'Expense'}</span> <span>({parseFloat(largestExpense.amount).toFixed(2)} {group.currency || '€'})</span></> : '-'}</span>
-        </div>
-        {/* Bar Chart */}
-        <div className="w-full h-40 md:h-48 mb-2 rounded-2xl bg-slate-800/80 p-2" ref={chartRef}>
+            {comparisonType === 'period' && (
+              <div className="flex flex-row gap-2 items-center justify-center">
+                <input
+                  type="date"
+                  className="bg-blue-800/80 rounded-full px-3 py-1 text-xs font-semibold border border-blue-700/40 focus:outline-none"
+                  value={comparisonPeriodA}
+                  onChange={e => setComparisonPeriodA(e.target.value)}
+                  aria-label="Select first period start"
+                />
+                <span className="text-blue-300 font-bold">vs</span>
+                <input
+                  type="date"
+                  className="bg-blue-800/80 rounded-full px-3 py-1 text-xs font-semibold border border-blue-700/40 focus:outline-none"
+                  value={comparisonPeriodB}
+                  onChange={e => setComparisonPeriodB(e.target.value)}
+                  aria-label="Select second period start"
+                />
+              </div>
+            )}
+          </div>
+        )}
+        {/* --- Graph Area: More Whitespace, Clear Border/Background --- */}
+        <div className="w-full h-48 md:h-56 mb-4 rounded-2xl bg-slate-800/90 p-4 border border-blue-700/30 shadow-inner" ref={chartRef}>
           <Bar data={barData} options={barOptions} />
         </div>
-        {/* Category Legend */}
-        <div className="flex flex-row flex-wrap items-center justify-center gap-4 mt-2 w-full overflow-x-auto scrollbar-hide">
-          {legend.map(l => (
-            <div key={l.name} className="flex items-center gap-2 bg-slate-800/60 rounded-full px-3 py-1">
+        {/* --- Category Legend: Horizontal Scrollable, World-Class --- */}
+        <div className="flex flex-row flex-nowrap items-center justify-start gap-3 mt-2 w-full overflow-x-auto scrollbar-hide pb-2">
+          {dynamicLegend.map((l, idx) => (
+            <div key={l.name} className="flex items-center gap-2 bg-slate-800/60 rounded-full px-3 py-1 min-w-max border border-blue-700/20">
               <span className="inline-block w-4 h-2 rounded-full" style={{background: l.color}}></span>
-              <span className="text-xs font-semibold text-blue-100">{l.name}</span>
-              <span className="text-xs text-blue-300">{l.percent}%</span>
+              <span className="text-xs font-semibold text-blue-100 truncate max-w-[80px]">{l.name}</span>
+              {l.percent !== undefined && <span className="text-xs text-blue-300">{l.percent}%</span>}
               <span className="text-xs text-blue-200 font-medium">{l.amount.toFixed(2)} {group.currency || '€'}</span>
             </div>
           ))}
