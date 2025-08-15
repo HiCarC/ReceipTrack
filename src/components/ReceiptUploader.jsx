@@ -406,16 +406,87 @@ export default function ReceiptUploader({ className, showOnly, onTabChange, onNe
       return receiptDate && receiptDate >= currentMonthStart && receiptDate <= currentMonthEnd;
     });
     
-    const total = currentMonthReceipts.reduce((sum, receipt) => sum + (parseFloat(receipt.total) || 0), 0);
-    setTotalExpenses(total);
-
-    // Calculate category totals for current month only
-    const categorySums = currentMonthReceipts.reduce((acc, receipt) => {
-      const cat = receipt.category || 'Uncategorized';
+    // Smart calculation: Group expenses and reimbursements by group, then calculate net
+    const groupNetExpenses = {};
+    let totalNetExpenses = 0;
+    
+    // First pass: collect all group expenses and reimbursements
+    currentMonthReceipts.forEach(receipt => {
       const amount = parseFloat(receipt.total) || 0;
-      acc[cat] = (acc[cat] || 0) + amount;
-      return acc;
-    }, {});
+      
+      // Check if this is a group-related receipt (either by isGroupExpense flag or by note)
+      const isGroupReceipt = receipt.isGroupExpense || 
+                            receipt.category === 'Group Expense' || 
+                            (receipt.note && receipt.note.includes('Group:'));
+      
+      if (isGroupReceipt && receipt.groupId) {
+        // Group expense or reimbursement
+        if (!groupNetExpenses[receipt.groupId]) {
+          // Extract group name from note or use a default
+          let groupName = 'Unknown Group';
+          if (receipt.note && receipt.note.includes('Group: ')) {
+            groupName = receipt.note.split('Group: ')[1].split(' -')[0];
+          } else if (receipt.note && receipt.note.includes('Family')) {
+            groupName = 'Family';
+          } else if (receipt.merchant && receipt.merchant.includes('ALDI')) {
+            groupName = 'Family'; // Assume ALDI is family group
+          }
+          
+          groupNetExpenses[receipt.groupId] = {
+            groupName: groupName,
+            expenses: 0,
+            reimbursements: 0,
+            net: 0
+          };
+        }
+        
+        const isReimbursement = receipt.isReimbursement;
+        
+        if (isReimbursement) {
+          groupNetExpenses[receipt.groupId].reimbursements += amount;
+        } else {
+          // Group expenses you paid for are negative (money you spent)
+          groupNetExpenses[receipt.groupId].expenses += Math.abs(amount);
+        }
+      } else {
+        // Personal expense (not group-related): treat as outflow (negative)
+        totalNetExpenses += -Math.abs(amount);
+      }
+    });
+    
+    // Second pass: calculate net for each group and add to total
+    Object.values(groupNetExpenses).forEach(group => {
+      // Net = -expenses + reimbursements (expenses are negative, reimbursements are positive)
+      group.net = -group.expenses + group.reimbursements;
+      totalNetExpenses += group.net;
+    });
+    
+    setTotalExpenses(totalNetExpenses);
+
+    // Calculate category totals with smart grouping
+    const categorySums = {};
+    
+    // Add personal expenses (non-group)
+    currentMonthReceipts.forEach(receipt => {
+      const isGroupReceipt = receipt.isGroupExpense || 
+                            receipt.category === 'Group Expense' || 
+                            (receipt.note && receipt.note.includes('Group:'));
+      
+      if (!isGroupReceipt) {
+        const cat = receipt.category || 'Uncategorized';
+        const amount = parseFloat(receipt.total) || 0;
+        // Personal expenses should count as outflow (negative)
+        categorySums[cat] = (categorySums[cat] || 0) - Math.abs(amount);
+      }
+    });
+    
+    // Add group net expenses by group name
+    Object.values(groupNetExpenses).forEach(group => {
+      if (group.net !== 0) {
+        categorySums[group.groupName] = (categorySums[group.groupName] || 0) + group.net;
+      }
+    });
+    
     setCategoryTotals(categorySums);
 
     // Current month filtering applied
@@ -682,12 +753,39 @@ export default function ReceiptUploader({ className, showOnly, onTabChange, onNe
       return;
     }
     try {
+      // Find the receipt to check if it's a group expense
+      const receiptToDelete = receipts.find(r => r.id === id);
+      
+      if (receiptToDelete?.isGroupExpense && receiptToDelete?.groupExpenseId) {
+        // This is a group expense, delete from group first
+        try {
+          await deleteDoc(doc(db, "groups", receiptToDelete.groupId, "expenses", receiptToDelete.groupExpenseId));
+          toast({
+            title: "Group Expense Deleted! 🗑️",
+            description: "The group expense has been removed from the group.",
+          });
+        } catch (groupError) {
+          console.error("Error deleting group expense:", groupError);
+          toast({
+            title: "Error Deleting Group Expense 😥",
+            description: "The group expense could not be deleted. You may not have permission.",
+            variant: "destructive",
+          });
+          return;
+        }
+      }
+      
+      // Delete the personal receipt
       await deleteDoc(doc(db, "users", user.uid, "receipts", id));
       setReceipts(receipts.filter((receipt) => receipt.id !== id));
+      
+      if (!receiptToDelete?.isGroupExpense) {
       toast({
         title: "Receipt Deleted! 🗑️",
         description: "The receipt has been successfully removed.",
       });
+      }
+      
       await fetchReceipts();
     } catch (error) {
       console.error("Error deleting receipt:", error);
@@ -882,10 +980,10 @@ export default function ReceiptUploader({ className, showOnly, onTabChange, onNe
       } else {
         // Create new receipt in the user's subcollection
         await addDoc(collection(db, "users", user.uid, "receipts"), receiptData);
-        toast({
+      toast({
           title: "Saved",
           description: "Saved. Ready for export.",
-        });
+      });
       }
       // Reset form and close modal
       setFormData({ // Ensure formData is reset for next new entry
@@ -1034,11 +1132,47 @@ export default function ReceiptUploader({ className, showOnly, onTabChange, onNe
         updated_at: serverTimestamp()
       };
 
+      // Check if this is a group expense
+      if (editingReceipt.isGroupExpense && editingReceipt.groupExpenseId) {
+        // Update the group expense first
+        try {
+          const groupExpenseUpdateData = {
+            label: editForm.merchant,
+            amount: parsedTotal,
+            date: editForm.date,
+            tag: editForm.category,
+            note: editForm.note || '',
+            items: editForm.items.map(item => ({
+              name: item.name,
+              price: parseFloat(item.price)
+            })),
+          };
+          
+          await updateDoc(doc(db, "groups", editingReceipt.groupId, "expenses", editingReceipt.groupExpenseId), groupExpenseUpdateData);
+          
+          toast({
+            title: "Group Expense Updated! 🚀",
+            description: "The group expense has been updated.",
+          });
+        } catch (groupError) {
+          console.error("Error updating group expense:", groupError);
+          toast({
+            title: "Error Updating Group Expense 😥",
+            description: "The group expense could not be updated. You may not have permission.",
+            variant: "destructive",
+          });
+          return;
+        }
+      }
+
       await updateDoc(doc(db, "users", user.uid, "receipts", editingReceipt.id), updatedReceiptData);
+      
+      if (!editingReceipt.isGroupExpense) {
       toast({
         title: "Receipt Updated! 🚀",
         description: "Your receipt has been successfully updated.",
       });
+      }
 
       // Reset editing state and close modal
       setEditingReceipt(null);
@@ -1402,13 +1536,32 @@ export default function ReceiptUploader({ className, showOnly, onTabChange, onNe
           )}
           
           <div className="flex items-center gap-2 min-w-0">
+            <div className="flex items-center gap-2 flex-1 min-w-0">
             <span className="text-lg font-extrabold text-blue-200 truncate max-w-[120px] md:max-w-[200px] tracking-tight" title={receipt.merchant}>{receipt.merchant}</span>
+              {receipt.isGroupExpense && (
+                <div className="flex items-center gap-1">
+                  <span className="text-xs bg-blue-900/50 text-blue-200 px-2 py-1 rounded-full font-medium">
+                    {receipt.isReimbursement ? '💰' : '👥'}
+                  </span>
+                  {receipt.note && receipt.note.includes('Group: ') && (
+                    <span className="text-xs bg-slate-700/50 text-slate-300 px-2 py-1 rounded-full font-medium">
+                      {receipt.note.split('Group: ')[1].split(' -')[0]}
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
             <span className="text-xs text-blue-200/80 font-medium whitespace-nowrap">
               {receipt.transactionDate && receipt.transactionDate.toDate ? receipt.transactionDate.toDate().toLocaleDateString() : ''}
             </span>
           </div>
           <div className="flex items-baseline gap-1 mt-1">
-            <span className={`text-2xl font-extrabold ${isNegative ? 'text-red-400' : 'text-blue-100'}`}>{isNegative ? '0.00' : amount.toFixed(2)}</span>
+            <span className={`text-2xl font-extrabold ${
+              receipt.isReimbursement ? 'text-green-400' : 'text-white'
+            }`}>
+              {receipt.isReimbursement ? `+${amount.toFixed(2)}` : 
+               isNegative ? `-${Math.abs(amount).toFixed(2)}` : amount.toFixed(2)}
+            </span>
             <span className="text-sm text-blue-200/80 ml-1">{receipt.currency}</span>
             {isLoadingConversion && (
               <span className="text-xs text-blue-300/80 ml-2">Converting...</span>
@@ -1492,6 +1645,21 @@ export default function ReceiptUploader({ className, showOnly, onTabChange, onNe
                   </p>
           </div>
         </div>
+        {receipt.isGroupExpense && (
+          <div className="mt-2 p-3 bg-blue-900/20 rounded-xl border border-blue-800/30">
+            <p className="text-xs text-blue-200/70 mb-1">Group Information</p>
+            <div className="text-sm text-blue-200">
+              {receipt.isReimbursement ? (
+                <span>💰 Reimbursement from group expense</span>
+              ) : (
+                <span>👥 You paid for group expense</span>
+              )}
+              {receipt.note && (
+                <p className="text-xs text-blue-300/80 mt-1">{receipt.note}</p>
+              )}
+            </div>
+          </div>
+        )}
         {receipt.items && receipt.items.length > 0 && (
                 <div className="mt-2">
                   <p className="text-xs text-blue-200/70 mb-1">Items</p>
@@ -1674,19 +1842,19 @@ export default function ReceiptUploader({ className, showOnly, onTabChange, onNe
       canvasRef.current.width = _videoElement.videoWidth;
       canvasRef.current.height = _videoElement.videoHeight;
       context.drawImage(_videoElement, 0, 0, canvasRef.current.width, canvasRef.current.height);
-
+      
 
       finalize();
 
       function finalize() {
-        canvasRef.current.toBlob((blob) => {
-          const capturedFile = new File([blob], 'captured-receipt.jpg', { type: 'image/jpeg' });
+      canvasRef.current.toBlob((blob) => {
+        const capturedFile = new File([blob], 'captured-receipt.jpg', { type: 'image/jpeg' });
           setFile(capturedFile);
-          setPreviewImageSrc(canvasRef.current.toDataURL('image/jpeg'));
-          setShowFullScreenPreview(true);
+      setPreviewImageSrc(canvasRef.current.toDataURL('image/jpeg'));
+      setShowFullScreenPreview(true);
           setIsCameraOpen(false);
           stopCamera();
-        }, 'image/jpeg', 0.9);
+      }, 'image/jpeg', 0.9);
       }
     }
   };
@@ -1857,7 +2025,7 @@ export default function ReceiptUploader({ className, showOnly, onTabChange, onNe
             } catch {}
             onTabChange('group');
           } else {
-            onTabChange('expenses');
+          onTabChange('expenses');
           }
         }
       }, 1500);
@@ -2112,7 +2280,7 @@ Reply with a JSON object enclosed in triple backticks:
         });
         toast({ title: 'Saved offline', description: 'Saved offline. Will sync when online.' });
       } else {
-        // Auto-save the receipt instead of showing verification window
+      // Auto-save the receipt instead of showing verification window
         if (selectedGroupId) {
           // For group flow: do NOT save as personal; prepare prefill and navigate to group
           try {
@@ -2396,28 +2564,76 @@ Reply with a JSON object enclosed in triple backticks:
     }
   }, [exchangeRates]);
 
-  // Update monthly totals calculation to use converted base currency amounts
+  // Update monthly totals calculation to use converted base currency amounts with smart grouping
   const calculateMonthlyTotals = async (receipts) => {
     const monthlyTotals = {};
+    
+    // Group receipts by month first
+    const receiptsByMonth = {};
     
     for (const receipt of receipts) {
       const date = normalizeToLocalMidnight(receipt.transactionDate || receipt.date);
       if (!date) continue;
       
       const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-      const amountBaseCurrency = await convertToBaseCurrency(receipt.total, receipt.currency, date);
       
-      if (!monthlyTotals[monthKey]) {
-        monthlyTotals[monthKey] = {
-          total: 0,
-          count: 0,
-          month: date.getMonth(),
-          year: date.getFullYear()
-        };
+      if (!receiptsByMonth[monthKey]) {
+        receiptsByMonth[monthKey] = [];
+      }
+      receiptsByMonth[monthKey].push(receipt);
+    }
+    
+    // Process each month with smart grouping
+    for (const [monthKey, monthReceipts] of Object.entries(receiptsByMonth)) {
+      let totalNetExpenses = 0;
+      const groupNetExpenses = {};
+      
+      // First pass: collect all group expenses and reimbursements for this month
+      for (const receipt of monthReceipts) {
+        const amountBaseCurrency = await convertToBaseCurrency(receipt.total, receipt.currency, receipt.transactionDate || receipt.date);
+        
+        // Check if this is a group-related receipt
+        const isGroupReceipt = receipt.isGroupExpense || 
+                              receipt.category === 'Group Expense' || 
+                              (receipt.note && receipt.note.includes('Group:'));
+        
+        if (isGroupReceipt && receipt.groupId) {
+          // Group expense or reimbursement
+          if (!groupNetExpenses[receipt.groupId]) {
+            groupNetExpenses[receipt.groupId] = {
+              expenses: 0,
+              reimbursements: 0,
+              net: 0
+            };
+          }
+          
+          const isReimbursement = receipt.isReimbursement;
+          
+          if (isReimbursement) {
+            groupNetExpenses[receipt.groupId].reimbursements += amountBaseCurrency;
+          } else {
+            groupNetExpenses[receipt.groupId].expenses += Math.abs(amountBaseCurrency);
+          }
+        } else {
+          // Personal expense (not group-related)
+          totalNetExpenses += amountBaseCurrency;
+        }
       }
       
-      monthlyTotals[monthKey].total += amountBaseCurrency;
-      monthlyTotals[monthKey].count += 1;
+      // Second pass: calculate net for each group and add to total
+      Object.values(groupNetExpenses).forEach(group => {
+        group.net = -group.expenses + group.reimbursements;
+        totalNetExpenses += group.net;
+      });
+      
+      // Set monthly totals
+      const date = normalizeToLocalMidnight(monthReceipts[0].transactionDate || monthReceipts[0].date);
+      monthlyTotals[monthKey] = {
+        total: totalNetExpenses,
+        count: monthReceipts.length,
+        month: date.getMonth(),
+        year: date.getFullYear()
+      };
     }
     
     return monthlyTotals;
@@ -2433,12 +2649,15 @@ Reply with a JSON object enclosed in triple backticks:
   // Calculate current month totals using converted amounts
   const [currentMonthData, setCurrentMonthData] = useState({ total: 0, count: 0 });
 
-  // Update the existing totalExpenses calculation to use converted base currency amounts
+  // Update the existing totalExpenses calculation to use converted base currency amounts with smart grouping
   useEffect(() => {
     const calculateTotals = async () => {
       try {
         let totalExpenses = 0;
         const categoryTotals = {};
+        
+        // First pass: collect all group expenses and reimbursements
+        const groupNetExpenses = {};
         
         for (const receipt of receipts) {
           const date = normalizeToLocalMidnight(receipt.transactionDate || receipt.date);
@@ -2448,26 +2667,89 @@ Reply with a JSON object enclosed in triple backticks:
           const amountLocalCurrency = parseFloat(receipt.total) || 0;
           const receiptCurrency = receipt.currency || settings?.baseCurrency || 'EUR';
           
-          totalExpenses += amountBaseCurrency;
+          // Check if this is a group-related receipt
+          const isGroupReceipt = receipt.isGroupExpense || 
+                                receipt.category === 'Group Expense' || 
+                                (receipt.note && receipt.note.includes('Group:'));
           
-          const category = receipt.category || 'Uncategorized';
-          if (!categoryTotals[category]) {
-            categoryTotals[category] = {
-              baseCurrency: 0,
-              localCurrency: 0,
-              currencies: {} // Track amounts by original currency
+          if (isGroupReceipt && receipt.groupId) {
+            // Group expense or reimbursement
+            if (!groupNetExpenses[receipt.groupId]) {
+              // Extract group name from note
+              let groupName = 'Unknown Group';
+              if (receipt.note && receipt.note.includes('Group: ')) {
+                groupName = receipt.note.split('Group: ')[1].split(' -')[0];
+              } else if (receipt.note && receipt.note.includes('Family')) {
+                groupName = 'Family';
+              } else if (receipt.merchant && receipt.merchant.includes('ALDI')) {
+                groupName = 'Family';
+              }
+              
+              groupNetExpenses[receipt.groupId] = {
+                groupName: groupName,
+                expenses: 0,
+                reimbursements: 0,
+                net: 0,
+                baseCurrency: 0,
+                localCurrency: 0,
+                currencies: {}
+              };
+            }
+            
+            const isReimbursement = receipt.isReimbursement;
+            
+            if (isReimbursement) {
+              groupNetExpenses[receipt.groupId].reimbursements += amountBaseCurrency;
+            } else {
+              groupNetExpenses[receipt.groupId].expenses += Math.abs(amountBaseCurrency);
+            }
+            
+            groupNetExpenses[receipt.groupId].baseCurrency += amountBaseCurrency;
+            groupNetExpenses[receipt.groupId].localCurrency += amountLocalCurrency;
+            
+            // Track amounts by original currency
+            if (!groupNetExpenses[receipt.groupId].currencies[receiptCurrency]) {
+              groupNetExpenses[receipt.groupId].currencies[receiptCurrency] = 0;
+            }
+            groupNetExpenses[receipt.groupId].currencies[receiptCurrency] += amountLocalCurrency;
+          } else {
+            // Personal expense (not group-related): treat as outflow (negative)
+            totalExpenses += -Math.abs(amountBaseCurrency);
+            
+            const category = receipt.category || 'Uncategorized';
+            if (!categoryTotals[category]) {
+              categoryTotals[category] = {
+                baseCurrency: 0,
+                localCurrency: 0,
+                currencies: {}
+              };
+            }
+            
+            categoryTotals[category].baseCurrency -= Math.abs(amountBaseCurrency);
+            categoryTotals[category].localCurrency -= Math.abs(amountLocalCurrency);
+            
+            // Track amounts by original currency
+            if (!categoryTotals[category].currencies[receiptCurrency]) {
+              categoryTotals[category].currencies[receiptCurrency] = 0;
+            }
+            categoryTotals[category].currencies[receiptCurrency] -= Math.abs(amountLocalCurrency);
+          }
+        }
+        
+        // Second pass: calculate net for each group and add to total
+        Object.values(groupNetExpenses).forEach(group => {
+          group.net = -group.expenses + group.reimbursements;
+          totalExpenses += group.net;
+          
+          // Add group net to category totals
+          if (group.net !== 0) {
+            categoryTotals[group.groupName] = {
+              baseCurrency: group.net,
+              localCurrency: group.localCurrency,
+              currencies: group.currencies
             };
           }
-          
-          categoryTotals[category].baseCurrency += amountBaseCurrency;
-          categoryTotals[category].localCurrency += amountLocalCurrency;
-          
-          // Track amounts by original currency
-          if (!categoryTotals[category].currencies[receiptCurrency]) {
-            categoryTotals[category].currencies[receiptCurrency] = 0;
-          }
-          categoryTotals[category].currencies[receiptCurrency] += amountLocalCurrency;
-        }
+        });
         
         const monthlyTotals = await calculateMonthlyTotals(receipts);
         
@@ -2661,7 +2943,7 @@ Reply with a JSON object enclosed in triple backticks:
                       .sort((a,b)=> (b.uses||0)-(a.uses||0))
                       .slice(0,6)
                       .map(g => (
-                        <button key={g.id} onClick={() => { setSelectedGroupId(g.id); setTimeout(()=>{ try { document.getElementById('fileInput')?.click(); } catch {} }, 50); }} onContextMenu={(e)=>{e.preventDefault(); setGroupSwitcherOpen(true);}} className={`flex items-center gap-2 px-3 py-2 rounded-xl border ${selectedGroupId===g.id? 'border-blue-400 bg-blue-900/40':'border-blue-700/40 bg-slate-900/40'} text-blue-100 hover:border-blue-400 hover:bg-blue-900/30 transition-all whitespace-nowrap`}> 
+                        <button key={g.id} onClick={() => { setSelectedGroupId(g.id); setTimeout(()=>{ try { document.getElementById('fileInput')?.click(); } catch {} }, 50); }} onContextMenu={(e)=>{e.preventDefault(); setGroupSwitcherOpen(true);}} className="flex items-center gap-2 px-3 py-2 rounded-xl border border-blue-700/40 bg-slate-900/40 text-blue-100 hover:border-blue-400 hover:bg-blue-900/30 transition-all whitespace-nowrap"> 
                           <span className="text-base">{g.emoji || '👥'}</span>
                           <span className="text-sm font-medium max-w-[140px] truncate">{g.name}</span>
                         </button>
@@ -2700,13 +2982,7 @@ Reply with a JSON object enclosed in triple backticks:
                       <div className="mt-2 text-right"><button className="text-xs underline text-blue-300/90 hover:text-blue-200" onClick={()=>setGroupSwitcherOpen(false)}>Close</button></div>
                     </div>
                   )}
-                  {selectedGroupId && (
-                    <div className="mt-2 flex items-center gap-2 text-xs text-blue-300/90">
-                      <span>Uploads will be added to</span>
-                  <span className="font-semibold">{(groups.find(g=>g.id===selectedGroupId)||{}).name}</span>
-                      <button onClick={()=>setSelectedGroupId(null)} className="ml-auto underline hover:text-blue-200">Clear</button>
-                    </div>
-                  )}
+
                 </div>
               )}
             </CardContent>
@@ -2742,15 +3018,7 @@ Reply with a JSON object enclosed in triple backticks:
             <Card className="w-full p-4 md:p-6 flex flex-col items-center justify-start gap-4 bg-slate-800/80 text-white shadow-2xl rounded-2xl border border-blue-400/20">
             <CardHeader className="w-full p-0 mb-2">
                 <div className="flex items-center justify-between">
-                  <CardTitle className="text-xl font-bold text-blue-100">Your Receipts</CardTitle>
-                  <div className="flex items-center gap-2">
-                    <Button variant="outline" className="bg-transparent border-blue-700 text-blue-200 hover:bg-blue-900/40 text-xs" onClick={() => setSelectMode(v => !v)}>
-                      {selectMode ? 'Done' : 'Select'}
-                    </Button>
-                    {selectMode && (
-                      <Button className="bg-blue-600 hover:bg-blue-500 text-xs" onClick={() => onRequestExport && onRequestExport(Array.from(selectedIds))}>Export</Button>
-                    )}
-                  </div>
+                <CardTitle className="text-xl font-bold text-blue-100">Your Receipts</CardTitle>
                 </div>
             </CardHeader>
             <CardContent className="w-full flex flex-col items-center justify-center p-0">
@@ -2824,7 +3092,7 @@ Reply with a JSON object enclosed in triple backticks:
                                 <h3 className="text-lg font-bold text-blue-100 tracking-wide">
                                   {currentMonthLabel}
                                 </h3>
-                      <div className="flex items-center space-x-2">
+                                <div className="flex items-center space-x-2">
                                   {/* Total Spending */}
                                   <span className="text-sm text-blue-200/90 font-medium bg-blue-800/40 rounded px-2 py-1">
                                     {(() => {
@@ -2836,16 +3104,55 @@ Reply with a JSON object enclosed in triple backticks:
                                       }
                                       // Fallback: calculate on-the-fly if monthly totals not available
                                       return formatCurrency(
-                                      group.receipts.reduce((total, receipt) => {
-                                          // For fallback, use original amount (this will be less accurate)
-                                        const amount = parseFloat(receipt.total) || 0;
-                                        return total + amount;
-                                      }, 0),
+                                        (() => {
+                                          // Apply smart grouping logic for fallback calculation
+                                          const groupNetExpenses = {};
+                                          let totalNetExpenses = 0;
+                                          
+                                          group.receipts.forEach(receipt => {
+                                            const amount = parseFloat(receipt.total) || 0;
+                                            
+                                            // Check if this is a group-related receipt
+                                            const isGroupReceipt = receipt.isGroupExpense || 
+                                                                  receipt.category === 'Group Expense' || 
+                                                                  (receipt.note && receipt.note.includes('Group:'));
+                                            
+                                            if (isGroupReceipt && receipt.groupId) {
+                                              // Group expense or reimbursement
+                                              if (!groupNetExpenses[receipt.groupId]) {
+                                                groupNetExpenses[receipt.groupId] = {
+                                                  expenses: 0,
+                                                  reimbursements: 0,
+                                                  net: 0
+                                                };
+                                              }
+                                              
+                                              const isReimbursement = receipt.isReimbursement;
+                                              
+                                              if (isReimbursement) {
+                                                groupNetExpenses[receipt.groupId].reimbursements += amount;
+                                              } else {
+                                                groupNetExpenses[receipt.groupId].expenses += Math.abs(amount);
+                                              }
+                                            } else {
+                                              // Personal expense (not group-related): outflow (negative)
+                                              totalNetExpenses += -Math.abs(amount);
+                                            }
+                                          });
+                                          
+                                          // Calculate net for each group and add to total
+                                          Object.values(groupNetExpenses).forEach(group => {
+                                            group.net = -group.expenses + group.reimbursements;
+                                            totalNetExpenses += group.net;
+                                          });
+                                          
+                                          return totalNetExpenses;
+                                        })(),
                                         settings?.baseCurrency || 'EUR'
                                       );
                                     })()}
                                   </span>
-                      {/* Receipt Count */}
+                                  {/* Receipt Count */}
                                   <div className="flex items-center space-x-1">
                                     <div className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-pulse"></div>
                                     <span className="text-xs text-blue-200/80 font-medium">
@@ -2860,12 +3167,13 @@ Reply with a JSON object enclosed in triple backticks:
                           </SelectTrigger>
                           <SelectContent className="bg-slate-900 text-white border-blue-700/40 max-h-56">
                             <SelectItem value="all">All groups</SelectItem>
+                            <SelectItem value="mine">👤 Mine</SelectItem>
                             {groups.map(g => (
                               <SelectItem key={g.id} value={g.id}>{g.emoji || '👥'} {g.name}</SelectItem>
                             ))}
                           </SelectContent>
                         </Select>
-                      </div>
+                                  </div>
                                 </div>
                               </div>
                               {/* Subtle gradient line */}
@@ -2875,7 +3183,16 @@ Reply with a JSON object enclosed in triple backticks:
                             {/* Receipts for this month - sorted by transaction date (newest first) */}
                             <div className="space-y-3 pl-2">
                               {group.receipts
-                                .filter(r => !groupFilter || r.groupId === groupFilter)
+                                .filter(r => {
+                                  if (!groupFilter) return true;
+                                  if (groupFilter === 'mine') {
+                                    // Show only personal expenses (not group-related)
+                                    return !r.isGroupExpense && 
+                                           r.category !== 'Group Expense' && 
+                                           !(r.note && r.note.includes('Group:'));
+                                  }
+                                  return r.groupId === groupFilter;
+                                })
                                 .sort((a, b) => {
                                   // Prioritize transactionDate over date over createdAt for sorting
                                   const dateA = normalizeToLocalMidnight(a.transactionDate || a.date);
@@ -2956,7 +3273,7 @@ Reply with a JSON object enclosed in triple backticks:
                   <div className="space-y-2">
                     <Label htmlFor="merchant">Merchant</Label>
                     <div className="relative">
-                      <Input
+                    <Input
                       id="merchant"
                       name="merchant"
                       ref={merchantInputRef}
@@ -2967,7 +3284,7 @@ Reply with a JSON object enclosed in triple backticks:
                       autoCapitalize="words"
                       autoFocus
                       inputMode="text"
-                      />
+                    />
                       {!activeFormData.merchant && (
                         <div className="absolute -bottom-6 left-0 flex items-center gap-1 text-xs text-yellow-200">
                           <AlertCircle className="h-3.5 w-3.5" /> We’re not sure about this one.
@@ -3001,7 +3318,7 @@ Reply with a JSON object enclosed in triple backticks:
                           }
                         }}
                         className="w-full bg-slate-800/90 border border-blue-700/40 text-white text-right focus:border-blue-400 focus:ring-2 focus:ring-blue-400 focus:bg-blue-950/80 transition-all duration-200 ease-in-out rounded-xl shadow-inner px-4 py-3 text-base placeholder-blue-200/60 outline-none font-mono"
-                       />
+                      />
                       <span className="ml-2 text-blue-200 text-sm">{getCurrencySymbol(activeFormData.currency)}</span>
                       {!activeFormData.total && (
                         <div className="absolute -bottom-5 left-0 flex items-center gap-1 text-xs text-yellow-200">
@@ -3298,7 +3615,7 @@ Reply with a JSON object enclosed in triple backticks:
 
       {/* Full Screen Preview */}
       {showFullScreenPreview && (
-            <div className="fixed inset-0 z-[100] bg-black flex flex-col animate-fade-in">
+        <div className="fixed inset-0 z-[100] bg-black flex flex-col animate-fade-in">
           <img src={previewImageSrc} alt="Preview" className="flex-1 object-contain" />
           {/* Status chip */}
           {processingStage && (
@@ -3343,7 +3660,7 @@ Reply with a JSON object enclosed in triple backticks:
               Position your receipt within the frame and click capture. Your receipt will be automatically processed and saved.
             </DialogDescription>
           </DialogHeader>
-            <div className="relative w-full max-w-[560px] h-[420px] bg-gray-900 rounded-lg overflow-hidden flex items-center justify-center">
+          <div className="relative w-full max-w-[560px] h-[420px] bg-gray-900 rounded-lg overflow-hidden flex items-center justify-center">
             <video ref={videoRef} autoPlay playsInline className="w-full h-full object-cover" style={{ transform: `rotate(${rotation}deg)` }}></video>
             {!isCameraReady && (
               <p className="absolute text-gray-400">Camera not ready or access denied.</p>
@@ -3361,13 +3678,13 @@ Reply with a JSON object enclosed in triple backticks:
             <div className="flex items-center justify-between">
             </div>
             <div className="flex items-center justify-between">
-              <Button onClick={stopCamera} className="bg-red-700 hover:bg-red-800 text-white font-bold py-2 px-4 rounded">
+            <Button onClick={stopCamera} className="bg-red-700 hover:bg-red-800 text-white font-bold py-2 px-4 rounded">
                 <X className="h-5 w-5 mr-2" /> Close
-              </Button>
+            </Button>
               <Button onClick={capturePhoto} disabled={!isCameraReady} className="relative bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 px-6 rounded-full animate-pulse-fab">
                 <span className="absolute -inset-1 rounded-full bg-blue-400/30 blur-lg" aria-hidden="true"></span>
                 <Camera className="h-5 w-5 mr-2" /> Shutter
-              </Button>
+            </Button>
             </div>
           </div>
         </DialogContent>
@@ -3428,7 +3745,7 @@ Reply with a JSON object enclosed in triple backticks:
                   {/* Amount and percent */}
                   <div className="flex flex-row items-center justify-between mb-2">
                     <div>
-                      <div className="text-2xl font-extrabold text-indigo-300">{formatCurrency(selectedCategory.amount, settings?.baseCurrency || 'EUR')}</div>
+                      <div className="text-2xl font-extrabold text-indigo-300">{formatCurrency(Math.abs(selectedCategory.amount), settings?.baseCurrency || 'EUR')}</div>
                       <div className="text-xs text-gray-400">{selectedCategory.percent}% of total</div>
                       {selectedCategory.categoryData && selectedCategory.categoryData.currencies && Object.keys(selectedCategory.categoryData.currencies).length > 0 && (
                         <div className="text-xs text-blue-300/80 mt-1">
@@ -3492,8 +3809,17 @@ Reply with a JSON object enclosed in triple backticks:
                     <div className="flex flex-col gap-2">
                       {(() => {
                         // Get all receipts for this category, sorted by date (newest first)
-                        const categoryReceipts = receipts
-                          .filter(r => (r.category || 'Uncategorized') === selectedCategory.name)
+                        const categoryReceipts = receipts.filter(r => {
+                          // For group categories, show all receipts that belong to this group
+                          if (selectedCategory.name === 'Trip' || selectedCategory.name === 'Vacacions' || selectedCategory.name === 'Family') {
+                            return r.isGroupExpense && 
+                                   r.note && 
+                                   r.note.includes('Group: ') && 
+                                   r.note.split('Group: ')[1].split(' -')[0] === selectedCategory.name;
+                          }
+                          // For regular categories, show receipts with matching category
+                          return (r.category || 'Uncategorized') === selectedCategory.name;
+                        })
                         .sort((a, b) => {
                             // Use the same date parsing approach as the main receipts list
                             const dateA = normalizeToLocalMidnight(a.transactionDate || a.date);
@@ -3785,8 +4111,12 @@ export function ExpensesDashboard({ totalExpenses, categoryTotals, formatCurrenc
             <div className="text-[10px] font-medium text-blue-300/70 mb-1 tracking-wider uppercase overflow-hidden" style={{letterSpacing: 1.5}}>
               {currentMonth} {currentYear}
             </div>
-            <div className="text-xs font-semibold text-gray-300 mb-1 tracking-wide overflow-hidden" style={{letterSpacing: 1}}>TOTAL SPENT</div>
-            <div className="text-3xl xs:text-4xl md:text-5xl font-extrabold text-indigo-200 mb-1 text-center" style={{overflow: 'hidden', whiteSpace: 'nowrap', maxWidth: '100%', padding: '0 0.5rem'}}>{formatCurrency(totalExpenses, settings?.baseCurrency || 'EUR')}</div>
+            <div className="text-xs font-semibold text-gray-300 mb-1 tracking-wide overflow-hidden" style={{letterSpacing: 1}}>NET EXPENSES</div>
+            <div className={`text-3xl xs:text-4xl md:text-5xl font-extrabold mb-1 text-center ${
+              totalExpenses > 0 ? 'text-green-400' : 'text-white'
+            }`} style={{overflow: 'hidden', whiteSpace: 'nowrap', maxWidth: '100%', padding: '0 0.5rem'}}>
+              {totalExpenses > 0 ? '+' : ''}{formatCurrency(Math.abs(totalExpenses), settings?.baseCurrency || 'EUR')}
+            </div>
             <div className="text-xs text-gray-400 overflow-hidden">{categoryLabels.length} categories</div>
             {/* Current month indicator */}
             <div className="text-[8px] text-blue-400/60 mt-1 tracking-wider uppercase overflow-hidden" style={{letterSpacing: 1}}>
@@ -3798,9 +4128,29 @@ export function ExpensesDashboard({ totalExpenses, categoryTotals, formatCurrenc
         <div className="w-full grid grid-cols-1 gap-4 mb-4 md:grid-cols-2">
           {sortedCategories.map(([cat, categoryData], idx) => {
             const amt = categoryData.baseCurrency || categoryData; // Handle both new and old format
-            const percent = totalExpenses > 0 ? Math.min(100, Math.round((amt / totalExpenses) * 100)) : 0;
+            const percent = Math.abs(totalExpenses) > 0 ? Math.min(100, Math.round((Math.abs(amt) / Math.abs(totalExpenses)) * 100)) : 0;
             const color = getCategoryColor(cat); // Use unified color system
-            const emoji = cat === 'Groceries' ? '🛒' : cat === 'Dining' ? '🍽️' : cat === 'Transportation' ? '🚌' : cat === 'Bills' ? '💡' : cat === 'Entertainment' ? '🎬' : cat === 'Health' ? '💊' : cat === 'Family' ? '👨‍👩‍👧‍👦' : '💸';
+            // Determine emoji based on category or group name
+            let emoji = '💸'; // default
+            if (cat === 'Groceries') emoji = '🛒';
+            else if (cat === 'Dining') emoji = '🍽️';
+            else if (cat === 'Transportation') emoji = '🚌';
+            else if (cat === 'Bills') emoji = '💡';
+            else if (cat === 'Entertainment') emoji = '🎬';
+            else if (cat === 'Health') emoji = '💊';
+            // Check if this category is actually a group name
+            const isGroupCategory = receipts.some(r => 
+              r.isGroupExpense && 
+              r.note && 
+              r.note.includes('Group: ') && 
+              r.note.split('Group: ')[1].split(' -')[0] === cat
+            );
+            
+            if (isGroupCategory) {
+              emoji = '👥';
+            } else {
+              emoji = '💸';
+            }
 
             
             // Get the most common currency for this category
@@ -3834,8 +4184,15 @@ export function ExpensesDashboard({ totalExpenses, categoryTotals, formatCurrenc
                 </div>
                 <div className="flex flex-col gap-1">
                 <div className="flex items-end gap-2">
-                  <span className="text-xl md:text-2xl font-extrabold text-white">{formatCurrency(amt, settings?.baseCurrency || 'EUR')}</span>
-                  <span className="text-xs text-green-400 font-bold">{percent}%</span>
+                  <span className={`text-xl md:text-2xl font-extrabold ${
+                    isGroupCategory ? 'text-white' : 
+                    amt > 0 ? 'text-green-400' : 'text-white'
+                  }`}>
+                    {isGroupCategory ? '' : amt > 0 ? '+' : ''}{formatCurrency(Math.abs(amt), settings?.baseCurrency || 'EUR')}
+                  </span>
+                  <span className={`text-xs font-bold ${
+                    isGroupCategory ? 'text-blue-400' : 'text-green-400'
+                  }`}>{percent}%</span>
                   </div>
                   {localCurrencyDisplay && (
                     <div className="text-xs text-blue-300/80">
@@ -4070,15 +4427,79 @@ function InsightsSection({ receipts = [], categoryTotals = {}, calculatedTotals 
     });
     dailyData = Array.from({ length: daysInMonth }, () => ({ categories: {}, total: 0 }));
 
+    // Group expenses and reimbursements by group for daily data
+    const dailyGroupNetExpenses = {};
+
     periodReceipts.forEach(r => {
       const date = normalizeToLocalMidnight(r.date || r.transactionDate || r.createdAt);
       if (date) {
         const dayIndex = date.getDate() - 1;
         if (dayIndex >= 0 && dayIndex < daysInMonth) {
+          const amount = parseFloat(r.total) || 0;
+          
+          // Check if this is a group-related receipt
+          const isGroupReceipt = r.isGroupExpense || 
+                                r.category === 'Group Expense' || 
+                                r.category === 'Reimbursement' ||
+                                (r.note && r.note.includes('Group:'));
+          
+          if (isGroupReceipt && r.groupId) {
+            // Group expense or reimbursement
+            if (!dailyGroupNetExpenses[r.groupId]) {
+              // Extract group name from note
+              let groupName = 'Unknown Group';
+              if (r.note && r.note.includes('Group: ')) {
+                groupName = r.note.split('Group: ')[1].split(' -')[0];
+              } else if (r.note && r.note.includes('Family')) {
+                groupName = 'Family';
+              } else if (r.merchant && r.merchant.includes('ALDI')) {
+                groupName = 'Family';
+              }
+              
+              dailyGroupNetExpenses[r.groupId] = {
+                groupName: groupName,
+                expenses: 0,
+                reimbursements: 0,
+                net: 0
+              };
+            }
+            
+            const isReimbursement = r.isReimbursement;
+            
+            if (isReimbursement) {
+              dailyGroupNetExpenses[r.groupId].reimbursements += amount;
+            } else {
+              dailyGroupNetExpenses[r.groupId].expenses += Math.abs(amount);
+            }
+          } else {
+            // Personal expense (not group-related)
           const category = r.category || 'Uncategorized';
-          const amount = r.totalBaseCurrency || parseFloat(r.total) || 0; // Use base currency amount for calculations
           dailyData[dayIndex].categories[category] = (dailyData[dayIndex].categories[category] || 0) + amount;
           dailyData[dayIndex].total += amount;
+          }
+        }
+      }
+    });
+    
+    // Add group net expenses to daily data
+    Object.values(dailyGroupNetExpenses).forEach(group => {
+      group.net = -group.expenses + group.reimbursements;
+      if (group.net !== 0) {
+        // Find the day this group expense occurred (use first receipt date)
+        const groupReceipt = periodReceipts.find(r => 
+          (r.isGroupExpense || r.category === 'Group Expense') && 
+          r.groupId === Object.keys(dailyGroupNetExpenses).find(key => dailyGroupNetExpenses[key] === group)
+        );
+        
+        if (groupReceipt) {
+          const date = normalizeToLocalMidnight(groupReceipt.date || groupReceipt.transactionDate || groupReceipt.createdAt);
+          if (date) {
+            const dayIndex = date.getDate() - 1;
+            if (dayIndex >= 0 && dayIndex < daysInMonth) {
+              dailyData[dayIndex].categories[group.groupName] = (dailyData[dayIndex].categories[group.groupName] || 0) + group.net;
+              dailyData[dayIndex].total += group.net;
+            }
+          }
         }
       }
     });
@@ -4092,15 +4513,79 @@ function InsightsSection({ receipts = [], categoryTotals = {}, calculatedTotals 
     }));
     dailyData = Array.from({ length: 12 }, () => ({ categories: {}, total: 0 }));
 
+    // Group expenses and reimbursements by group for year data
+    const yearlyGroupNetExpenses = {};
+
     periodReceipts.forEach(r => {
       const date = normalizeToLocalMidnight(r.transactionDate || r.date);
       if (date) {
         const monthIndex = date.getMonth();
         if (monthIndex >= 0 && monthIndex < 12) {
+          const amount = parseFloat(r.total) || 0;
+          
+          // Check if this is a group-related receipt
+          const isGroupReceipt = r.isGroupExpense || 
+                                r.category === 'Group Expense' || 
+                                r.category === 'Reimbursement' ||
+                                (r.note && r.note.includes('Group:'));
+          
+          if (isGroupReceipt && r.groupId) {
+            // Group expense or reimbursement
+            if (!yearlyGroupNetExpenses[r.groupId]) {
+              // Extract group name from note
+              let groupName = 'Unknown Group';
+              if (r.note && r.note.includes('Group: ')) {
+                groupName = r.note.split('Group: ')[1].split(' -')[0];
+              } else if (r.note && r.note.includes('Family')) {
+                groupName = 'Family';
+              } else if (r.merchant && r.merchant.includes('ALDI')) {
+                groupName = 'Family';
+              }
+              
+              yearlyGroupNetExpenses[r.groupId] = {
+                groupName: groupName,
+                expenses: 0,
+                reimbursements: 0,
+                net: 0
+              };
+            }
+            
+            const isReimbursement = r.isReimbursement;
+            
+            if (isReimbursement) {
+              yearlyGroupNetExpenses[r.groupId].reimbursements += amount;
+            } else {
+              yearlyGroupNetExpenses[r.groupId].expenses += Math.abs(amount);
+            }
+          } else {
+            // Personal expense (not group-related)
           const category = r.category || 'Uncategorized';
-          const amount = r.totalBaseCurrency || parseFloat(r.total) || 0; // Use base currency amount for calculations
           dailyData[monthIndex].categories[category] = (dailyData[monthIndex].categories[category] || 0) + amount;
           dailyData[monthIndex].total += amount;
+          }
+        }
+      }
+    });
+    
+    // Add group net expenses to yearly data
+    Object.values(yearlyGroupNetExpenses).forEach(group => {
+      group.net = -group.expenses + group.reimbursements;
+      if (group.net !== 0) {
+        // Find the month this group expense occurred (use first receipt date)
+        const groupReceipt = periodReceipts.find(r => 
+          (r.isGroupExpense || r.category === 'Group Expense') && 
+          r.groupId === Object.keys(yearlyGroupNetExpenses).find(key => yearlyGroupNetExpenses[key] === group)
+        );
+        
+        if (groupReceipt) {
+          const date = normalizeToLocalMidnight(groupReceipt.transactionDate || groupReceipt.date);
+          if (date) {
+            const monthIndex = date.getMonth();
+            if (monthIndex >= 0 && monthIndex < 12) {
+              dailyData[monthIndex].categories[group.groupName] = (dailyData[monthIndex].categories[group.groupName] || 0) + group.net;
+              dailyData[monthIndex].total += group.net;
+            }
+          }
         }
       }
     });
@@ -4112,13 +4597,62 @@ function InsightsSection({ receipts = [], categoryTotals = {}, calculatedTotals 
                      period === 'month' ? (chartTotals.length > 0 ? expenses / chartTotals.length : 0) :
                      period === 'year' ? expenses / 365 : 0;
   
-  // Calculate category totals using base currency amounts
-  const periodCategoryTotals = periodReceipts.reduce((acc, r) => {
-    const cat = r.category || 'Uncategorized';
-    const amt = r.totalBaseCurrency || parseFloat(r.total) || 0; // Use base currency amount for calculations
-    acc[cat] = (acc[cat] || 0) + amt;
-    return acc;
-  }, {});
+  // Calculate category totals using smart grouping (same logic as main dashboard)
+  const periodCategoryTotals = {};
+  
+  // Group expenses and reimbursements by group
+  const groupNetExpenses = {};
+  
+  periodReceipts.forEach(receipt => {
+    const amount = parseFloat(receipt.total) || 0;
+    
+    // Check if this is a group-related receipt
+    const isGroupReceipt = receipt.isGroupExpense || 
+                          receipt.category === 'Group Expense' || 
+                          (receipt.note && receipt.note.includes('Group:'));
+    
+    if (isGroupReceipt && receipt.groupId) {
+      // Group expense or reimbursement
+      if (!groupNetExpenses[receipt.groupId]) {
+        // Extract group name from note
+        let groupName = 'Unknown Group';
+        if (receipt.note && receipt.note.includes('Group: ')) {
+          groupName = receipt.note.split('Group: ')[1].split(' -')[0];
+        } else if (receipt.note && receipt.note.includes('Family')) {
+          groupName = 'Family';
+        } else if (receipt.merchant && receipt.merchant.includes('ALDI')) {
+          groupName = 'Family';
+        }
+        
+        groupNetExpenses[receipt.groupId] = {
+          groupName: groupName,
+          expenses: 0,
+          reimbursements: 0,
+          net: 0
+        };
+      }
+      
+      const isReimbursement = receipt.isReimbursement || receipt.category === 'Reimbursement';
+      
+      if (isReimbursement) {
+        groupNetExpenses[receipt.groupId].reimbursements += amount;
+      } else {
+        groupNetExpenses[receipt.groupId].expenses += Math.abs(amount);
+      }
+    } else {
+      // Personal expense (not group-related)
+      const cat = receipt.category || 'Uncategorized';
+      periodCategoryTotals[cat] = (periodCategoryTotals[cat] || 0) + amount;
+    }
+  });
+  
+  // Add group net expenses by group name
+  Object.values(groupNetExpenses).forEach(group => {
+    group.net = -group.expenses + group.reimbursements;
+    if (group.net !== 0) {
+      periodCategoryTotals[group.groupName] = (periodCategoryTotals[group.groupName] || 0) + group.net;
+    }
+  });
   
   const total = expenses;
 

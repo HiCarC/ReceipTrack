@@ -3,7 +3,7 @@ import { ArrowLeft, Plus, Trash2, MoreVertical, Download, Share2, HelpCircle, He
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, DialogClose } from './ui/dialog';
 import { Dialog as UIDialog, DialogContent as UIDialogContent, DialogTitle as UIDialogTitle, DialogDescription as UIDialogDescription } from './ui/dialog';
 import { db } from '../firebase';
-import { collection, addDoc, query, where, onSnapshot, serverTimestamp, doc, updateDoc, deleteDoc, orderBy, setDoc } from 'firebase/firestore';
+import { collection, addDoc, query, where, onSnapshot, serverTimestamp, doc, updateDoc, deleteDoc, orderBy, setDoc, getDocs } from 'firebase/firestore';
 // Image uploading is disabled to avoid Firebase Storage usage in free tier
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
@@ -311,6 +311,11 @@ function GroupExpensesPage({ group, onBack, initialTab, prefill, forceAdd }) {
       setError(''); // Clear any previous error on successful snapshot
       setExpenses(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
       setLoading(false);
+      
+      // Sync existing expenses to personal receipts if this is the first time loading
+      if (snapshot.docs.length > 0 && user?.uid) {
+        syncExistingGroupExpensesToPersonalReceipts(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      }
     }, err => {
       setError('Failed to load expenses');
       setLoading(false);
@@ -324,32 +329,34 @@ function GroupExpensesPage({ group, onBack, initialTab, prefill, forceAdd }) {
   // Add expense
   const handleAddExpense = async e => {
     e.preventDefault();
-    if (!user) return;
-    setError('');
-    if (!label.trim()) {
-      setError('Title is required');
-      return;
-    }
-    const parsedAmount = parseFloat(amount);
-    if (isNaN(parsedAmount) || parsedAmount <= 0) {
-      setError('Amount must be a positive number');
-      return;
-    }
-    if (!paidBy) {
-      setError('Paid By is required');
-      return;
-    }
-    if (!date) {
-      setError('Date is required');
-      return;
-    }
-    if (!group.id) {
+    if (!user || !group) return;
+    if (!group?.id) {
       setError('Group ID is missing');
       return;
     }
-    // Split validation
-    const names = (group.participants || []).filter(n => split[n]);
-    if (names.length === 0 && splitEnabled) {
+    setError('');
+    const myName = getMyParticipantName(group, user);
+    const parsedAmount = parseFloat(amount);
+    if (isNaN(parsedAmount) || parsedAmount <= 0) {
+      setError('Enter a valid amount');
+      return;
+    }
+    if (!label.trim()) {
+      setError('Enter a description');
+      return;
+    }
+    if (!paidBy) {
+      setError('Select who paid');
+      return;
+    }
+    if (!date) {
+      setError('Select a date');
+      return;
+    }
+    // Get selected participants for splitting
+    const selectedParticipants = (group.participants || []).filter(n => split[n]);
+    
+    if (splitEnabled && selectedParticipants.length === 0) {
       setError('Select at least one participant');
       return;
     }
@@ -399,8 +406,8 @@ function GroupExpensesPage({ group, onBack, initialTab, prefill, forceAdd }) {
     }
     if (splitEnabled) {
       if (splitType === 'equally') {
-        const share = parseFloat((parsedAmount / names.length).toFixed(2));
-        names.forEach(n => {
+        const share = parseFloat((parsedAmount / selectedParticipants.length).toFixed(2));
+        selectedParticipants.forEach(n => {
           const uid = group.claimedBy[n];
           const key = uid || n;
           splits[key] = share;
@@ -408,7 +415,7 @@ function GroupExpensesPage({ group, onBack, initialTab, prefill, forceAdd }) {
         });
       } else if (splitType === 'amounts') {
         let total = 0;
-        for (const n of names) {
+        for (const n of selectedParticipants) {
           const val = parseFloat(splitAmounts[n]);
           if (isNaN(val) || val < 0) {
             setError('Enter valid amounts for all selected');
@@ -420,7 +427,7 @@ function GroupExpensesPage({ group, onBack, initialTab, prefill, forceAdd }) {
           setError('Split amounts must sum to total');
           return;
         }
-        names.forEach(n => {
+        selectedParticipants.forEach(n => {
           const uid = group.claimedBy[n];
           const key = uid || n;
           splits[key] = parseFloat(splitAmounts[n]);
@@ -428,7 +435,7 @@ function GroupExpensesPage({ group, onBack, initialTab, prefill, forceAdd }) {
         });
       } else if (splitType === 'shares') {
         let totalShares = 0;
-        for (const n of names) {
+        for (const n of selectedParticipants) {
           const val = parseInt(splitShares[n]) || 0;
           if (isNaN(val) || val <= 0) {
             setError('Enter valid shares for all selected');
@@ -436,7 +443,7 @@ function GroupExpensesPage({ group, onBack, initialTab, prefill, forceAdd }) {
           }
           totalShares += val;
         }
-        names.forEach(n => {
+        selectedParticipants.forEach(n => {
           const uid = group.claimedBy[n];
           const key = uid || n;
           const sharesCount = parseInt(splitShares[n]) || 0;
@@ -451,7 +458,7 @@ function GroupExpensesPage({ group, onBack, initialTab, prefill, forceAdd }) {
       const photoDataUrlFallback = (photo && typeof photo === 'string' && photo.startsWith('data:')) ? photo : '';
 
       // Use subcollection: groups/{groupId}/expenses
-      await addDoc(collection(db, 'groups', group.id, 'expenses'), {
+      const groupExpenseData = {
         label: label.trim(),
         tag,
         amount: parsedAmount,
@@ -469,7 +476,16 @@ function GroupExpensesPage({ group, onBack, initialTab, prefill, forceAdd }) {
         splitEnabled, // Save splitEnabled state
         note: note || '',
         items: (Array.isArray(items) ? items.filter(it => (it.name || it.price)).map(it => ({ name: it.name || '', price: parseFloat(it.price) || 0 })) : []),
-      });
+      };
+
+      const groupExpenseRef = await addDoc(collection(db, 'groups', group.id, 'expenses'), groupExpenseData);
+
+      // Sync to personal receipts ONLY if the current user paid for this expense
+      // Personal receipts should only show actual money spent or received, not future obligations
+      if (group.claimedBy[paidBy] === user.uid) {
+        await syncGroupExpenseToPersonalReceipts(groupExpenseRef.id, groupExpenseData, group);
+      }
+
       // 3) Toast and auto-switch to balances
       toast({ title: 'Saved to group', description: photoDataUrlFallback ? 'Expense added (photo kept locally).' : 'Expense added successfully.' });
       setShowAdd(false);
@@ -492,6 +508,171 @@ function GroupExpensesPage({ group, onBack, initialTab, prefill, forceAdd }) {
     }
   };
 
+  // Function to sync group expenses to personal receipts
+  const syncGroupExpenseToPersonalReceipts = async (groupExpenseId, groupExpenseData, group) => {
+    try {
+      const personalReceiptData = {
+        userId: user.uid,
+        merchant: groupExpenseData.label,
+        date: groupExpenseData.date,
+        transactionDate: groupExpenseData.createdAt,
+        total: groupExpenseData.amount,
+        subtotal: groupExpenseData.amount,
+        tax: 0,
+        paymentMethod: 'Other',
+        currency: groupExpenseData.currency || 'EUR',
+        items: groupExpenseData.items || [],
+        category: groupExpenseData.tag || 'Group Expense',
+        note: `Group: ${group.name}${groupExpenseData.note ? ` - ${groupExpenseData.note}` : ''}`,
+        createdAt: serverTimestamp(),
+        groupId: group.id,
+        groupExpenseId: groupExpenseId,
+        expenseType: groupExpenseData.expenseType,
+        isGroupExpense: true,
+        paidBy: groupExpenseData.paidBy,
+        splits: groupExpenseData.splits,
+        shares: groupExpenseData.shares,
+        splitEnabled: groupExpenseData.splitEnabled,
+        splitType: groupExpenseData.splitType,
+      };
+
+      await addDoc(collection(db, 'users', user.uid, 'receipts'), personalReceiptData);
+    } catch (error) {
+      console.error('Failed to sync group expense to personal receipts:', error);
+    }
+  };
+
+  // Function to sync reimbursements to personal receipts (positive amounts)
+  const syncReimbursementToPersonalReceipts = async (groupExpenseId, reimbursementData, group, amount) => {
+    try {
+      const personalReceiptData = {
+        userId: user.uid,
+        merchant: `Reimbursement from ${getNameByUid(group, reimbursementData.paidBy)}`,
+        date: reimbursementData.date,
+        transactionDate: reimbursementData.createdAt,
+        total: amount, // Positive amount for reimbursement
+        subtotal: amount,
+        tax: 0,
+        paymentMethod: 'Other',
+        currency: reimbursementData.currency || 'EUR',
+        items: [],
+        category: 'Reimbursement',
+        note: `Group: ${group.name} - Reimbursement`,
+          createdAt: serverTimestamp(),
+        groupId: group.id,
+        groupExpenseId: groupExpenseId,
+        expenseType: 'reimbursement',
+        isGroupExpense: true,
+        isReimbursement: true,
+        paidBy: reimbursementData.paidBy,
+        splits: reimbursementData.splits,
+        shares: reimbursementData.shares,
+        splitEnabled: reimbursementData.splitEnabled,
+        splitType: reimbursementData.splitType,
+      };
+
+      await addDoc(collection(db, 'users', user.uid, 'receipts'), personalReceiptData);
+    } catch (error) {
+      console.error('Failed to sync reimbursement to personal receipts:', error);
+    }
+  };
+
+
+
+  // Helper function to update personal receipt for group expense
+  const updatePersonalReceiptForGroupExpense = async (groupExpenseId, updatedExpense) => {
+    try {
+      // Find and update the corresponding personal receipt
+      const personalReceiptsQuery = query(
+        collection(db, 'users', user.uid, 'receipts'),
+        where('groupExpenseId', '==', groupExpenseId)
+      );
+      const personalReceiptsSnapshot = await getDocs(personalReceiptsQuery);
+      
+      personalReceiptsSnapshot.forEach(async (doc) => {
+        const receiptData = doc.data();
+        const isReimbursement = receiptData.isReimbursement;
+        
+        let updatedData = {};
+        if (isReimbursement) {
+          // Update reimbursement receipt
+          updatedData = {
+            merchant: `Reimbursement from ${getNameByUid(group, updatedExpense.paidBy)}`,
+            total: updatedExpense.amount,
+            subtotal: updatedExpense.amount,
+            date: updatedExpense.date,
+          };
+        } else {
+          // Update full group expense receipt
+          updatedData = {
+            merchant: updatedExpense.label,
+            total: updatedExpense.amount,
+            subtotal: updatedExpense.amount,
+            date: updatedExpense.date,
+          };
+        }
+        
+        await updateDoc(doc.ref, updatedData);
+      });
+    } catch (error) {
+      console.error('Failed to update personal receipt for group expense:', error);
+    }
+  };
+
+  // Helper function to delete personal receipts for group expense
+  const deletePersonalReceiptsForGroupExpense = async (groupExpenseId) => {
+    try {
+      // Find and delete all corresponding personal receipts
+      const personalReceiptsQuery = query(
+        collection(db, 'users', user.uid, 'receipts'),
+        where('groupExpenseId', '==', groupExpenseId)
+      );
+      const personalReceiptsSnapshot = await getDocs(personalReceiptsQuery);
+      
+      const deletePromises = personalReceiptsSnapshot.docs.map(doc => deleteDoc(doc.ref));
+      await Promise.all(deletePromises);
+    } catch (error) {
+      console.error('Failed to delete personal receipts for group expense:', error);
+    }
+  };
+
+  // Function to sync existing group expenses to personal receipts (for new group members)
+  const syncExistingGroupExpensesToPersonalReceipts = async (existingExpenses) => {
+    try {
+      // Check if we already have personal receipts for this group
+      const existingPersonalReceiptsQuery = query(
+        collection(db, 'users', user.uid, 'receipts'),
+        where('groupId', '==', group.id)
+      );
+      const existingPersonalReceiptsSnapshot = await getDocs(existingPersonalReceiptsQuery);
+      
+      // If we already have personal receipts for this group, don't sync again
+      if (!existingPersonalReceiptsSnapshot.empty) {
+        return;
+      }
+
+      // Sync each existing expense
+      for (const expense of existingExpenses) {
+        if (expense.expenseType === 'reimbursement') {
+          // Handle reimbursements
+          const toUid = Object.keys(expense.splits || {})[0];
+          if (toUid === user.uid) {
+            await syncReimbursementToPersonalReceipts(expense.id, expense, group, expense.amount);
+          }
+        } else {
+          // Handle regular expenses - only if user paid for them
+          if (expense.paidBy === user.uid) {
+            await syncGroupExpenseToPersonalReceipts(expense.id, expense, group);
+          }
+          // Note: We don't create entries for expenses others paid for, as personal receipts
+          // should only show actual money spent or received, not future obligations
+        }
+      }
+    } catch (error) {
+      console.error('Failed to sync existing group expenses to personal receipts:', error);
+    }
+  };
+
   // Edit expense
   const handleEditExpense = async e => {
     e.preventDefault();
@@ -509,6 +690,10 @@ function GroupExpensesPage({ group, onBack, initialTab, prefill, forceAdd }) {
         paidBy: editExpense.paidBy,
         date: editExpense.date,
       });
+      
+      // Update corresponding personal receipt if it exists
+      await updatePersonalReceiptForGroupExpense(editExpense.id, editExpense);
+      
       setEditExpense(null);
     } catch (err) {
       setError('Failed to update expense');
@@ -522,6 +707,9 @@ function GroupExpensesPage({ group, onBack, initialTab, prefill, forceAdd }) {
       return;
     }
     try {
+      // Delete corresponding personal receipts first
+      await deletePersonalReceiptsForGroupExpense(id);
+      
       // Use subcollection: groups/{groupId}/expenses
       await deleteDoc(doc(db, 'groups', group.id, 'expenses', id));
     } catch (err) {
@@ -672,7 +860,7 @@ Please settle up when you can. Thank you!`;
       const payerName = getNameByUid(group, fromUid);
       const payeeName = getNameByUid(group, toUid);
       const now = new Date();
-      await addDoc(collection(db, 'groups', group.id, 'expenses'), {
+      const reimbursementData = {
         label: `${payerName} paid ${payeeName}`,
         amount: amount,
         paidBy: fromUid,
@@ -687,7 +875,15 @@ Please settle up when you can. Thank you!`;
         splitEnabled: false,
         tag: 'reimbursement',
         photo: '',
-      });
+      };
+      
+      const reimbursementRef = await addDoc(collection(db, 'groups', group.id, 'expenses'), reimbursementData);
+      
+      // Sync reimbursement to personal receipts for the person being paid (positive amount)
+      if (toUid === user.uid) {
+        await syncReimbursementToPersonalReceipts(reimbursementRef.id, reimbursementData, group, amount);
+      }
+      
       setConfirmMarkPaid(null);
       setShowBreakdown(false);
     } catch (error) {
