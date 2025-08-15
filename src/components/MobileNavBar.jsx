@@ -31,7 +31,7 @@ const ReceiptSVG = ({ className }) => (
   </svg>
 );
 
-export default function MobileNavBar({ currentTab, onTabChange }) {
+export default function MobileNavBar({ currentTab, onTabChange, needsFixCount = 0 }) {
   const { isLoading } = useLoading();
 
   // Haptic feedback on tab change
@@ -98,8 +98,16 @@ export default function MobileNavBar({ currentTab, onTabChange }) {
           tabIndex={0}
             style={{ touchAction: 'manipulation' }}
         >
-            <ReceiptSVG className="h-7 w-7" />
+            <div className="relative">
+              <ReceiptSVG className="h-7 w-7" />
+              {needsFixCount > 0 && (
+                <span className="absolute -top-1.5 -right-2 bg-red-500 text-white text-[10px] leading-none px-1.5 py-0.5 rounded-full shadow-lg">
+                  {Math.min(needsFixCount, 99)}
+                </span>
+              )}
+            </div>
           </button>
+          {/* Exports removed from nav as requested */}
           {/* Group */}
           <button
             onClick={() => handleTabChange('group')}

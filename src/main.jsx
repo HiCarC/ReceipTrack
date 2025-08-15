@@ -10,6 +10,8 @@ import { LoadingProvider } from './contexts/LoadingContext';
 import { GroupProvider } from './contexts/GroupContext';
 import NotFound from './components/NotFound';
 import { HelmetProvider } from 'react-helmet-async';
+import { installBackgroundSync } from './data/sync';
+import { getAuth } from 'firebase/auth';
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
@@ -31,3 +33,8 @@ ReactDOM.createRoot(document.getElementById('root')).render(
     </HelmetProvider>
   </React.StrictMode>
 ) 
+
+// Install background sync after app mounts
+installBackgroundSync(() => {
+  try { return getAuth().currentUser?.uid || null; } catch { return null; }
+});

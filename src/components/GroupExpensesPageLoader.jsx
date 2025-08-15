@@ -51,5 +51,15 @@ export default function GroupExpensesPageLoader() {
   }
   if (!group) return null;
 
-  return <GroupExpensesPage group={group} initialTab={tab} onBack={() => navigate('/')} />;
+  // Pass through global prefill if present and matches this group
+  let prefill = null;
+  try {
+    if (typeof window !== 'undefined' && window.__GROUP_PREFILL__ && window.__GROUP_PREFILL__.groupId === group.id) {
+      prefill = window.__GROUP_PREFILL__;
+    }
+  } catch {}
+  // If URL has ?add=1, signal the page to force-open the Add modal
+  const params = new URLSearchParams(window.location.search);
+  const forceAdd = params.get('add') === '1';
+  return <GroupExpensesPage group={group} initialTab={tab} onBack={() => navigate('/')} prefill={prefill} forceAdd={forceAdd} />;
 } 

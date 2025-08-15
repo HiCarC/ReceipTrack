@@ -95,6 +95,24 @@ export default function GroupHomeScreen({ onTabChange, onGroupEnter }) {
     return () => unsubCreated();
   }, [user]);
 
+  // Auto-enter a group if a prefill is present (coming from capture flow)
+  useEffect(() => {
+    try {
+      let pf = window.__GROUP_PREFILL__;
+      if ((!pf || !pf.groupId) && typeof sessionStorage !== 'undefined') {
+        const any = groups.find(g => sessionStorage.getItem(`group_prefill_${g.id}`));
+        if (any) {
+          try { pf = JSON.parse(sessionStorage.getItem(`group_prefill_${any.id}`)); } catch {}
+        }
+      }
+      if (!pf || !pf.groupId) return;
+      const match = groups.find(g => g.id === pf.groupId);
+      if (match) {
+        onGroupEnter?.(match);
+      }
+    } catch {}
+  }, [groups]);
+
   /* ------------------------------------------------------------------ */
   /* UI helpers                                                         */
   /* ------------------------------------------------------------------ */

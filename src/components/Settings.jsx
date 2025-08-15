@@ -16,6 +16,101 @@ import { updateDoc, doc, serverTimestamp } from 'firebase/firestore';
 import { auth, db } from '../firebase';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from './ui/dialog';
 import { Upload, X } from 'lucide-react';
+import { Select as PresetSelect, SelectContent as PresetContent, SelectItem as PresetItem, SelectTrigger as PresetTrigger, SelectValue as PresetValue } from './ui/select';
+
+function ExportSection() {
+  const [month, setMonth] = React.useState(() => new Date().toISOString().slice(0,7));
+  const [customRange, setCustomRange] = React.useState({ start: '', end: '' });
+  const [format, setFormat] = React.useState('moneyS4_csv');
+  const [loading, setLoading] = React.useState(false);
+  const quickMonths = React.useMemo(() => {
+    const now = new Date();
+    return Array.from({ length: 6 }).map((_, i) => {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      return { key: d.toISOString().slice(0,7), label: d.toLocaleDateString(undefined, { month: 'short', year: 'numeric' }) };
+    });
+  }, []);
+  const handleGenerate = async () => {
+    setLoading(true);
+    try {
+      const isRange = customRange.start && customRange.end;
+      const monthKey = month;
+      if (format === 'moneyS4_csv' || format === 'raw_csv') {
+        const { generateMoneyS4CSV } = await import('@/data/exporters/moneyS4');
+        const { fetchMonthReceipts, fetchRangeReceipts } = await import('@/data/exporters/utils');
+        const list = isRange ? await fetchRangeReceipts(customRange.start, customRange.end) : await fetchMonthReceipts(monthKey);
+        const csv = generateMoneyS4CSV(list);
+        const blob = new Blob(["\uFEFF" + csv], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        const label = isRange ? `${customRange.start}_to_${customRange.end}` : monthKey;
+        a.download = `${format === 'moneyS4_csv' ? 'ReceipTrack_MoneyS4_Receipts' : 'ReceipTrack_Raw_Receipts'}_${label}.csv`;
+        a.click();
+        URL.revokeObjectURL(url);
+      } else if (format === 'moneyS4_xlsx') {
+        const { generateXLSX } = await import('@/data/exporters/xlsx');
+        const { fetchMonthReceipts, fetchRangeReceipts } = await import('@/data/exporters/utils');
+        const list = isRange ? await fetchRangeReceipts(customRange.start, customRange.end) : await fetchMonthReceipts(monthKey);
+        const label = isRange ? `${customRange.start}_to_${customRange.end}` : monthKey;
+        await generateXLSX(list, `ReceipTrack_MoneyS4_Receipts_${label}.xlsx`);
+        const { metrics } = await import('@/lib/analytics');
+        metrics.recordExportUse('moneyS4_xlsx');
+      } else if (format === 'accountant_pdf') {
+        const { generatePDFPack } = await import('@/data/exporters/pdfPack');
+        const { fetchMonthReceipts, fetchRangeReceipts } = await import('@/data/exporters/utils');
+        const list = isRange ? await fetchRangeReceipts(customRange.start, customRange.end) : await fetchMonthReceipts(monthKey);
+        const label = isRange ? `${customRange.start}_to_${customRange.end}` : monthKey;
+        await generatePDFPack(list, `ReceipTrack_Accountant_Pack_${label}.pdf`);
+        const { metrics } = await import('@/lib/analytics');
+        metrics.recordExportUse('accountant_pdf');
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+  return (
+    <div className="mt-4 space-y-3">
+      <div className="flex flex-wrap gap-2">
+        {quickMonths.map(m => (
+          <Button key={m.key} variant={m.key === month ? 'default' : 'outline'} onClick={() => setMonth(m.key)} className={m.key === month ? '' : 'bg-transparent border-blue-700 text-blue-200 hover:bg-blue-900/40'}>
+            {m.label}
+          </Button>
+        ))}
+        <div className="ml-auto">
+          <PresetSelect value={format} onValueChange={setFormat}>
+            <PresetTrigger className="w-56 bg-slate-900 border-blue-700 text-blue-100">
+              <PresetValue placeholder="Select preset" />
+            </PresetTrigger>
+            <PresetContent position="popper" className="bg-slate-900 text-white border-blue-700 max-h-64 overflow-auto">
+              <PresetItem value="moneyS4_csv">Money S4 (CSV)</PresetItem>
+              <PresetItem value="moneyS4_xlsx">Money S4 (XLSX)</PresetItem>
+              <PresetItem value="accountant_pdf">Accountant PDF pack</PresetItem>
+              <PresetItem value="raw_csv">Raw CSV</PresetItem>
+            </PresetContent>
+          </PresetSelect>
+        </div>
+      </div>
+      {/* Custom range picker */}
+      <div className="flex flex-col md:flex-row items-center gap-3">
+        <div className="flex items-center gap-2 w-full md:w-auto">
+          <Label className="text-blue-200/80">From</Label>
+          <input type="month" className="bg-slate-900 border border-blue-700/50 rounded-lg px-3 py-2 text-blue-100" value={customRange.start} onChange={e => setCustomRange(r => ({ ...r, start: e.target.value }))} />
+          <Label className="text-blue-200/80">To</Label>
+          <input type="month" className="bg-slate-900 border border-blue-700/50 rounded-lg px-3 py-2 text-blue-100" value={customRange.end} onChange={e => setCustomRange(r => ({ ...r, end: e.target.value }))} />
+        </div>
+        <Button variant="outline" className="bg-transparent border-blue-700 text-blue-200 hover:bg-blue-900/40" onClick={() => setCustomRange({ start: '', end: '' })}>Clear range</Button>
+      </div>
+      <div className="flex gap-3 pt-2">
+        <Button onClick={handleGenerate} disabled={loading} className="bg-blue-600 hover:bg-blue-500">{loading ? 'Generating…' : 'Generate'}</Button>
+      </div>
+      {/* Empty state copy when no receipts in the selected range */}
+      <div className="text-sm text-blue-300/80 pt-1">
+        No exports yet. Pick a month to generate a Money S4 file.
+      </div>
+    </div>
+  );
+}
 
 const CURRENCIES = [
   { code: 'EUR', name: 'Euro', symbol: '€', flag: '🇪🇺', example: 1234.56 },
@@ -465,25 +560,10 @@ export function Settings({ onClose, onCloseDropdown }) {
           </div>
         </div>
 
-        {/* Export Settings Section */}
+        {/* Export Section */}
         <div className="space-y-4">
           <h3 className="text-xl font-bold text-blue-100 mb-4 border-b border-blue-800/50 pb-2">Export</h3>
-          <div className="space-y-2">
-            <Label htmlFor="defaultExportFormat" className="block text-sm font-medium text-blue-200/80">Default Export Format</Label>
-            <Select
-              value={settings.export?.defaultFormat}
-              onValueChange={(value) => handleChange('export', 'defaultFormat', value)}
-            >
-              <SelectTrigger className="w-full bg-slate-800/90 border border-blue-700/40 text-white focus:border-blue-400 focus:ring-2 focus:ring-blue-400 focus:bg-blue-950/80 transition-all duration-200 ease-in-out rounded-xl shadow-inner px-4 py-3 text-base placeholder-blue-200/60 outline-none">
-                <SelectValue placeholder="Select export format" />
-              </SelectTrigger>
-              <SelectContent className="bg-blue-950 text-white border-blue-700/40 shadow-xl rounded-xl animate-fade-in-up max-h-60 overflow-y-auto">
-                {EXPORT_FORMATS.map(f => (
-                  <SelectItem key={f.value} value={f.value} className="text-white bg-blue-950 hover:bg-blue-800 focus:bg-blue-800 data-[state=checked]:bg-blue-900 data-[state=checked]:text-blue-200 transition-colors duration-150 rounded-lg px-4 py-3 cursor-pointer text-base">{f.label}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+          <ExportSection />
         </div>
       </div>
       <div className="sticky bottom-0 z-10 bg-slate-800/80 backdrop-blur-md rounded-b-2xl border-t border-blue-400/20 flex items-center justify-end px-6 py-4 shadow-lg gap-4">

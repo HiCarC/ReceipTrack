@@ -6,6 +6,7 @@ import LandingPage from './components/LandingPage'
 import { Toaster } from "@/components/ui/toaster"
 import AuthHeader from "@/components/AuthHeader"
 import { Settings } from './components/Settings';
+import ExportWizard from './components/ExportWizard';
 import MobileNavBar from './components/MobileNavBar';
 import { GroupProvider } from './contexts/GroupContext';
 import GroupHomeScreen from './components/GroupHomeScreen';
@@ -31,9 +32,11 @@ function UploadScreen(props) {
 
 function RootContent() {
   const { user } = useAuth();
-  const [currentTab, setCurrentTab] = useState('expenses');
+  const [currentTab, setCurrentTab] = useState('upload');
   const [showSettings, setShowSettings] = useState(false);
   const [selectedGroup, setSelectedGroup] = useState(null);
+  const [needsFixCount, setNeedsFixCount] = useState(0);
+  const [exportSelection, setExportSelection] = useState(null); // optional selected receipts
 
   // Only show bottom nav on mobile
   const isMobile = typeof window !== 'undefined' && window.innerWidth < 768;
@@ -41,13 +44,21 @@ function RootContent() {
   // Render the correct screen based on currentTab
   let mainContent = null;
   if (!user) {
+    // Bring back landing page for unauthenticated users
     mainContent = <LandingPage className="flex-grow" />;
   } else if (selectedGroup) {
-    mainContent = <GroupExpensesPage group={selectedGroup} onBack={() => setSelectedGroup(null)} />;
+    const prefill = (typeof window !== 'undefined' && window.__GROUP_PREFILL__ && window.__GROUP_PREFILL__.groupId === selectedGroup.id) ? window.__GROUP_PREFILL__ : null;
+    mainContent = <GroupExpensesPage group={selectedGroup} onBack={() => setSelectedGroup(null)} prefill={prefill} />;
   } else if (currentTab === 'expenses') {
     mainContent = <ExpensesScreen onTabChange={setCurrentTab} />;
   } else if (currentTab === 'receipts') {
-    mainContent = <ReceiptsScreen onTabChange={setCurrentTab} />;
+    mainContent = (
+      <ReceiptsScreen
+        onTabChange={setCurrentTab}
+        onNeedsFixCountChange={setNeedsFixCount}
+        onRequestExport={(selected) => { setExportSelection(selected || null); setCurrentTab('exports'); }}
+      />
+    );
   } else if (currentTab === 'upload') {
     mainContent = <UploadScreen onTabChange={setCurrentTab} />;
   } else if (currentTab === 'group') {
@@ -66,6 +77,7 @@ function RootContent() {
         <MobileNavBar
           currentTab={currentTab}
           onTabChange={setCurrentTab}
+          needsFixCount={needsFixCount}
         />
       )}
       <Toaster />
@@ -85,4 +97,4 @@ function App() {
   );
 }
 
-export default App 
+export default App

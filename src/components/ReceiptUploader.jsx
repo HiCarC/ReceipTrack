@@ -3,7 +3,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Upload, Plus, Trash2, DollarSign, Calendar, Store, Tag, CreditCard, List, X, Camera, CheckCircle, XCircle, PlusCircle, Save, Edit, Mail, LineChart, Lock, Loader2, MinusCircle, ChevronDown, ChevronUp } from 'lucide-react';
+import { Upload, Plus, Trash2, DollarSign, Calendar, Store, Tag, CreditCard, List, X, Camera, CheckCircle, XCircle, PlusCircle, Save, Edit, Mail, LineChart, Lock, Loader2, MinusCircle, ChevronDown, ChevronUp, RotateCcw, Wand2, AlertCircle, Users } from 'lucide-react';
 import {
   Select,
   SelectContent,
@@ -43,6 +43,11 @@ import annotationPlugin from 'chartjs-plugin-annotation';
 import { CircularProgressbarWithChildren, buildStyles } from 'react-circular-progressbar';
 import 'react-circular-progressbar/dist/styles.css';
 import { useSwipeable } from 'react-swipeable';
+import { queueReceipt } from '@/data/storage';
+import { metrics, startTimer, endTimerMs } from '@/lib/analytics';
+import Cropper from 'react-easy-crop';
+import { detectCropAndDeskew } from '@/components/AutoCropper';
+import { Switch } from './ui/switch';
 Chart.register(ArcElement, Tooltip, Legend, CategoryScale, LinearScale, PointElement, LineElement, TimeScale, Filler, BarElement, annotationPlugin);
 
 // Define supported currencies
@@ -168,7 +173,7 @@ const getCategoryBorderClass = (cat) => {
   return colorMap[cat] || colorMap['Uncategorized'];
 };
 
-export default function ReceiptUploader({ className, showOnly, onTabChange }) {
+export default function ReceiptUploader({ className, showOnly, onTabChange, onNeedsFixCountChange, onRequestExport, captureTrigger }) {
   const { toast } = useToast();
   const authContext = useAuth();
   const user = authContext ? authContext.user : null;
@@ -205,6 +210,7 @@ export default function ReceiptUploader({ className, showOnly, onTabChange }) {
   const [editingItemIndex, setEditingItemIndex] = useState(null);
   const [isCameraOpen, setIsCameraOpen] = useState(false);
   const [isCameraReady, setIsCameraReady] = useState(false);
+  const [autoCropEnabled, setAutoCropEnabled] = useState(true);
   let _videoElement = null; // Mutable variable to hold the video DOM element
   const videoRef = (node) => {
     if (node) {
@@ -222,6 +228,7 @@ export default function ReceiptUploader({ className, showOnly, onTabChange }) {
   const [previewImageSrc, setPreviewImageSrc] = useState(null);
   const [isEditing, setIsEditing] = useState(false);
   const [currentStep, setCurrentStep] = useState('upload_options'); // Changed initial state
+  const [processingStage, setProcessingStage] = useState(null); // 'detecting_edges' | 'enhancing' | 'reading_text' | 'parsed'
 
   // New states for the "Edit Receipt Form" section's item management
   const [currentReceipt, setCurrentReceipt] = useState(null); // Holds the receipt being edited
@@ -230,6 +237,40 @@ export default function ReceiptUploader({ className, showOnly, onTabChange }) {
   const [expandedReceiptId, setExpandedReceiptId] = useState(null); // New state to manage expanded receipt
   const [expandedInCategoryModalId, setExpandedInCategoryModalId] = useState(null);
   const [returnToCategory, setReturnToCategory] = useState(null);
+  const [recentGroups, setRecentGroups] = useState([]); // [{id,name,emoji,uses}]
+  const [selectedGroupId, setSelectedGroupId] = useState(null);
+  const [groups, setGroups] = useState([]);
+  const [groupFilter, setGroupFilter] = useState(null);
+  const [groupSwitcherOpen, setGroupSwitcherOpen] = useState(false);
+
+  // Load groups from Firestore (active for this user) and enrich with usage counts
+  useEffect(() => {
+    const load = async () => {
+      try {
+        if (!user) return;
+        const snap = await getDocs(collection(db, 'groups'));
+        const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        // Active for this user: user is in claimedBy values and NOT archived for this user
+        const active = list.filter(g => {
+          const claimedByVals = g?.claimedBy ? Object.values(g.claimedBy) : [];
+          const isMember = Array.isArray(claimedByVals) && claimedByVals.includes(user.uid);
+          const archivedBy = Array.isArray(g?.archivedBy) ? g.archivedBy : [];
+          const isArchivedForUser = archivedBy.includes(user.uid);
+          return isMember && !isArchivedForUser;
+        });
+        const counts = {};
+        receipts.forEach(r => { if (r.groupId) counts[r.groupId] = (counts[r.groupId] || 0) + 1; });
+        const enriched = active.map(g => ({ id: g.id, name: g.name || `Group ${g.id.slice(0,4)}`, emoji: g.emoji || '👥', uses: counts[g.id] || 0, archivedBy: Array.isArray(g.archivedBy) ? g.archivedBy : [] }));
+        setGroups(enriched);
+        setRecentGroups(enriched);
+      } catch (e) {
+        console.warn('Failed to load groups', e);
+      }
+    };
+    load();
+  }, [receipts, user]);
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState(new Set());
 
   // State for form data
   const [formData, setFormData] = useState({
@@ -241,7 +282,9 @@ export default function ReceiptUploader({ className, showOnly, onTabChange }) {
     paymentMethod: '',
     currency: 'EUR',
     items: [],
-    category: ''
+    category: '',
+    isBusiness: true,
+    note: ''
   });
 
   // State for UI
@@ -324,6 +367,21 @@ export default function ReceiptUploader({ className, showOnly, onTabChange }) {
   useEffect(() => {
     fetchReceipts();
   }, []);
+
+  // Recompute needs-fix count when receipts change
+  useEffect(() => {
+    if (typeof onNeedsFixCountChange === 'function') {
+      const needsFix = receipts.filter(r => !(r.merchant && r.total && (r.transactionDate || r.date))).length;
+      onNeedsFixCountChange(needsFix);
+    }
+  }, [receipts, onNeedsFixCountChange]);
+
+  // Allow external trigger to open camera (for future routing/event use)
+  useEffect(() => {
+    if (captureTrigger) {
+      setIsCameraOpen(true);
+    }
+  }, [captureTrigger]);
 
   useEffect(() => {
     // Calculate total expenses for current month only
@@ -826,10 +884,10 @@ export default function ReceiptUploader({ className, showOnly, onTabChange }) {
       } else {
         // Create new receipt in the user's subcollection
         await addDoc(collection(db, "users", user.uid, "receipts"), receiptData);
-      toast({
-        title: "Receipt Saved! 🎉",
-        description: "Your expense has been successfully recorded.",
-      });
+        toast({
+          title: "Saved",
+          description: "Saved. Ready for export.",
+        });
       }
       // Reset form and close modal
       setFormData({ // Ensure formData is reset for next new entry
@@ -851,9 +909,9 @@ export default function ReceiptUploader({ className, showOnly, onTabChange }) {
       setCurrentStep('upload_options');
       await fetchReceipts();
       
-      // Navigate to expenses tab to show the updated financial overview
+      // Navigate: if saved to a group, go to Group tab
       if (onTabChange) {
-        onTabChange('expenses');
+        if (editingReceipt?.groupId) onTabChange('group'); else onTabChange('expenses');
       }
     } catch (error) {
       console.error("Error saving receipt:", error);
@@ -990,9 +1048,9 @@ export default function ReceiptUploader({ className, showOnly, onTabChange }) {
       setCurrentStep('upload_options');
       await fetchReceipts();
       
-      // Navigate to expenses tab to show the updated financial overview
+        // Navigate to list; group receipts should appear under group views, not personal expenses
       if (onTabChange) {
-        onTabChange('expenses');
+          if (ocrData.groupId) onTabChange('receipts'); else onTabChange('expenses');
       }
     } catch (error) {
       console.error("Error updating receipt:", error);
@@ -1618,30 +1676,63 @@ export default function ReceiptUploader({ className, showOnly, onTabChange }) {
       canvasRef.current.width = _videoElement.videoWidth;
       canvasRef.current.height = _videoElement.videoHeight;
       context.drawImage(_videoElement, 0, 0, canvasRef.current.width, canvasRef.current.height);
-      
-      // Convert canvas to blob and create a File object
-      canvasRef.current.toBlob((blob) => {
-        const capturedFile = new File([blob], 'captured-receipt.jpg', { type: 'image/jpeg' });
-        setFile(capturedFile); // Set the file for OCR processing
-      setPreviewImageSrc(canvasRef.current.toDataURL('image/jpeg'));
-      setShowFullScreenPreview(true);
-      setIsCameraOpen(false); // Close the camera modal after capturing
-      stopCamera(); // Stop the camera stream
-      }, 'image/jpeg', 0.9);
+
+      // Auto-crop & deskew using edge detection
+      if (autoCropEnabled) {
+        try {
+          const { crop, angle } = detectCropAndDeskew(canvasRef.current);
+          if (crop && crop.width > 0 && crop.height > 0) {
+            const tmp = document.createElement('canvas');
+            const tctx = tmp.getContext('2d');
+            tmp.width = crop.width; tmp.height = crop.height;
+            tctx.drawImage(canvasRef.current, crop.x, crop.y, crop.width, crop.height, 0, 0, crop.width, crop.height);
+            // rotate by rotation - angle
+            const out = document.createElement('canvas');
+            const octx = out.getContext('2d');
+            out.width = tmp.width; out.height = tmp.height;
+            octx.save();
+            octx.translate(out.width / 2, out.height / 2);
+            octx.drawImage(tmp, -tmp.width / 2, -tmp.height / 2);
+            octx.restore();
+            context.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+            canvasRef.current.width = out.width;
+            canvasRef.current.height = out.height;
+            context.drawImage(out, 0, 0);
+          }
+        } catch {}
+      } 
+      finalize();
+
+      function finalize() {
+        canvasRef.current.toBlob((blob) => {
+          const capturedFile = new File([blob], 'captured-receipt.jpg', { type: 'image/jpeg' });
+          setFile(capturedFile);
+          setPreviewImageSrc(canvasRef.current.toDataURL('image/jpeg'));
+          setShowFullScreenPreview(true);
+          setIsCameraOpen(false);
+          stopCamera();
+        }, 'image/jpeg', 0.9);
+      }
     }
   };
 
   const handleConfirmPreview = () => {
     setShowFullScreenPreview(false);
     if (file) {
-    processOCR(file);
+      setProcessingStage('detecting_edges');
+      setTimeout(() => setProcessingStage('enhancing'), 400);
+      setTimeout(() => setProcessingStage('reading_text'), 800);
+      processOCR(file).finally(() => setProcessingStage('parsed'));
     } else {
       // Fallback: if no file object, create one from the preview image
       fetch(previewImageSrc)
         .then(res => res.blob())
         .then(blob => {
           const imageFile = new File([blob], 'receipt.jpg', { type: 'image/jpeg' });
-          processOCR(imageFile);
+          setProcessingStage('detecting_edges');
+          setTimeout(() => setProcessingStage('enhancing'), 400);
+          setTimeout(() => setProcessingStage('reading_text'), 800);
+          processOCR(imageFile).finally(() => setProcessingStage('parsed'));
         })
         .catch(error => {
           console.error('Error creating file from preview:', error);
@@ -1747,7 +1838,8 @@ export default function ReceiptUploader({ className, showOnly, onTabChange }) {
         })),
         imageUrl: '', // No image URL for auto-saved receipts
         category: ocrData.category || 'Uncategorized',
-        createdAt: serverTimestamp()
+        createdAt: serverTimestamp(),
+        groupId: ocrData.groupId || null
       };
 
       // Save to Firestore
@@ -1755,8 +1847,8 @@ export default function ReceiptUploader({ className, showOnly, onTabChange }) {
       
       // Show success feedback with enhanced message
       toast({
-        title: "Receipt Saved! 🎉",
-        description: `Successfully saved receipt from ${ocrData.merchant || 'Unknown Store'} for ${formatCurrency(parseFloat(ocrData.total) || 0, ocrData.currency || 'EUR')}`,
+        title: "Saved",
+        description: "Saved. Ready for export.",
       });
 
       // Brief success state before navigation
@@ -1774,9 +1866,24 @@ export default function ReceiptUploader({ className, showOnly, onTabChange }) {
         setCurrentStep('upload_options');
         fetchReceipts();
         
-        // Navigate to expenses tab to show the updated financial overview
+        // Navigate: if saved to a group, go to Group tab and pass prefill for GroupExpensesPage; otherwise expenses
         if (onTabChange) {
-          onTabChange('expenses');
+          if (ocrData.groupId) {
+            try {
+              window.__GROUP_PREFILL__ = {
+                groupId: ocrData.groupId,
+                label: ocrData.merchant || 'Receipt',
+                amount: (parseFloat(ocrData.total) || 0).toFixed(2),
+                date: ocrData.date,
+                currency: ocrData.currency || 'EUR',
+                photo: previewImageSrc || null,
+                splitEnabled: true,
+              };
+            } catch {}
+            onTabChange('group');
+          } else {
+            onTabChange('expenses');
+          }
         }
       }, 1500);
 
@@ -1795,6 +1902,7 @@ export default function ReceiptUploader({ className, showOnly, onTabChange }) {
   };
 
   const processOCR = async (file) => {
+    const t = startTimer();
     setIsLoading(true); // <-- Show loading overlay
     try {
       setIsOcrProcessing(true);
@@ -2002,8 +2110,66 @@ Reply with a JSON object enclosed in triple backticks:
         tax: 0 // Will be calculated as total - subtotal if needed
       };
 
-      // Auto-save the receipt instead of showing verification window
-      await autoSaveReceipt(ocrData);
+      // Offline-first queueing if offline, and attach group if selected
+      if (!navigator.onLine) {
+        const localId = crypto.randomUUID();
+        await queueReceipt({
+          id: localId,
+          userId: user?.uid || 'anonymous',
+          type: selectedGroupId ? 'group' : 'personal',
+          payload: {
+            merchant: ocrData.merchant,
+            date: ocrData.date,
+            total: parseFloat(ocrData.total) || 0,
+            subtotal: parseFloat(ocrData.subtotal) || 0,
+            vatAmount: undefined,
+            category: ocrData.category,
+            paymentMethod: ocrData.paymentMethod,
+            currency: ocrData.currency,
+            note: '',
+            imagePath: '',
+            source: 'camera',
+            status: 'queued',
+            groupId: selectedGroupId || null,
+          },
+          imageDataUrl: previewImageSrc,
+          status: 'queued'
+        });
+        toast({ title: 'Saved offline', description: 'Saved offline. Will sync when online.' });
+      } else {
+        // Auto-save the receipt instead of showing verification window
+        if (selectedGroupId) {
+          // For group flow: do NOT save as personal; prepare prefill and navigate to group
+          try {
+            window.__GROUP_PREFILL__ = {
+              groupId: selectedGroupId,
+              label: ocrData.merchant || 'Receipt',
+              amount: (parseFloat(ocrData.total) || 0).toFixed(2),
+              date: ocrData.date,
+              currency: ocrData.currency || 'EUR',
+              photo: previewImageSrc || null,
+              splitEnabled: true,
+              ocrJson: ocrData
+            };
+            try { sessionStorage.setItem(`group_prefill_${selectedGroupId}`, JSON.stringify(window.__GROUP_PREFILL__)); } catch {}
+          } catch {}
+          toast({ title: 'Scanned', description: 'Ready to add to group.' });
+          try {
+            const url = `/group/${selectedGroupId}/expenses?add=1`;
+            window.location.assign(url);
+          } catch {
+            if (onTabChange) onTabChange('group');
+          }
+        } else {
+          await autoSaveReceipt({ ...ocrData, groupId: null });
+        }
+        if (selectedGroupId) {
+          try {
+            // Increment group usage in memory list
+            setRecentGroups(prev => prev.map(g => g.id===selectedGroupId ? { ...g, uses: (g.uses||0)+1 } : g));
+          } catch {}
+        }
+      }
 
     } catch (error) {
       console.error('OCR error:', error);
@@ -2014,6 +2180,8 @@ Reply with a JSON object enclosed in triple backticks:
         variant: "destructive",
       });
     } finally {
+      const ms = endTimerMs(t);
+      metrics.recordTimeToParsed(ms);
       setIsOcrProcessing(false);
       setIsLoading(false); // <-- Hide loading overlay
     }
@@ -2508,6 +2676,64 @@ Reply with a JSON object enclosed in triple backticks:
                 <List className="h-5 w-5" />
                 Enter Manually
               </Button>
+              {/* Smart Group Targets */}
+              {recentGroups && recentGroups.length > 0 && (
+                <div className="w-full mt-2">
+                  <div className="text-xs uppercase tracking-wider text-blue-300/80 mb-2 flex items-center gap-2"><Users className="h-3.5 w-3.5"/> Quick to Group</div>
+                  <div className="flex w-full gap-2 overflow-x-auto no-scrollbar py-1">
+                    {groups
+                      .filter(g => !g.archived && !g.deleted)
+                      .sort((a,b)=> (b.uses||0)-(a.uses||0))
+                      .slice(0,6)
+                      .map(g => (
+                        <button key={g.id} onClick={() => { setSelectedGroupId(g.id); setTimeout(()=>{ try { document.getElementById('fileInput')?.click(); } catch {} }, 50); }} onContextMenu={(e)=>{e.preventDefault(); setGroupSwitcherOpen(true);}} className={`flex items-center gap-2 px-3 py-2 rounded-xl border ${selectedGroupId===g.id? 'border-blue-400 bg-blue-900/40':'border-blue-700/40 bg-slate-900/40'} text-blue-100 hover:border-blue-400 hover:bg-blue-900/30 transition-all whitespace-nowrap`}> 
+                          <span className="text-base">{g.emoji || '👥'}</span>
+                          <span className="text-sm font-medium max-w-[140px] truncate">{g.name}</span>
+                        </button>
+                      ))}
+                  </div>
+                  {groupSwitcherOpen && (
+                    <div className="mt-2 p-3 rounded-xl bg-slate-900/80 border border-blue-700/40">
+                      <div className="text-xs text-blue-300/80 mb-2">Manage Groups</div>
+                      <div className="grid grid-cols-1 gap-2 max-h-56 overflow-y-auto">
+                        {groups.map(g => (
+                          <div key={g.id} className="flex items-center gap-2">
+                            <button className="px-2 py-1 rounded-lg bg-slate-800/60 border border-blue-700/40 text-blue-100 hover:border-blue-400" onClick={()=>{setSelectedGroupId(g.id); setGroupSwitcherOpen(false);}}>
+                              {g.emoji || '👥'} {g.name}
+                            </button>
+                            <button className="text-xs underline text-blue-300/90 hover:text-blue-200" onClick={async ()=>{
+                              const name = prompt('Rename group', g.name);
+                              if (name && user) {
+                                try {
+                                  await updateDoc(doc(db, 'groups', g.id), { name });
+                                  setGroups(prev => prev.map(x => x.id===g.id ? { ...x, name } : x));
+                                } catch (e) { console.warn('Rename failed', e); }
+                              }
+                            }}>Rename</button>
+                            <button className="text-xs underline text-blue-300/90 hover:text-blue-200" onClick={async ()=>{
+                              const emoji = prompt('Set emoji (e.g., 🧰)', g.emoji || '👥');
+                              if (emoji && user) {
+                                try {
+                                  await updateDoc(doc(db, 'groups', g.id), { emoji });
+                                  setGroups(prev => prev.map(x => x.id===g.id ? { ...x, emoji } : x));
+                                } catch (e) { console.warn('Icon update failed', e); }
+                              }
+                            }}>Icon</button>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="mt-2 text-right"><button className="text-xs underline text-blue-300/90 hover:text-blue-200" onClick={()=>setGroupSwitcherOpen(false)}>Close</button></div>
+                    </div>
+                  )}
+                  {selectedGroupId && (
+                    <div className="mt-2 flex items-center gap-2 text-xs text-blue-300/90">
+                      <span>Uploads will be added to</span>
+                  <span className="font-semibold">{(groups.find(g=>g.id===selectedGroupId)||{}).name}</span>
+                      <button onClick={()=>setSelectedGroupId(null)} className="ml-auto underline hover:text-blue-200">Clear</button>
+                    </div>
+                  )}
+                </div>
+              )}
             </CardContent>
           </Card>
           </div>
@@ -2539,8 +2765,18 @@ Reply with a JSON object enclosed in triple backticks:
           {/* Your Receipts Card */}
           <div className={`w-full md:w-1/3 flex-col items-center ${showOnly === 'receipts' ? 'flex' : !showOnly ? 'flex' : 'hidden'} md:flex`}>
             <Card className="w-full p-4 md:p-6 flex flex-col items-center justify-start gap-4 bg-slate-800/80 text-white shadow-2xl rounded-2xl border border-blue-400/20">
-            <CardHeader className="w-full text-center p-0 mb-4">
-                <CardTitle className="text-xl font-bold text-blue-100">Your Receipts</CardTitle>
+            <CardHeader className="w-full p-0 mb-2">
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-xl font-bold text-blue-100">Your Receipts</CardTitle>
+                  <div className="flex items-center gap-2">
+                    <Button variant="outline" className="bg-transparent border-blue-700 text-blue-200 hover:bg-blue-900/40 text-xs" onClick={() => setSelectMode(v => !v)}>
+                      {selectMode ? 'Done' : 'Select'}
+                    </Button>
+                    {selectMode && (
+                      <Button className="bg-blue-600 hover:bg-blue-500 text-xs" onClick={() => onRequestExport && onRequestExport(Array.from(selectedIds))}>Export</Button>
+                    )}
+                  </div>
+                </div>
             </CardHeader>
             <CardContent className="w-full flex flex-col items-center justify-center p-0">
                 {isFirestoreLoading ? (
@@ -2613,7 +2849,7 @@ Reply with a JSON object enclosed in triple backticks:
                                 <h3 className="text-lg font-bold text-blue-100 tracking-wide">
                                   {currentMonthLabel}
                                 </h3>
-                                <div className="flex items-center space-x-2">
+                      <div className="flex items-center space-x-2">
                                   {/* Total Spending */}
                                   <span className="text-sm text-blue-200/90 font-medium bg-blue-800/40 rounded px-2 py-1">
                                     {(() => {
@@ -2634,13 +2870,27 @@ Reply with a JSON object enclosed in triple backticks:
                                       );
                                     })()}
                                   </span>
-                                  {/* Receipt Count */}
+                      {/* Receipt Count */}
                                   <div className="flex items-center space-x-1">
                                     <div className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-pulse"></div>
                                     <span className="text-xs text-blue-200/80 font-medium">
                                       {group.receipts.length}
                                     </span>
                                   </div>
+                      {/* Group filter inline */}
+                      <div className="ml-2">
+                        <Select value={groupFilter || 'all'} onValueChange={(v)=> setGroupFilter(v==='all'?null:v)}>
+                          <SelectTrigger className="h-7 bg-slate-900/60 border-blue-700/40 text-blue-100 text-xs">
+                            <SelectValue placeholder="All groups" />
+                          </SelectTrigger>
+                          <SelectContent className="bg-slate-900 text-white border-blue-700/40 max-h-56">
+                            <SelectItem value="all">All groups</SelectItem>
+                            {groups.map(g => (
+                              <SelectItem key={g.id} value={g.id}>{g.emoji || '👥'} {g.name}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
                                 </div>
                               </div>
                               {/* Subtle gradient line */}
@@ -2650,6 +2900,7 @@ Reply with a JSON object enclosed in triple backticks:
                             {/* Receipts for this month - sorted by transaction date (newest first) */}
                             <div className="space-y-3 pl-2">
                               {group.receipts
+                                .filter(r => !groupFilter || r.groupId === groupFilter)
                                 .sort((a, b) => {
                                   // Prioritize transactionDate over date over createdAt for sorting
                                   const dateA = normalizeToLocalMidnight(a.transactionDate || a.date);
@@ -2660,7 +2911,23 @@ Reply with a JSON object enclosed in triple backticks:
                                   return dateB - dateA; // Newest first
                                 })
                                 .map((receipt) => (
-                                  <div key={receipt.id}>{renderReceiptCard(receipt)}</div>
+                                  <div key={receipt.id} className="relative">
+                                    {selectMode && (
+                                      <input
+                                        type="checkbox"
+                                        className="absolute top-2 left-2 h-4 w-4 accent-blue-500"
+                                        checked={selectedIds.has(receipt.id)}
+                                        onChange={(e) => {
+                                          setSelectedIds(prev => {
+                                            const next = new Set(prev);
+                                            if (e.target.checked) next.add(receipt.id); else next.delete(receipt.id);
+                                            return next;
+                                          });
+                                        }}
+                                      />
+                                    )}
+                                    {renderReceiptCard(receipt)}
+                                  </div>
                                 ))
                               }
                             </div>
@@ -2691,8 +2958,8 @@ Reply with a JSON object enclosed in triple backticks:
             onInteractOutside={e => e.preventDefault()}
           >
             <DialogHeader className="mb-1 animate-fade-in duration-300 ease-in-out">
-              <DialogTitle className="text-xl md:text-2xl font-bold text-blue-200 text-center tracking-tight">{editingReceipt ? 'Edit Receipt' : 'New Receipt'}</DialogTitle>
-              <DialogDescription className="text-blue-300/80 text-center text-sm md:text-base">{editingReceipt ? 'Edit your receipt details below.' : 'Enter your receipt details below.'}</DialogDescription>
+              <DialogTitle className="text-xl md:text-2xl font-bold text-blue-200 text-center tracking-tight">Check the details</DialogTitle>
+              <DialogDescription className="text-blue-300/80 text-center text-sm md:text-base">Make sure merchant, date, and totals look right before saving.</DialogDescription>
             </DialogHeader>
             <div className="flex-1 overflow-y-auto max-h-[55vh] px-0 md:px-0">
               <form onSubmit={handleSaveReceiptSubmit} autoComplete="off" className="space-y-2 md:space-y-4">
@@ -2713,7 +2980,8 @@ Reply with a JSON object enclosed in triple backticks:
                   {/* Merchant Field */}
                   <div className="space-y-2">
                     <Label htmlFor="merchant">Merchant</Label>
-                    <Input
+                    <div className="relative">
+                      <Input
                       id="merchant"
                       name="merchant"
                       ref={merchantInputRef}
@@ -2724,12 +2992,18 @@ Reply with a JSON object enclosed in triple backticks:
                       autoCapitalize="words"
                       autoFocus
                       inputMode="text"
-                    />
+                      />
+                      {!activeFormData.merchant && (
+                        <div className="absolute -bottom-6 left-0 flex items-center gap-1 text-xs text-yellow-200">
+                          <AlertCircle className="h-3.5 w-3.5" /> We’re not sure about this one.
+                        </div>
+                      )}
+                    </div>
                     {formErrors.merchant && <p className="text-red-400 text-xs mt-1 animate-fade-in duration-200 ease-in-out">{formErrors.merchant}</p>}
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="total">Total Amount</Label>
-                    <div className="flex items-center">
+                    <div className="flex items-center relative">
                     <Input
                         id="total"
                         name="total"
@@ -2752,12 +3026,42 @@ Reply with a JSON object enclosed in triple backticks:
                           }
                         }}
                         className="w-full bg-slate-800/90 border border-blue-700/40 text-white text-right focus:border-blue-400 focus:ring-2 focus:ring-blue-400 focus:bg-blue-950/80 transition-all duration-200 ease-in-out rounded-xl shadow-inner px-4 py-3 text-base placeholder-blue-200/60 outline-none font-mono"
-                      />
+                       />
                       <span className="ml-2 text-blue-200 text-sm">{getCurrencySymbol(activeFormData.currency)}</span>
+                      {!activeFormData.total && (
+                        <div className="absolute -bottom-5 left-0 flex items-center gap-1 text-xs text-yellow-200">
+                          <AlertCircle className="h-3.5 w-3.5" /> We’re not sure about this one.
+                        </div>
+                      )}
                     </div>
                     {formErrors.total && <p className="text-red-400 text-xs mt-1 animate-fade-in duration-200 ease-in-out">{formErrors.total}</p>}
                   </div>
                   <div className="space-y-2">
+                    <Label htmlFor="tax">VAT</Label>
+                    <Input
+                      id="tax"
+                      name="tax"
+                      type="text"
+                      inputMode="decimal"
+                      placeholder="0.00"
+                      value={activeFormData.tax || ''}
+                      onChange={e => {
+                        const value = e.target.value;
+                        if (/^[\d.,]*$/.test(value) || value === '') {
+                          handleFormInputChange(e);
+                        }
+                      }}
+                      onBlur={e => {
+                        const value = e.target.value.replace(',', '.');
+                        const parsed = parseFloat(value);
+                        if (!isNaN(parsed)) {
+                          handleFormInputChange({ target: { name: 'tax', value: parsed.toFixed(2) } });
+                        }
+                      }}
+                      className="w-full bg-slate-800/90 border border-blue-700/40 text-white text-right focus:border-blue-400 focus:ring-2 focus:ring-blue-400 focus:bg-blue-950/80 transition-all duration-200 ease-in-out rounded-xl shadow-inner px-4 py-3 text-base placeholder-blue-200/60 outline-none font-mono"
+                    />
+                  </div>
+                   <div className="space-y-2 relative">
                     <Label htmlFor="subtotal">Subtotal <span className="text-blue-200/60">(Optional)</span></Label>
                     <div className="flex items-center">
                     <Input
@@ -2785,6 +3089,11 @@ Reply with a JSON object enclosed in triple backticks:
                       />
                       <span className="ml-2 text-blue-200 text-sm">{getCurrencySymbol(activeFormData.currency)}</span>
                     </div>
+                    {(!activeFormData.subtotal && activeFormData.total) && (
+                      <div className="absolute -bottom-4 left-0 flex items-center gap-1 text-xs text-blue-300/80">
+                        <AlertCircle className="h-3.5 w-3.5" /> Optional. We’ll compute VAT from totals if needed.
+                      </div>
+                    )}
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="paymentMethod">Payment Method</Label>
@@ -2842,6 +3151,28 @@ Reply with a JSON object enclosed in triple backticks:
                   </div>
                 </div>
                 <div className="border-t border-blue-700/30 my-4" />
+                {/* Business toggle and Notes */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                  <div className="flex items-center justify-between bg-slate-800/60 rounded-xl px-3 py-3 border border-blue-700/30">
+                    <div className="flex flex-col">
+                      <span className="text-sm text-blue-200">Mark as business</span>
+                      <span className="text-xs text-blue-300/70">Affects exports and VAT</span>
+                    </div>
+                    <Switch checked={!!activeFormData.isBusiness} onCheckedChange={(val) => handleFormInputChange({ target: { name: 'isBusiness', value: val } })} />
+                  </div>
+                  <div>
+                    <Label htmlFor="note">Notes</Label>
+                    <Input
+                      id="note"
+                      name="note"
+                      type="text"
+                      placeholder="Optional note for this receipt"
+                      value={activeFormData.note || ''}
+                      onChange={handleFormInputChange}
+                      className="w-full bg-slate-800/90 border border-blue-700/40 text-white focus:border-blue-400 focus:ring-2 focus:ring-blue-400 focus:bg-blue-950/80 transition-all duration-200 ease-in-out rounded-xl shadow-inner px-4 py-3 text-base placeholder-blue-200/60 outline-none"
+                    />
+                  </div>
+                </div>
                 <div className="mt-2">
                   <h3 className="text-base font-semibold text-blue-100 mb-2 animate-fade-in duration-200 ease-in-out">Items</h3>
                   {(activeFormData.items || []).map((item, index) => (
@@ -2992,8 +3323,17 @@ Reply with a JSON object enclosed in triple backticks:
 
       {/* Full Screen Preview */}
       {showFullScreenPreview && (
-        <div className="fixed inset-0 z-[100] bg-black flex flex-col animate-fade-in">
+            <div className="fixed inset-0 z-[100] bg-black flex flex-col animate-fade-in">
           <img src={previewImageSrc} alt="Preview" className="flex-1 object-contain" />
+          {/* Status chip */}
+          {processingStage && (
+            <div className="absolute top-4 left-1/2 -translate-x-1/2 rounded-full bg-slate-800/80 border border-blue-400/30 text-blue-100 px-4 py-1 text-sm shadow-lg">
+              {processingStage === 'detecting_edges' && 'Detecting edges…'}
+              {processingStage === 'enhancing' && 'Enhancing…'}
+              {processingStage === 'reading_text' && 'Reading text…'}
+              {processingStage === 'parsed' && 'Parsed'}
+            </div>
+          )}
           <div className="absolute bottom-12 left-0 right-0 flex justify-center items-center gap-4 p-4 bg-gradient-to-t from-black/80 to-transparent pb-36">
             <Button
               onClick={handleRetakePreview}
@@ -3028,26 +3368,37 @@ Reply with a JSON object enclosed in triple backticks:
               Position your receipt within the frame and click capture. Your receipt will be automatically processed and saved.
             </DialogDescription>
           </DialogHeader>
-          <div className="relative w-full max-w-[560px] h-[420px] bg-gray-900 rounded-lg overflow-hidden flex items-center justify-center">
-            <video ref={videoRef} autoPlay playsInline className="w-full h-full object-cover"></video>
+            <div className="relative w-full max-w-[560px] h-[420px] bg-gray-900 rounded-lg overflow-hidden flex items-center justify-center">
             {!isCameraReady && (
               <p className="absolute text-gray-400">Camera not ready or access denied.</p>
             )}
             {/* Funny Guide Frame for Receipt positioning */}
             <div className="absolute inset-0 flex items-center justify-center p-8 pointer-events-none">
               <div className="w-full h-full border-2 border-dashed border-blue-400 rounded-lg opacity-70 flex items-center justify-center text-blue-300 text-sm font-semibold text-center leading-tight">
-                Position your<br/>receipt here!<br/>(Scan me!) 📸
+                Point at the receipt.<br/>We’ll crop and read it automatically.
               </div>
             </div>
             <canvas ref={canvasRef} className="hidden"></canvas>
             </div>
-          <div className="mt-4 flex space-x-4">
-            <Button onClick={stopCamera} className="bg-red-700 hover:bg-red-800 text-white font-bold py-2 px-4 rounded">
-              <X className="h-5 w-5 mr-2" /> Close Camera
-            </Button>
-            <Button onClick={capturePhoto} disabled={!isCameraReady} className="bg-green-700 hover:bg-green-800 text-white font-bold py-2 px-4 rounded">
-              <Camera className="h-5 w-5 mr-2" /> Capture Photo
-            </Button>
+          {/* Inline Controls: Auto-crop, Shutter */}
+          <div className="mt-4 w-full flex flex-col gap-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-4">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-blue-200">Auto-crop</span>
+                  <Switch checked={autoCropEnabled} onCheckedChange={setAutoCropEnabled} />
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center justify-between">
+              <Button onClick={stopCamera} className="bg-red-700 hover:bg-red-800 text-white font-bold py-2 px-4 rounded">
+                <X className="h-5 w-5 mr-2" /> Close
+              </Button>
+              <Button onClick={capturePhoto} disabled={!isCameraReady} className="relative bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 px-6 rounded-full animate-pulse-fab">
+                <span className="absolute -inset-1 rounded-full bg-blue-400/30 blur-lg" aria-hidden="true"></span>
+                <Camera className="h-5 w-5 mr-2" /> Shutter
+              </Button>
+            </div>
           </div>
         </DialogContent>
       </Dialog>

@@ -8,6 +8,35 @@ import {
   getDoc,
 } from "firebase/firestore";
 
+// Round to cents using banker's rounding to minimize drift
+function roundCents(value) {
+  const scaled = value * 100;
+  const floored = Math.floor(scaled);
+  const fraction = scaled - floored;
+  if (fraction > 0.5) return (floored + 1) / 100;
+  if (fraction < 0.5) return floored / 100;
+  return (floored % 2 === 0 ? floored : floored + 1) / 100;
+}
+
+// Normalize splits so their rounded sum equals the (rounded) total
+function normalizeSplitsToTotal(rawSplits, total) {
+  const entries = Object.entries(rawSplits).map(([uid, amt]) => [uid, parseFloat(amt) || 0]);
+  if (entries.length === 0) return {};
+  const rounded = entries.map(([uid, amt]) => [uid, roundCents(amt)]);
+  const sum = rounded.reduce((s, [, v]) => s + v, 0);
+  const target = roundCents(total);
+  const diff = target - sum;
+  if (Math.abs(diff) < 0.005) return Object.fromEntries(rounded);
+  let maxIdx = 0;
+  let maxAbs = Math.abs(rounded[0][1]);
+  for (let i = 1; i < rounded.length; i++) {
+    const v = Math.abs(rounded[i][1]);
+    if (v > maxAbs) { maxAbs = v; maxIdx = i; }
+  }
+  rounded[maxIdx][1] = roundCents(rounded[maxIdx][1] + diff);
+  return Object.fromEntries(rounded);
+}
+
 export default function useGroupBalances(groupId) {
   const { user } = useAuth();
   const [balances, setBalances] = useState({});
@@ -43,20 +72,18 @@ export default function useGroupBalances(groupId) {
         if (s.to) allUids.add(s.to);
       });
       // Initialize balances
-      const balances = {};
-      allUids.forEach(uid => { balances[uid] = 0; });
+      const working = {};
+      allUids.forEach(uid => { working[uid] = 0; });
       // Process expenses (Tricount/ledger logic: payer + (total - their share), each participant -share)
       for (const exp of currentExpenses) {
-        const total = parseFloat(exp.amount) || 0;
+        const total = roundCents(parseFloat(exp.amount) || 0);
         const paidBy = exp.paidBy;
-        const splits = exp.splits || {};
-        // Subtract each participant's share
+        const splits = normalizeSplitsToTotal(exp.splits || {}, total);
         Object.entries(splits).forEach(([uid, amount]) => {
-          const amt = parseFloat(amount || 0);
-          if (!isNaN(amt)) balances[uid] -= amt;
+          const amt = roundCents(parseFloat(amount) || 0);
+          if (!isNaN(amt)) working[uid] = roundCents(working[uid] - amt);
         });
-        // Credit the payer with the total paid
-        if (paidBy) balances[paidBy] += total;
+        if (paidBy) working[paidBy] = roundCents(working[paidBy] + total);
       }
       // Process settlements, but ignore those that have a matching reimbursement expense
       // Build a set of reimbursement keys: `${from}_${to}_${amount}_${date}`
@@ -82,8 +109,8 @@ export default function useGroupBalances(groupId) {
         // If a reimbursement expense exists for this settlement, skip it
         if (reimbursementKeys.has(`${from}_${to}_${amt}_${date}`)) continue;
         if (!isNaN(amt)) {
-          balances[from] += amt;
-          balances[to] -= amt;
+          working[from] = roundCents(working[from] + amt);
+          working[to] = roundCents(working[to] - amt);
         }
       }
       // Map to names, always include all UIDs
@@ -91,25 +118,19 @@ export default function useGroupBalances(groupId) {
       let sum = 0;
       allUids.forEach(uid => {
         const name = uidToName[uid] || uid;
-        let value = balances[uid];
-        if (typeof value !== 'number' || isNaN(value)) value = 0.00;
-        // Fix floating point precision: treat near-zero as zero
-        value = Math.abs(value) < 0.01 ? 0.00 : Math.round((value + Number.EPSILON) * 100) / 100;
+        let value = roundCents(working[uid] || 0);
+        if (Math.abs(value) < 0.005) value = 0.00;
         finalBalances[name] = value;
         sum += value;
       });
-      // If the sum is near zero, distribute the error to the largest (absolute) balance
-      if (Math.abs(sum) < 0.01 && Object.keys(finalBalances).length > 0) {
-        // Find the key with the largest absolute value
+      // Ensure exact zero sum by adjusting the largest absolute balance
+      if (Math.abs(sum) >= 0.005) {
         let maxKey = Object.keys(finalBalances)[0];
         let maxAbs = Math.abs(finalBalances[maxKey]);
         Object.entries(finalBalances).forEach(([k, v]) => {
-          if (Math.abs(v) > maxAbs) {
-            maxKey = k;
-            maxAbs = Math.abs(v);
-          }
+          if (Math.abs(v) > maxAbs) { maxKey = k; maxAbs = Math.abs(v); }
         });
-        finalBalances[maxKey] = Math.round((finalBalances[maxKey] - sum + Number.EPSILON) * 100) / 100;
+        finalBalances[maxKey] = roundCents(finalBalances[maxKey] - sum);
       }
       setBalances(finalBalances);
       setLoading(false);

@@ -4,6 +4,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Dialog as UIDialog, DialogContent as UIDialogContent, DialogTitle as UIDialogTitle, DialogDescription as UIDialogDescription } from './ui/dialog';
 import { db } from '../firebase';
 import { collection, addDoc, query, where, onSnapshot, serverTimestamp, doc, updateDoc, deleteDoc, orderBy, setDoc } from 'firebase/firestore';
+// Image uploading is disabled to avoid Firebase Storage usage in free tier
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
@@ -13,6 +14,7 @@ import QRCode from 'react-qr-code';
 import { Pie, Doughnut } from 'react-chartjs-2';
 import { Bar } from 'react-chartjs-2';
 import html2canvas from 'html2canvas';
+import { useToast } from './ui/use-toast';
 
 const EXPENSE_CATEGORIES = [
   { name: 'Groceries', emoji: '🛒' },
@@ -117,6 +119,27 @@ function ExpenseDetailView({ expense, group, onEdit, onDelete, onClose }) {
           ))}
         </div>
       </div>
+      {/* Items (read-only) */}
+      {Array.isArray(expense.items) && expense.items.length > 0 && (
+        <div className="px-4 mt-4">
+          <div className="uppercase text-xs font-semibold text-blue-200 mb-2 tracking-wide">ITEMS</div>
+          <div className="bg-[#23232a] rounded-2xl p-2 shadow border border-slate-700/40">
+            {expense.items.map((it, idx) => (
+              <div key={idx} className={`flex items-center px-2 py-3 ${idx !== expense.items.length - 1 ? 'border-b border-slate-700/30' : ''}`}>
+                <div className="flex-1 text-white text-base">{it.name || it.text || '—'}</div>
+                <div className="font-semibold text-lg text-blue-100">{(parseFloat(it.price) || 0).toFixed(2)} <span className="text-base">{currency}</span></div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {/* Note (read-only) */}
+      {expense.note && (
+        <div className="px-4 mt-4">
+          <div className="uppercase text-xs font-semibold text-blue-200 mb-2 tracking-wide">NOTE</div>
+          <div className="bg-[#23232a] rounded-2xl p-3 shadow border border-slate-700/40 text-blue-100 text-sm whitespace-pre-wrap break-words">{expense.note}</div>
+        </div>
+      )}
       <div className="flex-1" />
       <button className="m-4 mt-8 text-blue-400 underline text-base font-semibold" onClick={onClose}>Close</button>
     </div>
@@ -156,9 +179,10 @@ function getUnsettledOwes(group, balances, settlements, myName, positive) {
   return owes;
 }
 
-function GroupExpensesPage({ group, onBack, initialTab }) {
+function GroupExpensesPage({ group, onBack, initialTab, prefill, forceAdd }) {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const { toast } = useToast();
   // const { groupId } = useParams();
   const groupId = group?.id;
   console.log('GroupExpensesPage groupId:', groupId);
@@ -179,10 +203,10 @@ function GroupExpensesPage({ group, onBack, initialTab }) {
   const [tabFade, setTabFade] = useState(true);
   const [expenses, setExpenses] = useState([]);
   const [showAdd, setShowAdd] = useState(false);
-  const [label, setLabel] = useState('');
-  const [amount, setAmount] = useState('');
+  const [label, setLabel] = useState(prefill?.label || '');
+  const [amount, setAmount] = useState(prefill?.amount || '');
   const [paidBy, setPaidBy] = useState(myName);
-  const [date, setDate] = useState(() => new Date().toISOString().slice(0,10));
+  const [date, setDate] = useState(() => prefill?.date || new Date().toISOString().slice(0,10));
   const [editExpense, setEditExpense] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -200,8 +224,10 @@ function GroupExpensesPage({ group, onBack, initialTab }) {
   ];
   const [expenseType, setExpenseType] = useState('expense');
   const [tag, setTag] = useState('');
-  const [photo, setPhoto] = useState(null);
-  const [currency, setCurrency] = useState(group.currency || 'EUR');
+  const [photo, setPhoto] = useState(prefill?.photo || null);
+  const [currency, setCurrency] = useState(prefill?.currency || group.currency || 'EUR');
+  const [note, setNote] = useState('');
+  const [items, setItems] = useState(() => []);
   const [splitType, setSplitType] = useState('equally');
   const [split, setSplit] = useState(() => {
     const names = group.participants || [];
@@ -217,7 +243,52 @@ function GroupExpensesPage({ group, onBack, initialTab }) {
   });
 
   // Add splitEnabled state for add modal
-  const [splitEnabled, setSplitEnabled] = useState(false);
+  const [splitEnabled, setSplitEnabled] = useState(!!prefill?.splitEnabled || false);
+  // Transfer specific state
+  const claimedNames = Object.keys(group.claimedBy || {});
+  const [transferFrom, setTransferFrom] = useState(myName || (claimedNames[0] || ''));
+  const [transferTo, setTransferTo] = useState(() => {
+    const other = claimedNames.find(n => n !== myName);
+    return other || claimedNames[0] || '';
+  });
+  // Auto-open add modal when prefill is provided or forceAdd is true; hydrate fields. Also read sessionStorage fallback.
+  useEffect(() => {
+    let effective = prefill;
+    if (!effective && typeof sessionStorage !== 'undefined') {
+      try {
+        const cached = sessionStorage.getItem(`group_prefill_${groupId}`);
+        if (cached) effective = JSON.parse(cached);
+      } catch {}
+    }
+    if (effective) {
+      if (effective.label) setLabel(effective.label);
+      if (effective.amount != null) setAmount(`${effective.amount}`);
+      if (effective.date) setDate(effective.date);
+      if (effective.currency) setCurrency(effective.currency);
+      if (effective.photo) setPhoto(effective.photo);
+      // If OCR JSON provided, surface it into note by default for audit
+      if (effective.ocrJson) {
+        try {
+          const trimmed = JSON.stringify(effective.ocrJson);
+          if (!note) setNote(trimmed);
+          if (Array.isArray(effective.ocrJson.items)) {
+            const mapped = effective.ocrJson.items.map(it => ({ name: it.description || it.name || '', price: (it.total || it.price || '').toString() }));
+            if (mapped.length) setItems(mapped);
+          }
+        } catch {}
+      }
+      if (typeof effective.splitEnabled === 'boolean') setSplitEnabled(!!effective.splitEnabled);
+      if (!showAdd) setShowAdd(true);
+      // consume prefill once modal opens so revisits don't re-open
+      try {
+        if (typeof window !== 'undefined' && window.__GROUP_PREFILL__?.groupId === groupId) delete window.__GROUP_PREFILL__;
+        sessionStorage.removeItem(`group_prefill_${groupId}`);
+      } catch {}
+    }
+    if (forceAdd && !showAdd) {
+      setShowAdd(true);
+    }
+  }, [prefill, groupId, showAdd, forceAdd]);
   const [lastSplitType, setLastSplitType] = useState('equally');
 
   // Load expenses for this group from Firestore
@@ -284,6 +355,48 @@ function GroupExpensesPage({ group, onBack, initialTab }) {
     }
     let splits = {};
     let shares = {};
+    // Handle special types
+    if (expenseType === 'transfer') {
+      const fromUid = group.claimedBy[transferFrom];
+      const toUid = group.claimedBy[transferTo];
+      if (!fromUid || !toUid || fromUid === toUid) {
+        setError('Select two different members for a transfer');
+        return;
+      }
+      // Represent transfer as a reimbursement-like expense
+      splits = { [toUid]: parsedAmount };
+      shares = { [toUid]: 1 };
+      // Override payer
+      const payload = {
+        label: `${transferFrom} → ${transferTo}`,
+        tag,
+        amount: parsedAmount,
+        paidBy: fromUid,
+        date,
+        createdBy: user.uid,
+        createdAt: serverTimestamp(),
+        expenseType: 'reimbursement',
+        currency,
+        splitType: 'amounts',
+        splits,
+        shares,
+        photo: '',
+        photoDataUrl: '',
+        splitEnabled: true,
+        note: note || '',
+        items: [],
+      };
+      try {
+        await addDoc(collection(db, 'groups', group.id, 'expenses'), payload);
+        toast({ title: 'Transfer added', description: `${transferFrom} pays ${transferTo}` });
+        setShowAdd(false);
+        setTabFade(false);
+        setTimeout(() => { setTab('balances'); setTabFade(true); }, 120);
+      } catch (err) {
+        setError('Failed to add transfer');
+      }
+      return;
+    }
     if (splitEnabled) {
       if (splitType === 'equally') {
         const share = parseFloat((parsedAmount / names.length).toFixed(2));
@@ -333,6 +446,10 @@ function GroupExpensesPage({ group, onBack, initialTab }) {
       }
     }
     try {
+      // Image upload disabled: persist inline data URL (if any) only inside the expense document
+      const photoUrl = '';
+      const photoDataUrlFallback = (photo && typeof photo === 'string' && photo.startsWith('data:')) ? photo : '';
+
       // Use subcollection: groups/{groupId}/expenses
       await addDoc(collection(db, 'groups', group.id, 'expenses'), {
         label: label.trim(),
@@ -347,16 +464,25 @@ function GroupExpensesPage({ group, onBack, initialTab }) {
         splitType,
         splits,
         shares, // Save shares mapping
-        photo: photo || '',
+        photo: photoUrl,
+        photoDataUrl: photoDataUrlFallback,
         splitEnabled, // Save splitEnabled state
+        note: note || '',
+        items: (Array.isArray(items) ? items.filter(it => (it.name || it.price)).map(it => ({ name: it.name || '', price: parseFloat(it.price) || 0 })) : []),
       });
+      // 3) Toast and auto-switch to balances
+      toast({ title: 'Saved to group', description: photoDataUrlFallback ? 'Expense added (photo kept locally).' : 'Expense added successfully.' });
       setShowAdd(false);
+      setTabFade(false);
+      setTimeout(() => { setTab('balances'); setTabFade(true); }, 120);
       setLabel('');
       setAmount('');
       setPaidBy(myName);
       setDate(new Date().toISOString().slice(0,10));
       setTag('');
       setPhoto(null);
+      setNote('');
+      setItems([]);
       setSplitType('equally');
       setSplit(() => (group.participants || []).reduce((acc, n) => ({ ...acc, [n]: true }), {}));
       setSplitAmounts(() => (group.participants || []).reduce((acc, n) => ({ ...acc, [n]: '' }), {}));
@@ -415,7 +541,9 @@ function GroupExpensesPage({ group, onBack, initialTab }) {
 
   // Update URL and document title/meta when tab changes
   useEffect(() => {
-    if (groupId) {
+    // Defer URL change if Add modal is being opened via prefill to avoid losing modal state
+    const hasPrefill = (typeof window !== 'undefined' && window.__GROUP_PREFILL__ && window.__GROUP_PREFILL__.groupId === groupId);
+    if (!showAdd && !hasPrefill && groupId) {
       navigate(`/group/${groupId}/${tab}`); // push to history
     }
     let tabLabel = tab.charAt(0).toUpperCase() + tab.slice(1);
@@ -430,7 +558,7 @@ function GroupExpensesPage({ group, onBack, initialTab }) {
       document.head.appendChild(link);
     }
     link.setAttribute('href', window.location.href);
-  }, [tab, groupId, group.name, navigate]);
+  }, [tab, groupId, group.name, navigate, showAdd]);
 
   // Add these handlers for edit dialog
   const handleEditSave = async (updated) => {
@@ -643,7 +771,7 @@ Please settle up when you can. Thank you!`;
       .slice(0, 5);
   }
 
-  return (
+        return (
     <>
       <Helmet>
         <title>{group.name} – {tab.charAt(0).toUpperCase() + tab.slice(1)} | ReceipTrack</title>
@@ -696,10 +824,10 @@ Please settle up when you can. Thank you!`;
         {tab === 'overview' && (
           <>
             <GroupInsightsOverview
-              expenses={expenses}
-              group={group}
-              selectedCategory={selectedCategory}
-              setSelectedCategory={setSelectedCategory}
+            expenses={expenses}
+            group={group}
+            selectedCategory={selectedCategory}
+            setSelectedCategory={setSelectedCategory}
               modalOpen={modalOpen}
               setModalOpen={setModalOpen}
               expandedExpenseId={expandedExpenseId}
@@ -847,9 +975,7 @@ Please settle up when you can. Thank you!`;
                 <button type="button" className="bg-slate-800 rounded-xl md:rounded-lg p-3 md:p-2 ml-1 hover:bg-slate-700 transition-colors" title="Tag" onClick={() => setShowCategoryDialog(true)}>
                   <span role="img" aria-label="tag" className="text-lg">{tag ? tag.split(' ')[0] : '🏷️'}</span>
                 </button>
-                <button type="button" className="bg-slate-800 rounded-xl md:rounded-lg p-3 md:p-2 ml-1 hover:bg-slate-700 transition-colors" title="Photo" onClick={() => setPhoto(photo ? null : 'photo')}>
-                  <span role="img" aria-label="photo" className="text-lg">📷</span>
-                </button>
+                {/* Photo capture disabled (no Storage). Keep UI element hidden to avoid confusion. */}
               </div>
               <div className="flex gap-2 items-center">
                 <input
@@ -872,6 +998,54 @@ Please settle up when you can. Thank you!`;
                   <option value="GBP">£</option>
                   <option value="JPY">¥</option>
                 </select>
+              </div>
+              {/* Items placed near the top for visibility */}
+              <div className="bg-slate-800/50 rounded-xl p-3">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-blue-200 text-sm font-semibold">Items (optional)</div>
+                  <button type="button" className="text-blue-400 text-sm underline" onClick={() => setItems(i => [...i, { name: '', price: '' }])}>Add item</button>
+                </div>
+                {(!items || items.length === 0) && (
+                  <>
+                    <div className="text-blue-300 text-xs mb-2">Add lines if you want to itemize (optional).</div>
+                    {/* Always show one empty row to invite entry */}
+                    <div className="flex items-center gap-2 mb-2">
+                      <input
+                        className="flex-1 rounded-lg bg-slate-900 border border-blue-700/40 px-3 py-2 text-white placeholder-blue-200/60 focus:border-blue-400 focus:ring-2 focus:ring-blue-400 outline-none text-sm"
+                        placeholder="Item name"
+                        value=""
+                        onChange={e => setItems([{ name: e.target.value, price: '' }])}
+                      />
+                      <input
+                        className="w-28 rounded-lg bg-slate-900 border border-blue-700/40 px-3 py-2 text-white placeholder-blue-200/60 focus:border-blue-400 focus:ring-2 focus:ring-blue-400 outline-none text-sm"
+                        placeholder="0.00"
+                        type="number"
+                        step="0.01"
+                        value=""
+                        onChange={e => setItems([{ name: '', price: e.target.value }])}
+                      />
+                    </div>
+                  </>
+                )}
+                {items && items.map((it, idx) => (
+                  <div key={idx} className="flex items-center gap-2 mb-2">
+                    <input
+                      className="flex-1 rounded-lg bg-slate-900 border border-blue-700/40 px-3 py-2 text-white placeholder-blue-200/60 focus:border-blue-400 focus:ring-2 focus:ring-blue-400 outline-none text-sm"
+                      placeholder="Item name"
+                      value={it.name}
+                      onChange={e => setItems(arr => arr.map((row, i) => i === idx ? { ...row, name: e.target.value } : row))}
+                    />
+                    <input
+                      className="w-28 rounded-lg bg-slate-900 border border-blue-700/40 px-3 py-2 text-white placeholder-blue-200/60 focus:border-blue-400 focus:ring-2 focus:ring-blue-400 outline-none text-sm"
+                      placeholder="0.00"
+                      type="number"
+                      step="0.01"
+                      value={it.price}
+                      onChange={e => setItems(arr => arr.map((row, i) => i === idx ? { ...row, price: e.target.value } : row))}
+                    />
+                    <button type="button" className="text-red-400 text-sm" onClick={() => setItems(arr => arr.filter((_, i) => i !== idx))}>Remove</button>
+                  </div>
+                ))}
               </div>
               <div className="flex flex-col md:flex-row gap-2">
                 <select
@@ -936,6 +1110,27 @@ Please settle up when you can. Thank you!`;
                   </select>
                 )}
               </div>
+              {/* Expense type specific UI */}
+              {expenseType === 'income' && (
+                <div className="bg-slate-800/50 rounded-xl p-3 mb-2 text-blue-200 text-sm">
+                  Income: the payer receives from selected participants. Treat as negative expense for others.
+                </div>
+              )}
+              {expenseType === 'transfer' && (
+                <div className="bg-slate-800/50 rounded-xl p-3 mb-2 flex flex-col gap-2">
+                  <div className="text-blue-200 text-sm font-semibold">Transfer</div>
+                  <div className="flex gap-2">
+                    <select className="flex-1 rounded-xl bg-slate-900 border border-blue-700/40 px-3 py-2 text-white" value={transferFrom} onChange={e => setTransferFrom(e.target.value)}>
+                      {claimedNames.map(n => <option key={n} value={n}>{n}</option>)}
+                    </select>
+                    <span className="text-blue-200 self-center">→</span>
+                    <select className="flex-1 rounded-xl bg-slate-900 border border-blue-700/40 px-3 py-2 text-white" value={transferTo} onChange={e => setTransferTo(e.target.value)}>
+                      {claimedNames.filter(n => n !== transferFrom).map(n => <option key={n} value={n}>{n}</option>)}
+                    </select>
+                  </div>
+                  <div className="text-blue-300 text-xs">Creates a reimbursement-style expense from {transferFrom} to {transferTo} for the entered amount.</div>
+                </div>
+              )}
               {splitEnabled && (
                 <div className="flex flex-col gap-2 mt-2">
                   {(group.participants || []).sort((a, b) => {
@@ -951,7 +1146,7 @@ Please settle up when you can. Thank you!`;
                     const calculatedAmount = splitType === 'shares' && totalShares > 0
                       ? (parsedAmount * effectiveShares / totalShares)
                       : (splitType === 'equally' && checked ? parsedAmount / (group.participants || []).filter(n => split[n]).length : (splitType === 'amounts' && checked ? parseFloat(splitAmounts[name]) || 0 : 0));
-                    return (
+        return (
                       <div key={name} className="flex items-center gap-3 bg-slate-800 rounded-xl p-4 md:p-3 mb-2">
                         <input
                           type="checkbox"
@@ -1053,7 +1248,7 @@ Please settle up when you can. Thank you!`;
           {!editExpense?.editMode ? (
             <ExpenseDetailView
               expense={editExpense}
-              group={group}
+            group={group}
               onEdit={() => setEditExpense({ ...editExpense, editMode: true })}
               onDelete={() => { handleEditDelete(); setEditExpense(null); }}
               onClose={() => setEditExpense(null)}
@@ -1724,7 +1919,7 @@ function EditExpenseForm({ editExpense, group, user, onSave, onDelete, onCancel 
   const [showCategoryDialog, setShowCategoryDialog] = useState(false);
   const [customCategory, setCustomCategory] = useState('');
 
-  return (
+        return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-4 px-4 md:px-6 pb-6">
       {/* Mobile-optimized expense type buttons */}
       <div className="flex gap-2 mb-2">
@@ -1842,7 +2037,7 @@ function EditExpenseForm({ editExpense, group, user, onSave, onDelete, onCancel 
           const calculatedAmount = splitType === 'shares' && totalShares > 0
             ? (parsedAmount * effectiveShares / totalShares)
             : (splitType === 'equally' && checked ? parsedAmount / members.filter(n => split[n]).length : (splitType === 'amounts' && checked ? parseFloat(splitAmounts[m]) || 0 : 0));
-          return (
+        return (
             <div key={m} className="flex items-center gap-3 bg-slate-800 rounded-xl p-4 md:p-3 mb-2">
               <input
                 type="checkbox"
@@ -2049,7 +2244,7 @@ function GroupInsightsOverview({ expenses, group, selectedCategory, setSelectedC
       .slice(0, 5);
   };
 
-  return (
+    return (
     <div className="w-full max-w-2xl mx-auto mt-4 mb-4 px-2">
       <div className="bg-slate-800/60 backdrop-blur-lg shadow-2xl rounded-3xl border border-blue-400/20 p-6 flex flex-col items-center glass-card" style={{overflow: 'hidden', background: 'rgba(30,41,59,0.65)', boxShadow: '0 8px 32px 0 rgba(31, 38, 135, 0.18)', border: '1.5px solid rgba(99,102,241,0.12)', backdropFilter: 'blur(18px)'}}>
         {/* Modern Semi-Circle Doughnut Chart */}
@@ -2114,13 +2309,13 @@ function GroupInsightsOverview({ expenses, group, selectedCategory, setSelectedC
           <div className="absolute left-0 right-0 top-0 flex flex-col items-center justify-center pointer-events-none group-hover:scale-105 group-hover:shadow-blue-400/30 transition-transform duration-200 px-2 md:px-0 no-scrollbar overflow-hidden" style={{height: 100, marginTop: 30}}>
             <div className="text-[10px] font-medium text-blue-300/70 mb-1 tracking-wider uppercase overflow-hidden" style={{letterSpacing: 1.5}}>
               {currentMonth} {currentYear}
-            </div>
+        </div>
             <div className="text-xs font-semibold text-gray-300 mb-1 tracking-wide overflow-hidden" style={{letterSpacing: 1}}>TOTAL SPENT</div>
             <div className="text-3xl xs:text-4xl md:text-5xl font-extrabold text-indigo-200 mb-1 text-center" style={{overflow: 'hidden', whiteSpace: 'nowrap', maxWidth: '100%', padding: '0 0.5rem'}}>{totalSpent.toFixed(2)} {group.currency || '€'}</div>
             <div className="text-xs text-gray-400 overflow-hidden">{categoryLabels.length} categories</div>
             <div className="text-[8px] text-blue-400/60 mt-1 tracking-wider uppercase overflow-hidden" style={{letterSpacing: 1}}>
               THIS MONTH ONLY
-            </div>
+      </div>
           </div>
         </div>
         {/* Category Cards Grid (mobile-friendly) */}
@@ -2226,9 +2421,9 @@ function GroupInsightsOverview({ expenses, group, selectedCategory, setSelectedC
                           const payerName = getNameByUid(group, exp.paidBy);
                           const payerInitials = payerName.split(' ').map(n => n[0]).join('').toUpperCase();
                           const payerColor = '#6366F1';
-                          return (
+  return (
                             <li key={exp.id || idx} className="bg-slate-800/80 rounded-lg shadow-inner overflow-hidden transition-all duration-300 ease-in-out">
-                              <button
+            <button
                                 className="w-full grid grid-cols-[auto_1fr_auto] items-center gap-x-3 px-3 py-2 text-left focus:outline-none"
                                 onClick={() => setExpandedExpenseId(isExpanded ? null : exp.id)}
                                 aria-expanded={isExpanded}
@@ -2250,7 +2445,7 @@ function GroupInsightsOverview({ expenses, group, selectedCategory, setSelectedC
                                 <div className="transition-transform duration-300 ml-2" style={{ transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)' }}>
                                   <svg className="h-5 w-5 text-blue-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
                                 </div>
-                              </button>
+            </button>
                               <div
                                 id={`exp-details-${exp.id}`}
                                 style={{ maxHeight: isExpanded ? '220px' : '0px', opacity: isExpanded ? 1 : 0, transform: isExpanded ? 'translateY(0)' : 'translateY(-8px)' }}
@@ -2268,13 +2463,13 @@ function GroupInsightsOverview({ expenses, group, selectedCategory, setSelectedC
                                           </li>
                                         ))}
                                       </ul>
-                                    </div>
+        </div>
                                   ) : (
                                     <div className="text-xs text-gray-400 italic">No split details</div>
                                   )}
                                   {/* Add more details if needed, e.g., notes, attachments, etc. */}
-                                </div>
-                              </div>
+      </div>
+      </div>
                             </li>
                           );
                         })}
