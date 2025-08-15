@@ -211,6 +211,7 @@ export default function ReceiptUploader({ className, showOnly, onTabChange, onNe
   const [isCameraOpen, setIsCameraOpen] = useState(false);
   const [isCameraReady, setIsCameraReady] = useState(false);
   const [autoCropEnabled, setAutoCropEnabled] = useState(true);
+  const [rotation, setRotation] = useState(0);
   let _videoElement = null; // Mutable variable to hold the video DOM element
   const videoRef = (node) => {
     if (node) {
@@ -1692,6 +1693,7 @@ export default function ReceiptUploader({ className, showOnly, onTabChange, onNe
             out.width = tmp.width; out.height = tmp.height;
             octx.save();
             octx.translate(out.width / 2, out.height / 2);
+            octx.rotate((rotation * Math.PI) / 180 - angle);
             octx.drawImage(tmp, -tmp.width / 2, -tmp.height / 2);
             octx.restore();
             context.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
@@ -1700,7 +1702,8 @@ export default function ReceiptUploader({ className, showOnly, onTabChange, onNe
             context.drawImage(out, 0, 0);
           }
         } catch {}
-      } 
+      }
+
       finalize();
 
       function finalize() {
@@ -3369,6 +3372,7 @@ Reply with a JSON object enclosed in triple backticks:
             </DialogDescription>
           </DialogHeader>
             <div className="relative w-full max-w-[560px] h-[420px] bg-gray-900 rounded-lg overflow-hidden flex items-center justify-center">
+            <video ref={videoRef} autoPlay playsInline className="w-full h-full object-cover" style={{ transform: `rotate(${rotation}deg)` }}></video>
             {!isCameraReady && (
               <p className="absolute text-gray-400">Camera not ready or access denied.</p>
             )}
@@ -3380,7 +3384,7 @@ Reply with a JSON object enclosed in triple backticks:
             </div>
             <canvas ref={canvasRef} className="hidden"></canvas>
             </div>
-          {/* Inline Controls: Auto-crop, Shutter */}
+          {/* Inline Controls: Auto-crop, Enhance, Rotate, Shutter */}
           <div className="mt-4 w-full flex flex-col gap-3">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-4">
