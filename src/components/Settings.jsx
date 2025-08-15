@@ -10,7 +10,6 @@ import { SUPPORTED_CURRENCIES } from '../utils/currencyUtils';
 import { loadSettings, saveSettings, updateSettings, formatAmount } from '../utils/settingsUtils';
 import { ChevronDown } from 'lucide-react';
 import { useAuth } from "../contexts/AuthContext";
-import Cropper from 'react-easy-crop';
 import { updateProfile } from 'firebase/auth';
 import { updateDoc, doc, serverTimestamp } from 'firebase/firestore';
 import { auth, db } from '../firebase';
@@ -599,7 +598,6 @@ export function UnifiedEditAvatarModal({ user, onClose, onSave }) {
   const [hasChanged, setHasChanged] = React.useState(false);
   const [avatarPreview, setAvatarPreview] = React.useState(user?.photoURL && user.photoURL.length > 2 ? user.photoURL : '');
   const [avatarError, setAvatarError] = React.useState('');
-  const [crop, setCrop] = React.useState({ x: 0, y: 0 });
   const [zoom, setZoom] = React.useState(1);
   const [croppedAreaPixels, setCroppedAreaPixels] = React.useState(null);
   const [cameraStream, setCameraStream] = React.useState(null);

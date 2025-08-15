@@ -45,8 +45,6 @@ import 'react-circular-progressbar/dist/styles.css';
 import { useSwipeable } from 'react-swipeable';
 import { queueReceipt } from '@/data/storage';
 import { metrics, startTimer, endTimerMs } from '@/lib/analytics';
-import Cropper from 'react-easy-crop';
-import { detectCropAndDeskew } from '@/components/AutoCropper';
 import { Switch } from './ui/switch';
 Chart.register(ArcElement, Tooltip, Legend, CategoryScale, LinearScale, PointElement, LineElement, TimeScale, Filler, BarElement, annotationPlugin);
 
@@ -210,7 +208,6 @@ export default function ReceiptUploader({ className, showOnly, onTabChange, onNe
   const [editingItemIndex, setEditingItemIndex] = useState(null);
   const [isCameraOpen, setIsCameraOpen] = useState(false);
   const [isCameraReady, setIsCameraReady] = useState(false);
-  const [autoCropEnabled, setAutoCropEnabled] = useState(true);
   const [rotation, setRotation] = useState(0);
   let _videoElement = null; // Mutable variable to hold the video DOM element
   const videoRef = (node) => {
@@ -1678,31 +1675,6 @@ export default function ReceiptUploader({ className, showOnly, onTabChange, onNe
       canvasRef.current.height = _videoElement.videoHeight;
       context.drawImage(_videoElement, 0, 0, canvasRef.current.width, canvasRef.current.height);
 
-      // Auto-crop & deskew using edge detection
-      if (autoCropEnabled) {
-        try {
-          const { crop, angle } = detectCropAndDeskew(canvasRef.current);
-          if (crop && crop.width > 0 && crop.height > 0) {
-            const tmp = document.createElement('canvas');
-            const tctx = tmp.getContext('2d');
-            tmp.width = crop.width; tmp.height = crop.height;
-            tctx.drawImage(canvasRef.current, crop.x, crop.y, crop.width, crop.height, 0, 0, crop.width, crop.height);
-            // rotate by rotation - angle
-            const out = document.createElement('canvas');
-            const octx = out.getContext('2d');
-            out.width = tmp.width; out.height = tmp.height;
-            octx.save();
-            octx.translate(out.width / 2, out.height / 2);
-            octx.rotate((rotation * Math.PI) / 180 - angle);
-            octx.drawImage(tmp, -tmp.width / 2, -tmp.height / 2);
-            octx.restore();
-            context.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
-            canvasRef.current.width = out.width;
-            canvasRef.current.height = out.height;
-            context.drawImage(out, 0, 0);
-          }
-        } catch {}
-      }
 
       finalize();
 
@@ -3379,20 +3351,14 @@ Reply with a JSON object enclosed in triple backticks:
             {/* Funny Guide Frame for Receipt positioning */}
             <div className="absolute inset-0 flex items-center justify-center p-8 pointer-events-none">
               <div className="w-full h-full border-2 border-dashed border-blue-400 rounded-lg opacity-70 flex items-center justify-center text-blue-300 text-sm font-semibold text-center leading-tight">
-                Point at the receipt.<br/>We’ll crop and read it automatically.
+                Point at the receipt.<br/>
               </div>
             </div>
             <canvas ref={canvasRef} className="hidden"></canvas>
             </div>
-          {/* Inline Controls: Auto-crop, Enhance, Rotate, Shutter */}
+          {/* Inline Controls: Shutter */}
           <div className="mt-4 w-full flex flex-col gap-3">
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-4">
-                <div className="flex items-center gap-2">
-                  <span className="text-sm text-blue-200">Auto-crop</span>
-                  <Switch checked={autoCropEnabled} onCheckedChange={setAutoCropEnabled} />
-                </div>
-              </div>
             </div>
             <div className="flex items-center justify-between">
               <Button onClick={stopCamera} className="bg-red-700 hover:bg-red-800 text-white font-bold py-2 px-4 rounded">
