@@ -112,7 +112,7 @@ const missingMessages = {
   ],
   date: [
     "When did this happen? Time travel is hard without a date! ⏳",
-    "Date missing! Was it yesterday, today, or in a galaxy far, far away? ��",
+    "Date missing! Was it yesterday, today, or in a galaxy far, far away?   ",
     "No date, no story! Please pick a day. 📅"
   ],
   items: [
@@ -1937,6 +1937,7 @@ export default function ReceiptUploader({ className, showOnly, onTabChange, onNe
       date: dateString,
       category: receipt.category || '',
       subtotal: receipt.subtotal ? safeParseFloat(receipt.subtotal) : '',
+      tax: receipt.tax ? safeParseFloat(receipt.tax) : '',
       payment_method: receipt.paymentMethod || '',
       currency: receipt.currency || 'EUR',
       items: receipt.items?.map(item => ({
@@ -2250,10 +2251,19 @@ Reply with a JSON object enclosed in triple backticks:
         currency: parsedJSON.currency || 'EUR',
         items: normalizedItems,
         subtotal: parsedJSON.subtotal ? parsedJSON.subtotal.replace(/[^\d.,]/g, '').replace(',', '.') : '',
-        tax: 0 // Will be calculated as total - subtotal if needed
+        tax: (() => { try { const raw = parsedJSON.vat ?? parsedJSON.tax ?? parsedJSON.iva ?? parsedJSON.tva ?? parsedJSON.gst ?? null; if (raw != null) { const s = String(raw).replace(/[^0-9.,-]/g,'').replace(',', '.'); const num = parseFloat(s); if (!isNaN(num)) return num; } } catch(e){} return undefined; })() // Will be calculated as total - subtotal if needed
       };
 
-      // Offline-first queueing if offline, and attach group if selected
+      // Ensure VAT present if subtotal and total exist (compute from total - subtotal when missing/zero)
+      if ((ocrData.tax == null || Number.isNaN(ocrData.tax) || ocrData.tax <= 0) && ocrData.total && ocrData.subtotal) {
+        const t = parseFloat(ocrData.total);
+        const s = parseFloat(ocrData.subtotal);
+        const diff = (isNaN(t) || isNaN(s)) ? 0 : (t - s);
+        const vat = diff > 0 ? diff : 0;
+        const rounded = Number(vat.toFixed(2));
+        ocrData.tax = Math.abs(rounded) < 1e-6 ? 0 : rounded; // avoid -0
+      }
+// Offline-first queueing if offline, and attach group if selected
       if (!navigator.onLine) {
         const localId = crypto.randomUUID();
         await queueReceipt({
@@ -2265,7 +2275,7 @@ Reply with a JSON object enclosed in triple backticks:
             date: ocrData.date,
             total: parseFloat(ocrData.total) || 0,
             subtotal: parseFloat(ocrData.subtotal) || 0,
-            vatAmount: undefined,
+            vatAmount: (()=>{ const v = Number(ocrData.tax); return Number.isFinite(v) && v > 0 ? v : 0; })(),
             category: ocrData.category,
             paymentMethod: ocrData.paymentMethod,
             currency: ocrData.currency,
