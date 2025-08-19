@@ -185,6 +185,17 @@ export default function ReceiptUploader({ className, showOnly, onTabChange, onNe
   const [paymentMethod, setPaymentMethod] = useState('');
   const [items, setItems] = useState([]);
   const [receipts, setReceipts] = useState([]);
+
+  const [expandedMonths, setExpandedMonths] = useState({}); // monthKey -> expanded
+
+  const isMonthExpanded = (key, groupObj) => {
+    const val = expandedMonths[key];
+    if (val === undefined) {
+      const now = new Date();
+      return groupObj.year === now.getFullYear() && groupObj.month === now.getMonth();
+    }
+    return !!val;
+  };
   const [totalExpenses, setTotalExpenses] = useState(0);
   const [categoryTotals, setCategoryTotals] = useState({});
   const [isOcrProcessing, setIsOcrProcessing] = useState(false);
@@ -1937,7 +1948,6 @@ export default function ReceiptUploader({ className, showOnly, onTabChange, onNe
       date: dateString,
       category: receipt.category || '',
       subtotal: receipt.subtotal ? safeParseFloat(receipt.subtotal) : '',
-      tax: receipt.tax ? safeParseFloat(receipt.tax) : '',
       payment_method: receipt.paymentMethod || '',
       currency: receipt.currency || 'EUR',
       items: receipt.items?.map(item => ({
@@ -2251,19 +2261,10 @@ Reply with a JSON object enclosed in triple backticks:
         currency: parsedJSON.currency || 'EUR',
         items: normalizedItems,
         subtotal: parsedJSON.subtotal ? parsedJSON.subtotal.replace(/[^\d.,]/g, '').replace(',', '.') : '',
-        tax: (() => { try { const raw = parsedJSON.vat ?? parsedJSON.tax ?? parsedJSON.iva ?? parsedJSON.tva ?? parsedJSON.gst ?? null; if (raw != null) { const s = String(raw).replace(/[^0-9.,-]/g,'').replace(',', '.'); const num = parseFloat(s); if (!isNaN(num)) return num; } } catch(e){} return undefined; })() // Will be calculated as total - subtotal if needed
+        tax: 0 // Will be calculated as total - subtotal if needed
       };
 
-      // Ensure VAT present if subtotal and total exist (compute from total - subtotal when missing/zero)
-      if ((ocrData.tax == null || Number.isNaN(ocrData.tax) || ocrData.tax <= 0) && ocrData.total && ocrData.subtotal) {
-        const t = parseFloat(ocrData.total);
-        const s = parseFloat(ocrData.subtotal);
-        const diff = (isNaN(t) || isNaN(s)) ? 0 : (t - s);
-        const vat = diff > 0 ? diff : 0;
-        const rounded = Number(vat.toFixed(2));
-        ocrData.tax = Math.abs(rounded) < 1e-6 ? 0 : rounded; // avoid -0
-      }
-// Offline-first queueing if offline, and attach group if selected
+      // Offline-first queueing if offline, and attach group if selected
       if (!navigator.onLine) {
         const localId = crypto.randomUUID();
         await queueReceipt({
@@ -2275,7 +2276,7 @@ Reply with a JSON object enclosed in triple backticks:
             date: ocrData.date,
             total: parseFloat(ocrData.total) || 0,
             subtotal: parseFloat(ocrData.subtotal) || 0,
-            vatAmount: (()=>{ const v = Number(ocrData.tax); return Number.isFinite(v) && v > 0 ? v : 0; })(),
+            vatAmount: undefined,
             category: ocrData.category,
             paymentMethod: ocrData.paymentMethod,
             currency: ocrData.currency,
@@ -3097,16 +3098,16 @@ Reply with a JSON object enclosed in triple backticks:
                         return (
                           <div key={monthKey} className="space-y-3">
                             {/* Month Header - World Class Modern Design */}
-                            <div className="sticky top-0 z-10 bg-gradient-to-r from-blue-900/90 via-slate-800/90 to-blue-900/90 backdrop-blur-md border border-blue-400/20 rounded-xl px-4 py-3 shadow-lg">
+                            <div onClick={() => setExpandedMonths(prev => ({ ...prev, [monthKey]: !isMonthExpanded(monthKey, group) }))} role="button" aria-expanded={isMonthExpanded(monthKey, group)} className="sticky top-0 z-10 bg-gradient-to-r from-blue-900/90 via-slate-800/90 to-blue-900/90 backdrop-blur-md border border-blue-400/20 rounded-xl px-4 py-3 shadow-lg cursor-pointer">
                               <div className="flex items-center justify-between">
                                 <h3 className="text-lg font-bold text-blue-100 tracking-wide">
                                   {currentMonthLabel}
                                 </h3>
-                                <div className="flex items-center space-x-2">
+                                <div className="flex items-center space-x-2" onClick={(e) => e.stopPropagation()}><button onClick={(e)=>{e.stopPropagation(); setExpandedMonths(prev=>({...prev, [monthKey]: !isMonthExpanded(monthKey, group) }));}} className="ml-2 inline-flex items-center justify-center w-7 h-7 rounded-full border border-blue-400/30 bg-blue-900/40 hover:bg-blue-900/60 transition\" aria-label="Toggle month"><ChevronDown className={`h-4 w-4 transition-transform ${isMonthExpanded(monthKey, group) ? '' : '-rotate-90'}`} /></button>
                                   {/* Total Spending */}
                                   <span className="text-sm text-blue-200/90 font-medium bg-blue-800/40 rounded px-2 py-1">
                                     {(() => {
-                                      // Use the calculated monthly totals for accurate base currency amounts
+                                       // Use the calculated monthly totals for accurate base currency amounts
                                       const monthKey = `${group.year}-${String(group.month + 1).padStart(2, '0')}`;
                                       const monthlyTotal = calculatedTotals.monthlyTotals[monthKey];
                                       if (monthlyTotal && monthlyTotal.total > 0) {
@@ -3191,7 +3192,7 @@ Reply with a JSON object enclosed in triple backticks:
                             </div>
                             
                             {/* Receipts for this month - sorted by transaction date (newest first) */}
-                            <div className="space-y-3 pl-2">
+                            {isMonthExpanded(monthKey, group) && (<div className="space-y-3 pl-2">
                               {group.receipts
                                 .filter(r => {
                                   if (!groupFilter) return true;
@@ -3233,6 +3234,7 @@ Reply with a JSON object enclosed in triple backticks:
                                 ))
                               }
                             </div>
+                            )}
                           </div>
                         );
                       });
