@@ -46,6 +46,12 @@ import { useSwipeable } from 'react-swipeable';
 import { queueReceipt } from '@/data/storage';
 import { metrics, startTimer, endTimerMs } from '@/lib/analytics';
 import { Switch } from './ui/switch';
+import { 
+  extractAddressFromText, 
+  parseAddress, 
+  rateLimitedGeocode 
+} from '@/utils/geocodingUtils';
+import MapWidget from './MapWidget';
 Chart.register(ArcElement, Tooltip, Legend, CategoryScale, LinearScale, PointElement, LineElement, TimeScale, Filler, BarElement, annotationPlugin);
 
 // Define supported currencies
@@ -945,10 +951,18 @@ export default function ReceiptUploader({ className, showOnly, onTabChange, onNe
 
     // Calculate tax if not manually entered (total - subtotal)
     let calculatedTax = parseFloat(activeFormData.tax) || 0;
-    if (!activeFormData.tax && activeFormData.total && activeFormData.subtotal) {
-      calculatedTax = parseFloat(activeFormData.total) - parseFloat(activeFormData.subtotal);
-      if (isNaN(calculatedTax) || calculatedTax < 0) calculatedTax = 0; // Ensure non-negative tax
+    
+    // If tax is not provided or is 0, calculate it from total and subtotal
+    if ((!activeFormData.tax || calculatedTax === 0) && activeFormData.total && activeFormData.subtotal) {
+      const total = parseFloat(activeFormData.total);
+      const subtotal = parseFloat(activeFormData.subtotal);
+      if (!isNaN(total) && !isNaN(subtotal) && total > subtotal) {
+        calculatedTax = total - subtotal;
+      }
     }
+    
+    // Ensure tax is never negative
+    if (calculatedTax < 0) calculatedTax = 0;
 
     // Convert transactionDate to Firestore Timestamp if it's a string
     let transactionDateValue;
@@ -1118,8 +1132,12 @@ export default function ReceiptUploader({ className, showOnly, onTabChange, onNe
 
       // Calculate tax if not provided
       let taxAmount = parseFloat(editForm.tax); // Use editForm.tax
-      if (isNaN(taxAmount) || editForm.tax === '') {
-        taxAmount = (parsedTotal - (parsedSubtotal || parsedTotal)).toFixed(2); // If subtotal exists, tax is total - subtotal, else 0
+      if (isNaN(taxAmount) || editForm.tax === '' || taxAmount === 0) {
+        if (parsedSubtotal && parsedSubtotal < parsedTotal) {
+          taxAmount = (parsedTotal - parsedSubtotal).toFixed(2);
+        } else {
+          taxAmount = '0.00';
+        }
       } else {
         taxAmount = taxAmount.toFixed(2);
       }
@@ -1620,8 +1638,8 @@ export default function ReceiptUploader({ className, showOnly, onTabChange, onNe
           <div>
                   <p className="text-xs text-blue-200/70">Tax</p>
                   <p className="text-base">
-                    {receipt.tax && !isNaN(parseFloat(receipt.tax)) ? parseFloat(receipt.tax).toFixed(2) : '-'}
-                    {receipt.tax && !isNaN(parseFloat(receipt.tax)) && receipt.currency !== (settings?.baseCurrency || 'EUR') && (
+                    {receipt.tax && parseFloat(receipt.tax) > 0 ? parseFloat(receipt.tax).toFixed(2) : '0.00'}
+                    {receipt.tax && parseFloat(receipt.tax) > 0 && receipt.currency !== (settings?.baseCurrency || 'EUR') && (
                       <AsyncCurrencyConversion 
                         amount={receipt.tax} 
                         currency={receipt.currency} 
@@ -1667,6 +1685,34 @@ export default function ReceiptUploader({ className, showOnly, onTabChange, onNe
               )}
               {receipt.note && (
                 <p className="text-xs text-blue-300/80 mt-1">{receipt.note}</p>
+              )}
+            </div>
+          </div>
+        )}
+        {/* Location Information */}
+        {(receipt.addressFromOCR || receipt.addressRaw || receipt.place?.display_name) && (
+          <div className="mt-2 p-3 bg-green-900/20 rounded-xl border border-green-800/30">
+            <p className="text-xs text-green-200/70 mb-1 flex items-center gap-1">
+              📍 Location
+              {receipt.geocodeStatus === 'ok' && (
+                <span className="text-xs bg-green-500/20 text-green-300 px-1 rounded">Precise</span>
+              )}
+              {receipt.geocodeStatus === 'approx' && (
+                <span className="text-xs bg-yellow-500/20 text-yellow-300 px-1 rounded">Approximate</span>
+              )}
+            </p>
+            <div className="text-sm text-green-200">
+              {receipt.place?.display_name ? (
+                <span>{receipt.place.display_name}</span>
+              ) : receipt.addressFromOCR ? (
+                <span>{receipt.addressFromOCR}</span>
+              ) : receipt.addressRaw ? (
+                <span>{receipt.addressRaw}</span>
+              ) : null}
+              {receipt.addressConfidence && (
+                <p className="text-xs text-green-300/80 mt-1">
+                  Confidence: {Math.round(receipt.addressConfidence * 100)}%
+                </p>
               )}
             </div>
           </div>
@@ -1993,7 +2039,20 @@ export default function ReceiptUploader({ className, showOnly, onTabChange, onNe
         imageUrl: '', // No image URL for auto-saved receipts
         category: ocrData.category || 'Uncategorized',
         createdAt: serverTimestamp(),
-        groupId: ocrData.groupId || null
+        groupId: ocrData.groupId || null,
+        // Location data
+        addressRaw: ocrData.addressRaw,
+        addressParsed: ocrData.addressParsed,
+        addressHash: ocrData.addressHash,
+        geocodeStatus: ocrData.geocodeStatus,
+        location: ocrData.location,
+        place: ocrData.place,
+        // Enhanced address information from OCR
+        addressFromOCR: ocrData.addressFromOCR,
+        addressConfidence: ocrData.addressConfidence,
+        addressSource: ocrData.addressSource,
+        addressComponents: ocrData.addressComponents,
+        addressNotes: ocrData.addressNotes
       };
 
       // Save to Firestore
@@ -2077,7 +2136,7 @@ export default function ReceiptUploader({ className, showOnly, onTabChange, onNe
               content: [
                 {
                   type: "text",
-                  text: `You are an expert receipt analysis system with specialized expertise in date detection and parsing. Analyze this receipt image and extract the following information in JSON format with particular attention to DATE DETECTION.
+                  text: `You are an expert receipt analysis system with specialized expertise in date detection, address extraction, and parsing. Analyze this receipt image and extract the following information in JSON format with particular attention to DATE DETECTION and ADDRESS EXTRACTION.
 
 ## EXPERT DATE DETECTION INSTRUCTIONS:
 
@@ -2130,6 +2189,55 @@ Recognize and handle these formats intelligently:
 - Validate day/month ranges (1-31 for days, 1-12 for months)
 - Handle leap years correctly
 
+## EXPERT ADDRESS EXTRACTION INSTRUCTIONS:
+
+### 1. ADDRESS LOCATION PRIORITY (in order of preference):
+- **Store header/logo area**: Often contains the main business address
+- **Contact information section**: Usually near the top or bottom
+- **Footer area**: May contain address details
+- **Tax information**: Sometimes includes business address
+- **Return policy section**: May include store location
+- **Website/phone area**: Often near address information
+
+### 2. ADDRESS COMPONENTS TO EXTRACT:
+Look for and extract these address elements:
+- **Street number and name**: "123 Main Street", "456 Avenue des Champs-Élysées"
+- **City**: "Paris", "London", "New York", "Berlin"
+- **Postal/ZIP code**: "75001", "SW1A 1AA", "10001", "10115"
+- **State/Province**: "California", "Bavaria", "Île-de-France"
+- **Country**: "France", "Germany", "United States", "United Kingdom"
+- **Phone numbers**: Often near address information
+- **Website/email**: May indicate business location
+
+### 3. MULTILINGUAL ADDRESS PATTERNS:
+Recognize address keywords in multiple languages:
+- **English**: "Address:", "Location:", "Store:", "Branch:"
+- **German**: "Adresse:", "Standort:", "Filiale:", "Geschäft:"
+- **French**: "Adresse:", "Localisation:", "Magasin:", "Succursale:"
+- **Spanish**: "Dirección:", "Ubicación:", "Tienda:", "Sucursal:"
+- **Italian**: "Indirizzo:", "Posizione:", "Negozio:", "Filiale:"
+- **Portuguese**: "Endereço:", "Localização:", "Loja:", "Filial:"
+- **Dutch**: "Adres:", "Locatie:", "Winkel:", "Filiaal:"
+
+### 4. ADDRESS FORMAT RECOGNITION:
+Handle various address formats:
+- **European**: "123 Rue de la Paix, 75001 Paris, France"
+- **American**: "456 Main St, New York, NY 10001"
+- **British**: "789 Oxford Street, London W1D 1BS"
+- **International**: "123 Champs-Élysées, 75008 Paris, France"
+
+### 5. ADDRESS VALIDATION:
+- Look for complete address lines (street + city + postal code)
+- Prefer addresses with postal codes (more precise for geocoding)
+- Avoid partial addresses or just phone numbers
+- Check for business names that might be confused with addresses
+
+### 6. ADDRESS CONFIDENCE SCORING:
+- **High confidence (0.8-1.0)**: Complete address with postal code
+- **Medium confidence (0.5-0.8)**: Address with city and country
+- **Low confidence (0.2-0.5)**: Partial address or just city
+- **No confidence (0.0-0.2)**: No address found or just phone number
+
 ## COMPLETE RECEIPT ANALYSIS:
 
 Extract the following information in JSON format:
@@ -2142,6 +2250,7 @@ Extract the following information in JSON format:
 6. **Payment Method** - Most likely payment method with confidence score
 7. **Currency** - 3-letter currency code (EUR, USD, GBP, etc.)
 8. **Items** - List of items with prices (include discounts as negative items)
+9. **Address** - Complete business address if found (for location mapping)
 
 ## DATE DETECTION CONFIDENCE:
 
@@ -2150,6 +2259,14 @@ For the date field, also include:
 - **date_source**: Where the date was found (e.g., "header", "transaction_line", "footer")
 - **date_format_detected**: The original format detected (e.g., "DD/MM/YYYY", "MM/DD/YYYY")
 - **date_notes**: Any relevant notes about date detection (e.g., "ambiguous format resolved using currency context")
+
+## ADDRESS DETECTION CONFIDENCE:
+
+For the address field, also include:
+- **address_confidence**: 0-1 score indicating confidence in address detection
+- **address_source**: Where the address was found (e.g., "header", "footer", "contact_info")
+- **address_components**: Breakdown of address parts found (e.g., {"street": "123 Main St", "city": "Paris", "postcode": "75001"})
+- **address_notes**: Any relevant notes about address detection (e.g., "complete address with postal code found")
 
 ## RESPONSE FORMAT:
 
@@ -2171,6 +2288,16 @@ Reply with a JSON object enclosed in triple backticks:
   "payment_method_reason": "VISA card number detected",
   "payment_method_confidence": 0.9,
   "currency": "EUR",
+  "address": "123 Main Street, 75001 Paris, France",
+  "address_confidence": 0.9,
+  "address_source": "header",
+  "address_components": {
+    "street": "123 Main Street",
+    "city": "Paris",
+    "postcode": "75001",
+    "country": "France"
+  },
+  "address_notes": "Complete address found in store header",
   "items": [
     {"name": "Item 1", "price": "10.00"},
     {"name": "Discount", "price": "-2.00"},
@@ -2179,7 +2306,7 @@ Reply with a JSON object enclosed in triple backticks:
 }
 \`\`\`
 
-**CRITICAL**: Always return the date in YYYY-MM-DD format regardless of how it appears on the receipt. Use your expert date detection skills to handle any format, language, or edge case.`
+**CRITICAL**: Always return the date in YYYY-MM-DD format regardless of how it appears on the receipt. Use your expert date detection skills to handle any format, language, or edge case. For addresses, provide the most complete and accurate address information available for location mapping.`
                 },
                 { type: "image_url", image_url: { url: base64 } }
               ]
@@ -2200,6 +2327,35 @@ Reply with a JSON object enclosed in triple backticks:
       }
 
       const parsedJSON = JSON.parse(jsonMatch[1]);
+
+      // Extract address from OCR response for geocoding
+      let addressRaw = null;
+      let geocodeResult = null;
+      
+      try {
+        // First try to get address from the structured OCR response
+        if (parsedJSON.address && parsedJSON.address_confidence > 0.5) {
+          addressRaw = parsedJSON.address;
+          console.log('Address found in OCR response:', addressRaw, 'Confidence:', parsedJSON.address_confidence);
+        } else {
+          // Fallback to extracting address from the full OCR text
+          addressRaw = extractAddressFromText(replyText);
+          console.log('Address extracted from OCR text:', addressRaw);
+        }
+        
+        if (addressRaw) {
+          // Parse and geocode the address
+          const addressParsed = parseAddress(addressRaw);
+          geocodeResult = await rateLimitedGeocode(addressRaw, addressParsed);
+          
+          if (geocodeResult) {
+            console.log('Geocoding successful:', geocodeResult.geocodeStatus, geocodeResult.location);
+          }
+        }
+      } catch (geocodeError) {
+        console.warn('Geocoding failed:', geocodeError);
+        // Continue without geocoding - this is not critical
+      }
 
       // Date detection details available
 
@@ -2261,7 +2417,20 @@ Reply with a JSON object enclosed in triple backticks:
         currency: parsedJSON.currency || 'EUR',
         items: normalizedItems,
         subtotal: parsedJSON.subtotal ? parsedJSON.subtotal.replace(/[^\d.,]/g, '').replace(',', '.') : '',
-        tax: 0 // Will be calculated as total - subtotal if needed
+        tax: 0, // Will be calculated as total - subtotal if needed
+        // Location data from geocoding
+        addressRaw: addressRaw,
+        addressParsed: geocodeResult?.addressParsed,
+        addressHash: geocodeResult?.addressHash,
+        geocodeStatus: geocodeResult?.geocodeStatus || 'pending',
+        // Enhanced address information from OCR
+        addressFromOCR: parsedJSON.address || null,
+        addressConfidence: parsedJSON.address_confidence || 0,
+        addressSource: parsedJSON.address_source || null,
+        addressComponents: parsedJSON.address_components || null,
+        addressNotes: parsedJSON.address_notes || null,
+        location: geocodeResult?.location,
+        place: geocodeResult?.place
       };
 
       // Offline-first queueing if offline, and attach group if selected
@@ -3299,7 +3468,7 @@ Reply with a JSON object enclosed in triple backticks:
                     />
                       {!activeFormData.merchant && (
                         <div className="absolute -bottom-6 left-0 flex items-center gap-1 text-xs text-yellow-200">
-                          <AlertCircle className="h-3.5 w-3.5" /> We’re not sure about this one.
+                          <AlertCircle className="h-3.5 w-3.5" /> We're not sure about this one.
                         </div>
                       )}
                     </div>
@@ -3334,36 +3503,39 @@ Reply with a JSON object enclosed in triple backticks:
                       <span className="ml-2 text-blue-200 text-sm">{getCurrencySymbol(activeFormData.currency)}</span>
                       {!activeFormData.total && (
                         <div className="absolute -bottom-5 left-0 flex items-center gap-1 text-xs text-yellow-200">
-                          <AlertCircle className="h-3.5 w-3.5" /> We’re not sure about this one.
+                          <AlertCircle className="h-3.5 w-3.5" /> We're not sure about this one.
                         </div>
                       )}
                     </div>
                     {formErrors.total && <p className="text-red-400 text-xs mt-1 animate-fade-in duration-200 ease-in-out">{formErrors.total}</p>}
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="tax">VAT</Label>
-                    <Input
-                      id="tax"
-                      name="tax"
-                      type="text"
-                      inputMode="decimal"
-                      placeholder="0.00"
-                      value={activeFormData.tax || ''}
-                      onChange={e => {
-                        const value = e.target.value;
-                        if (/^[\d.,]*$/.test(value) || value === '') {
-                          handleFormInputChange(e);
-                        }
-                      }}
-                      onBlur={e => {
-                        const value = e.target.value.replace(',', '.');
-                        const parsed = parseFloat(value);
-                        if (!isNaN(parsed)) {
-                          handleFormInputChange({ target: { name: 'tax', value: parsed.toFixed(2) } });
-                        }
-                      }}
-                      className="w-full bg-slate-800/90 border border-blue-700/40 text-white text-right focus:border-blue-400 focus:ring-2 focus:ring-blue-400 focus:bg-blue-950/80 transition-all duration-200 ease-in-out rounded-xl shadow-inner px-4 py-3 text-base placeholder-blue-200/60 outline-none font-mono"
-                    />
+                    <Label htmlFor="tax" className="text-blue-200">Tax</Label>
+                    <div className="flex items-center">
+                      <Input
+                        id="tax"
+                        name="tax"
+                        type="text"
+                        inputMode="decimal"
+                        placeholder="0.00"
+                        value={activeFormData.tax || ''}
+                        onChange={e => {
+                          const value = e.target.value;
+                          if (/^[\d.,]*$/.test(value) || value === '') {
+                            handleFormInputChange(e);
+                          }
+                        }}
+                        onBlur={e => {
+                          const value = e.target.value.replace(',', '.');
+                          const parsed = parseFloat(value);
+                          if (!isNaN(parsed)) {
+                            handleFormInputChange({ target: { name: 'tax', value: parsed.toFixed(2) } });
+                          }
+                        }}
+                        className="w-full bg-slate-800/90 border border-blue-700/40 text-white text-right focus:border-blue-400 focus:ring-2 focus:ring-blue-400 focus:bg-blue-950/80 transition-all duration-200 ease-in-out rounded-xl shadow-inner px-4 py-3 text-base placeholder-blue-200/60 outline-none font-mono"
+                      />
+                      <span className="ml-2 text-blue-200 text-sm">{getCurrencySymbol(activeFormData.currency)}</span>
+                    </div>
                   </div>
                    <div className="space-y-2 relative">
                     <Label htmlFor="subtotal">Subtotal <span className="text-blue-200/60">(Optional)</span></Label>
@@ -3395,7 +3567,7 @@ Reply with a JSON object enclosed in triple backticks:
                     </div>
                     {(!activeFormData.subtotal && activeFormData.total) && (
                       <div className="absolute -bottom-4 left-0 flex items-center gap-1 text-xs text-blue-300/80">
-                        <AlertCircle className="h-3.5 w-3.5" /> Optional. We’ll compute VAT from totals if needed.
+                        <AlertCircle className="h-3.5 w-3.5" /> Optional. We'll compute VAT from totals if needed.
                       </div>
                     )}
                   </div>
@@ -4223,6 +4395,19 @@ export function ExpensesDashboard({ totalExpenses, categoryTotals, formatCurrenc
             );
           })}
         </div>
+        
+        {/* Map Widget */}
+        <div className="w-full mb-4">
+          <MapWidget onViewMap={() => {
+            // Use a global event to avoid referencing potentially undefined variables
+            try {
+              console.log('[MapWidget] requestTabChange -> map');
+              document.dispatchEvent(new CustomEvent('requestTabChange', { detail: 'map' }));
+            } catch (e) {
+              console.warn('Failed to dispatch requestTabChange', e);
+            }
+          }} />
+        </div>
       </div>
     </div>
   );
@@ -4284,14 +4469,19 @@ export function ReceiptsList({ receipts, renderReceiptCard, isFirestoreLoading, 
 
 function InsightsSection({ receipts = [], categoryTotals = {}, calculatedTotals = {}, formatCurrency, settings }) {
   const [period, setPeriod] = useState('week');
-  const [currentOffset, setCurrentOffset] = useState(0); // 0 = current, -1 = previous, 1 = next, etc.
+  const [currentOffset, setCurrentOffset] = useState(0);
+  const [showComparison, setShowComparison] = useState(false);
+  const [comparisonType, setComparisonType] = useState('category');
+  const [comparisonCategoryA, setComparisonCategoryA] = useState('');
+  const [comparisonCategoryB, setComparisonCategoryB] = useState('');
+  const [comparisonPeriodType, setComparisonPeriodType] = useState('week');
+  const [comparisonPeriodOffset, setComparisonPeriodOffset] = useState(0);
 
   // Helper to robustly normalize a date string/object to local midnight
   const normalizeToLocalMidnight = (d) => {
     if (!d) return null;
-    if (typeof d.toDate === 'function') { d = d.toDate(); } // Handle Firestore Timestamps
+    if (typeof d.toDate === 'function') { d = d.toDate(); }
     if (typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d)) {
-      // Parse as local date (YYYY-MM-DD)
       const [year, month, day] = d.split('-').map(Number);
       return new Date(year, month - 1, day);
     }
@@ -4301,17 +4491,9 @@ function InsightsSection({ receipts = [], categoryTotals = {}, calculatedTotals 
   };
 
   // Navigation functions
-  const navigatePrevious = () => {
-    setCurrentOffset(prev => prev - 1);
-  };
-
-  const navigateNext = () => {
-    setCurrentOffset(prev => prev + 1);
-  };
-
-  const navigateToCurrent = () => {
-    setCurrentOffset(0);
-  };
+  const navigatePrevious = () => setCurrentOffset(prev => prev - 1);
+  const navigateNext = () => setCurrentOffset(prev => prev + 1);
+  const navigateToCurrent = () => setCurrentOffset(0);
 
   // --- Date helpers ---
   const today = new Date();
@@ -4319,13 +4501,11 @@ function InsightsSection({ receipts = [], categoryTotals = {}, calculatedTotals 
   const weekStartsOn = (settings?.weekStartsOn || 'monday').toLowerCase();
   
   if (period === 'week') {
-    // For week view, calculate based on offset
     const targetDate = new Date(today);
     targetDate.setDate(today.getDate() + (currentOffset * 7));
     
     periodStart = new Date(targetDate);
     periodStart.setHours(0, 0, 0, 0);
-    // 0 = Sunday, 1 = Monday
     let dayOfWeek = targetDate.getDay();
     let offset = weekStartsOn === 'monday' ? (dayOfWeek === 0 ? -6 : 1 - dayOfWeek) : -dayOfWeek;
     periodStart.setDate(targetDate.getDate() + offset);
@@ -4335,39 +4515,33 @@ function InsightsSection({ receipts = [], categoryTotals = {}, calculatedTotals 
     const formatShort = d => d.toLocaleDateString(undefined, { day: '2-digit', month: 'short' });
     periodLabel = `${formatShort(periodStart)} - ${formatShort(periodEnd)}`.replace(/\b[a-z]/g, letter => letter.toUpperCase());
   } else if (period === 'month') {
-    // For month view, calculate based on offset
     const targetDate = new Date(today.getFullYear(), today.getMonth() + currentOffset, 1);
     periodStart = new Date(targetDate.getFullYear(), targetDate.getMonth(), 1, 0, 0, 0, 0);
     periodEnd = new Date(targetDate.getFullYear(), targetDate.getMonth() + 1, 0, 23, 59, 59, 999);
     const formatShort = d => d.toLocaleDateString(undefined, { day: '2-digit', month: 'short' });
     periodLabel = `${formatShort(periodStart)} - ${formatShort(periodEnd)}`.replace(/\b[a-z]/g, letter => letter.toUpperCase());
   } else {
-    // For year view, calculate based on offset
     const targetYear = today.getFullYear() + currentOffset;
-    periodStart = new Date(targetYear, 0, 1, 0, 0, 0, 0); // January 1st
-    periodEnd = new Date(targetYear, 11, 31, 23, 59, 59, 999); // December 31st
+    periodStart = new Date(targetYear, 0, 1, 0, 0, 0, 0);
+    periodEnd = new Date(targetYear, 11, 31, 23, 59, 59, 999);
     periodLabel = targetYear.toString();
   }
 
-  // Calculate period receipts with historical conversion - using useMemo to prevent infinite loops
+  // Calculate period receipts with location data
   const periodReceipts = useMemo(() => {
     const filteredReceipts = receipts.filter(r => {
-    const d = normalizeToLocalMidnight(r.transactionDate || r.date);
-    return d && d >= periodStart && d <= periodEnd;
-  });
+      const d = normalizeToLocalMidnight(r.transactionDate || r.date);
+      return d && d >= periodStart && d <= periodEnd;
+    });
 
-    // Use calculated totals to get accurate base currency amounts for the period
     return filteredReceipts.map(r => {
       const date = normalizeToLocalMidnight(r.transactionDate || r.date);
       let totalBaseCurrency = parseFloat(r.total) || 0;
       
-      // If the receipt currency is different from base currency, we need to estimate the conversion
-      // For now, use a simple approach: if we have calculated totals for this month, use the average
       if (date && r.currency !== (settings?.baseCurrency || 'EUR') && calculatedTotals.monthlyTotals) {
         const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
         const monthlyTotal = calculatedTotals.monthlyTotals[monthKey];
         if (monthlyTotal && monthlyTotal.total > 0) {
-          // This is an approximation - ideally we'd have individual receipt conversions
           const originalTotal = filteredReceipts
             .filter(r2 => {
               const d2 = normalizeToLocalMidnight(r2.transactionDate || r2.date);
@@ -4390,19 +4564,24 @@ function InsightsSection({ receipts = [], categoryTotals = {}, calculatedTotals 
     });
   }, [receipts, periodStart, periodEnd, period, currentOffset, calculatedTotals, settings?.baseCurrency]);
 
-  // Use the unified category colors from the top of the file
+
+
+  const allCategories = useMemo(() => {
+    return Array.from(new Set(periodReceipts.map(r => r.category || 'Uncategorized')));
+  }, [periodReceipts]);
+
+  // Use the unified category colors
   const allCategoryColors = categoryColors;
 
-  // --- New Data Structuring for Rich Tooltips ---
+  // --- Smart Data Structuring for Location-Based Analysis ---
   let dailyData, labelsWithDates;
 
   if (period === 'week') {
-    // Calculate the weekday indices for the week (0=Sunday, 1=Monday, ...)
     let weekDays = [];
     if (weekStartsOn === 'monday') {
-      weekDays = [1,2,3,4,5,6,0]; // Mon-Sun
+      weekDays = [1,2,3,4,5,6,0];
     } else {
-      weekDays = [0,1,2,3,4,5,6]; // Sun-Sat
+      weekDays = [0,1,2,3,4,5,6];
     }
     const weekDates = weekDays.map((weekday, i) => {
       const d = new Date(periodStart);
@@ -4413,17 +4592,19 @@ function InsightsSection({ receipts = [], categoryTotals = {}, calculatedTotals 
       short: d.toLocaleDateString(undefined, { weekday: 'short' })[0],
       full: d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric' })
     }));
-    dailyData = weekDays.map(() => ({ categories: {}, total: 0 }));
+    dailyData = weekDays.map(() => ({ categories: {}, locations: {}, total: 0 }));
 
     periodReceipts.forEach(r => {
       const date = normalizeToLocalMidnight(r.transactionDate || r.date);
       if (date) {
-        // Find the index in weekDates that matches this date
         const dayIndex = weekDates.findIndex(d => d.getTime() === date.getTime());
         if (dayIndex !== -1) {
           const category = r.category || 'Uncategorized';
-          const amount = r.totalBaseCurrency || parseFloat(r.total) || 0; // Use base currency amount for calculations
+          const amount = r.totalBaseCurrency || parseFloat(r.total) || 0;
+          const location = r.place?.display_name || r.addressParsed?.city || 'Unknown';
+          
           dailyData[dayIndex].categories[category] = (dailyData[dayIndex].categories[category] || 0) + amount;
+          dailyData[dayIndex].locations[location] = (dailyData[dayIndex].locations[location] || 0) + amount;
           dailyData[dayIndex].total += amount;
         }
       }
@@ -4437,10 +4618,7 @@ function InsightsSection({ receipts = [], categoryTotals = {}, calculatedTotals 
         full: d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric' })
       };
     });
-    dailyData = Array.from({ length: daysInMonth }, () => ({ categories: {}, total: 0 }));
-
-    // Group expenses and reimbursements by group for daily data
-    const dailyGroupNetExpenses = {};
+    dailyData = Array.from({ length: daysInMonth }, () => ({ categories: {}, locations: {}, total: 0 }));
 
     periodReceipts.forEach(r => {
       const date = normalizeToLocalMidnight(r.date || r.transactionDate || r.createdAt);
@@ -4448,85 +4626,23 @@ function InsightsSection({ receipts = [], categoryTotals = {}, calculatedTotals 
         const dayIndex = date.getDate() - 1;
         if (dayIndex >= 0 && dayIndex < daysInMonth) {
           const amount = parseFloat(r.total) || 0;
-          
-          // Check if this is a group-related receipt
-          const isGroupReceipt = r.isGroupExpense || 
-                                r.category === 'Group Expense' || 
-                                r.category === 'Reimbursement' ||
-                                (r.note && r.note.includes('Group:'));
-          
-          if (isGroupReceipt && r.groupId) {
-            // Group expense or reimbursement
-            if (!dailyGroupNetExpenses[r.groupId]) {
-              // Extract group name from note
-              let groupName = 'Unknown Group';
-              if (r.note && r.note.includes('Group: ')) {
-                groupName = r.note.split('Group: ')[1].split(' -')[0];
-              } else if (r.note && r.note.includes('Family')) {
-                groupName = 'Family';
-              } else if (r.merchant && r.merchant.includes('ALDI')) {
-                groupName = 'Family';
-              }
-              
-              dailyGroupNetExpenses[r.groupId] = {
-                groupName: groupName,
-                expenses: 0,
-                reimbursements: 0,
-                net: 0
-              };
-            }
-            
-            const isReimbursement = r.isReimbursement;
-            
-            if (isReimbursement) {
-              dailyGroupNetExpenses[r.groupId].reimbursements += amount;
-            } else {
-              dailyGroupNetExpenses[r.groupId].expenses += Math.abs(amount);
-            }
-          } else {
-            // Personal expense (not group-related)
           const category = r.category || 'Uncategorized';
+          const location = r.place?.display_name || r.addressParsed?.city || 'Unknown';
+          
           dailyData[dayIndex].categories[category] = (dailyData[dayIndex].categories[category] || 0) + amount;
+          dailyData[dayIndex].locations[location] = (dailyData[dayIndex].locations[location] || 0) + amount;
           dailyData[dayIndex].total += amount;
-          }
         }
       }
     });
-    
-    // Add group net expenses to daily data
-    Object.values(dailyGroupNetExpenses).forEach(group => {
-      group.net = -group.expenses + group.reimbursements;
-      if (group.net !== 0) {
-        // Find the day this group expense occurred (use first receipt date)
-        const groupReceipt = periodReceipts.find(r => 
-          (r.isGroupExpense || r.category === 'Group Expense') && 
-          r.groupId === Object.keys(dailyGroupNetExpenses).find(key => dailyGroupNetExpenses[key] === group)
-        );
-        
-        if (groupReceipt) {
-          const date = normalizeToLocalMidnight(groupReceipt.date || groupReceipt.transactionDate || groupReceipt.createdAt);
-          if (date) {
-            const dayIndex = date.getDate() - 1;
-            if (dayIndex >= 0 && dayIndex < daysInMonth) {
-              dailyData[dayIndex].categories[group.groupName] = (dailyData[dayIndex].categories[group.groupName] || 0) + group.net;
-              dailyData[dayIndex].total += group.net;
-            }
-          }
-        }
-      }
-    });
-  } else { // year
-    // For year view, group by months
+  } else {
     const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     const targetYear = today.getFullYear() + currentOffset;
     labelsWithDates = months.map((month, i) => ({
       short: month,
       full: `${month} ${targetYear}`
     }));
-    dailyData = Array.from({ length: 12 }, () => ({ categories: {}, total: 0 }));
-
-    // Group expenses and reimbursements by group for year data
-    const yearlyGroupNetExpenses = {};
+    dailyData = Array.from({ length: 12 }, () => ({ categories: {}, locations: {}, total: 0 }));
 
     periodReceipts.forEach(r => {
       const date = normalizeToLocalMidnight(r.transactionDate || r.date);
@@ -4534,70 +4650,12 @@ function InsightsSection({ receipts = [], categoryTotals = {}, calculatedTotals 
         const monthIndex = date.getMonth();
         if (monthIndex >= 0 && monthIndex < 12) {
           const amount = parseFloat(r.total) || 0;
-          
-          // Check if this is a group-related receipt
-          const isGroupReceipt = r.isGroupExpense || 
-                                r.category === 'Group Expense' || 
-                                r.category === 'Reimbursement' ||
-                                (r.note && r.note.includes('Group:'));
-          
-          if (isGroupReceipt && r.groupId) {
-            // Group expense or reimbursement
-            if (!yearlyGroupNetExpenses[r.groupId]) {
-              // Extract group name from note
-              let groupName = 'Unknown Group';
-              if (r.note && r.note.includes('Group: ')) {
-                groupName = r.note.split('Group: ')[1].split(' -')[0];
-              } else if (r.note && r.note.includes('Family')) {
-                groupName = 'Family';
-              } else if (r.merchant && r.merchant.includes('ALDI')) {
-                groupName = 'Family';
-              }
-              
-              yearlyGroupNetExpenses[r.groupId] = {
-                groupName: groupName,
-                expenses: 0,
-                reimbursements: 0,
-                net: 0
-              };
-            }
-            
-            const isReimbursement = r.isReimbursement;
-            
-            if (isReimbursement) {
-              yearlyGroupNetExpenses[r.groupId].reimbursements += amount;
-            } else {
-              yearlyGroupNetExpenses[r.groupId].expenses += Math.abs(amount);
-            }
-          } else {
-            // Personal expense (not group-related)
           const category = r.category || 'Uncategorized';
+          const location = r.place?.display_name || r.addressParsed?.city || 'Unknown';
+          
           dailyData[monthIndex].categories[category] = (dailyData[monthIndex].categories[category] || 0) + amount;
+          dailyData[monthIndex].locations[location] = (dailyData[monthIndex].locations[location] || 0) + amount;
           dailyData[monthIndex].total += amount;
-          }
-        }
-      }
-    });
-    
-    // Add group net expenses to yearly data
-    Object.values(yearlyGroupNetExpenses).forEach(group => {
-      group.net = -group.expenses + group.reimbursements;
-      if (group.net !== 0) {
-        // Find the month this group expense occurred (use first receipt date)
-        const groupReceipt = periodReceipts.find(r => 
-          (r.isGroupExpense || r.category === 'Group Expense') && 
-          r.groupId === Object.keys(yearlyGroupNetExpenses).find(key => yearlyGroupNetExpenses[key] === group)
-        );
-        
-        if (groupReceipt) {
-          const date = normalizeToLocalMidnight(groupReceipt.transactionDate || groupReceipt.date);
-          if (date) {
-            const monthIndex = date.getMonth();
-            if (monthIndex >= 0 && monthIndex < 12) {
-              dailyData[monthIndex].categories[group.groupName] = (dailyData[monthIndex].categories[group.groupName] || 0) + group.net;
-              dailyData[monthIndex].total += group.net;
-            }
-          }
         }
       }
     });
@@ -4609,84 +4667,192 @@ function InsightsSection({ receipts = [], categoryTotals = {}, calculatedTotals 
                      period === 'month' ? (chartTotals.length > 0 ? expenses / chartTotals.length : 0) :
                      period === 'year' ? expenses / 365 : 0;
   
-  // Calculate category totals using smart grouping (same logic as main dashboard)
+  // Calculate category and location totals
   const periodCategoryTotals = {};
-  
-  // Group expenses and reimbursements by group
-  const groupNetExpenses = {};
+  const periodLocationTotals = {};
   
   periodReceipts.forEach(receipt => {
     const amount = parseFloat(receipt.total) || 0;
+    const category = receipt.category || 'Uncategorized';
+    const location = receipt.place?.display_name || receipt.addressParsed?.city || 'Unknown';
     
-    // Check if this is a group-related receipt
-    const isGroupReceipt = receipt.isGroupExpense || 
-                          receipt.category === 'Group Expense' || 
-                          (receipt.note && receipt.note.includes('Group:'));
-    
-    if (isGroupReceipt && receipt.groupId) {
-      // Group expense or reimbursement
-      if (!groupNetExpenses[receipt.groupId]) {
-        // Extract group name from note
-        let groupName = 'Unknown Group';
-        if (receipt.note && receipt.note.includes('Group: ')) {
-          groupName = receipt.note.split('Group: ')[1].split(' -')[0];
-        } else if (receipt.note && receipt.note.includes('Family')) {
-          groupName = 'Family';
-        } else if (receipt.merchant && receipt.merchant.includes('ALDI')) {
-          groupName = 'Family';
-        }
-        
-        groupNetExpenses[receipt.groupId] = {
-          groupName: groupName,
-          expenses: 0,
-          reimbursements: 0,
-          net: 0
-        };
-      }
-      
-      const isReimbursement = receipt.isReimbursement || receipt.category === 'Reimbursement';
-      
-      if (isReimbursement) {
-        groupNetExpenses[receipt.groupId].reimbursements += amount;
-      } else {
-        groupNetExpenses[receipt.groupId].expenses += Math.abs(amount);
-      }
-    } else {
-      // Personal expense (not group-related)
-      const cat = receipt.category || 'Uncategorized';
-      periodCategoryTotals[cat] = (periodCategoryTotals[cat] || 0) + amount;
-    }
-  });
-  
-  // Add group net expenses by group name
-  Object.values(groupNetExpenses).forEach(group => {
-    group.net = -group.expenses + group.reimbursements;
-    if (group.net !== 0) {
-      periodCategoryTotals[group.groupName] = (periodCategoryTotals[group.groupName] || 0) + group.net;
-    }
+    periodCategoryTotals[category] = (periodCategoryTotals[category] || 0) + amount;
+    periodLocationTotals[location] = (periodLocationTotals[location] || 0) + amount;
   });
   
   const total = expenses;
 
   // Calculate dynamic y-axis max value
   const maxValue = Math.max(...chartTotals);
-  const yAxisMax = maxValue > 0 ? Math.ceil(maxValue * 1.2) : 100; // Add 20% padding, minimum 100
+  const yAxisMax = maxValue > 0 ? Math.ceil(maxValue * 1.2) : 100;
+
+  // --- Smart Comparison Datasets ---
+  let comparisonBarDatasets = null;
+  if (showComparison) {
+    if (comparisonType === 'category' && comparisonCategoryA && comparisonCategoryB) {
+      // Category comparison: two datasets, one for each category
+      const catData = [comparisonCategoryA, comparisonCategoryB].map((cat, idx) => {
+        let data = labelsWithDates.map((_, i) => 0);
+        periodReceipts.forEach(r => {
+          if ((r.category || 'Uncategorized') === cat) {
+            const date = normalizeToLocalMidnight(r.transactionDate || r.date);
+            let idxDate = -1;
+            if (period === 'week') {
+              const weekDays = [1,2,3,4,5,6,0];
+              const weekDates = weekDays.map((weekday, i) => { 
+                const d = new Date(periodStart); 
+                d.setDate(periodStart.getDate() + i); 
+                return d; 
+              });
+              idxDate = weekDates.findIndex(d => d.getTime() === date.getTime());
+            } else if (period === 'month') {
+              idxDate = date.getDate() - 1;
+            } else {
+              idxDate = date.getMonth();
+            }
+            if (idxDate >= 0 && idxDate < data.length) {
+              data[idxDate] += parseFloat(r.total) || 0;
+            }
+          }
+        });
+        return {
+          label: cat,
+          data,
+          backgroundColor: idx === 0 ? '#6366F1' : '#F59E42',
+          borderRadius: 12,
+          barPercentage: 0.6,
+          categoryPercentage: 0.7,
+          borderSkipped: false,
+          stack: undefined,
+        };
+      });
+      comparisonBarDatasets = catData;
+    } else if (comparisonType === 'period') {
+      // Smart period comparison: compare current period with previous period of same type
+      const currentPeriodData = dailyData.map(dayData => dayData.total);
+      
+      // Calculate previous period data based on comparisonPeriodType
+      let previousPeriodData = [];
+      if (comparisonPeriodType === 'week') {
+        // Compare with previous week
+        const prevWeekStart = new Date(periodStart);
+        prevWeekStart.setDate(periodStart.getDate() - 7);
+        const prevWeekEnd = new Date(periodEnd);
+        prevWeekEnd.setDate(periodEnd.getDate() - 7);
+        
+        const prevWeekReceipts = receipts.filter(r => {
+          const d = normalizeToLocalMidnight(r.transactionDate || r.date);
+          return d && d >= prevWeekStart && d <= prevWeekEnd;
+        });
+        
+        // Build previous week data
+        const weekDays = [1,2,3,4,5,6,0];
+        const prevWeekDates = weekDays.map((weekday, i) => {
+          const d = new Date(prevWeekStart);
+          d.setDate(prevWeekStart.getDate() + i);
+          return d;
+        });
+        
+        previousPeriodData = weekDays.map(() => 0);
+        prevWeekReceipts.forEach(r => {
+          const date = normalizeToLocalMidnight(r.transactionDate || r.date);
+          if (date) {
+            const dayIndex = prevWeekDates.findIndex(d => d.getTime() === date.getTime());
+            if (dayIndex !== -1) {
+              previousPeriodData[dayIndex] += parseFloat(r.total) || 0;
+            }
+          }
+        });
+        
+      } else if (comparisonPeriodType === 'month') {
+        // Compare with previous month
+        const prevMonthStart = new Date(periodStart.getFullYear(), periodStart.getMonth() - 1, 1);
+        const prevMonthEnd = new Date(periodStart.getFullYear(), periodStart.getMonth(), 0);
+        
+        const prevMonthReceipts = receipts.filter(r => {
+          const d = normalizeToLocalMidnight(r.transactionDate || r.date);
+          return d && d >= prevMonthStart && d <= prevMonthEnd;
+        });
+        
+        // Build previous month data
+        const daysInPrevMonth = prevMonthEnd.getDate();
+        previousPeriodData = Array.from({ length: daysInPrevMonth }, () => 0);
+        
+        prevMonthReceipts.forEach(r => {
+          const date = normalizeToLocalMidnight(r.transactionDate || r.date);
+          if (date) {
+            const dayIndex = date.getDate() - 1;
+            if (dayIndex >= 0 && dayIndex < daysInPrevMonth) {
+              previousPeriodData[dayIndex] += parseFloat(r.total) || 0;
+            }
+          }
+        });
+        
+      } else if (comparisonPeriodType === 'year') {
+        // Compare with previous year
+        const prevYearStart = new Date(periodStart.getFullYear() - 1, 0, 1);
+        const prevYearEnd = new Date(periodStart.getFullYear() - 1, 11, 31);
+        
+        const prevYearReceipts = receipts.filter(r => {
+          const d = normalizeToLocalMidnight(r.transactionDate || r.date);
+          return d && d >= prevYearStart && d <= prevYearEnd;
+        });
+        
+        // Build previous year data
+        previousPeriodData = Array.from({ length: 12 }, () => 0);
+        
+        prevYearReceipts.forEach(r => {
+          const date = normalizeToLocalMidnight(r.transactionDate || r.date);
+          if (date) {
+            const monthIndex = date.getMonth();
+            if (monthIndex >= 0 && monthIndex < 12) {
+              previousPeriodData[monthIndex] += parseFloat(r.total) || 0;
+            }
+          }
+        });
+      }
+      
+      // Create comparison datasets
+      comparisonBarDatasets = [
+        {
+          label: `Current ${comparisonPeriodType}`,
+          data: currentPeriodData,
+          backgroundColor: '#6366F1',
+          borderRadius: 12,
+          barPercentage: 0.6,
+          categoryPercentage: 0.7,
+          borderSkipped: false,
+          stack: undefined,
+        },
+        {
+          label: `Previous ${comparisonPeriodType}`,
+          data: previousPeriodData,
+          backgroundColor: '#F59E42',
+          borderRadius: 12,
+          barPercentage: 0.6,
+          categoryPercentage: 0.7,
+          borderSkipped: false,
+          stack: undefined,
+        }
+      ];
+    }
+  }
 
   // Get all unique categories from the period
-  const allCategories = [...new Set(Object.keys(periodCategoryTotals))];
+  const allCategoriesFromPeriod = [...new Set(Object.keys(periodCategoryTotals))];
   
   // Create stacked bar chart datasets
-  const barDatasets = allCategories.map(category => {
+  const barDatasets = comparisonBarDatasets || allCategoriesFromPeriod.map(category => {
     const categoryData = dailyData.map(dayData => dayData.categories[category] || 0);
     return {
       label: category,
       data: categoryData,
       backgroundColor: allCategoryColors[category] || '#9ca3af',
-        borderRadius: 12,
-        barPercentage: 0.6,
-        categoryPercentage: 0.7,
-        borderSkipped: false,
-      stack: 'stack0', // This makes it a stacked bar
+      borderRadius: 12,
+      barPercentage: 0.6,
+      categoryPercentage: 0.7,
+      borderSkipped: false,
+      stack: 'stack0',
     };
   });
 
@@ -4773,7 +4939,6 @@ function InsightsSection({ receipts = [], categoryTotals = {}, calculatedTotals 
           callback: function(value) {
             return formatCurrency(Math.round(value), settings?.baseCurrency || 'EUR');
           },
-          // Dynamic step size based on data range
           stepSize: maxValue > 1000 ? Math.ceil(maxValue / 5) : 
                    maxValue > 100 ? Math.ceil(maxValue / 4) : 
                    maxValue > 10 ? Math.ceil(maxValue / 3) : 1
@@ -4790,12 +4955,18 @@ function InsightsSection({ receipts = [], categoryTotals = {}, calculatedTotals 
     const percent = total ? ((periodCategoryTotals[cat] / total) * 100).toFixed(1) : 0;
     return { name: cat, color: allCategoryColors[cat] || '#9ca3af', percent };
   });
-  
+
+  // Location insights
+  const topLocations = Object.entries(periodLocationTotals)
+    .sort(([,a], [,b]) => b - a)
+    .slice(0, 5)
+    .map(([location, amount]) => ({ location, amount }));
+
   return (
-    <div className="w-full max-w-2xl mx-auto mt-2 mb-4 px-2">
+    <div className="w-full max-w-4xl mx-auto mt-2 mb-4 px-2">
       <div className="bg-white/90 text-gray-900 shadow-xl rounded-2xl border border-gray-200 p-6 flex flex-col items-center">
         {/* Header */}
-        <div className="w-full flex flex-row items-center justify-between mb-2">
+        <div className="w-full flex flex-row items-center justify-between mb-4">
           <div className="text-lg font-bold">Insights</div>
           <div className="flex items-center gap-2">
             {/* Previous Arrow */}
@@ -4810,15 +4981,15 @@ function InsightsSection({ receipts = [], categoryTotals = {}, calculatedTotals 
             </button>
             
             {/* Period Dropdown */}
-          <select
+            <select
               className="bg-gray-100 rounded-lg px-3 py-1 text-sm font-semibold border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-400"
-            value={period}
-            onChange={e => setPeriod(e.target.value)}
-          >
-            <option value="week">week</option>
-            <option value="month">month</option>
-              <option value="year">year</option>
-          </select>
+              value={period}
+              onChange={e => setPeriod(e.target.value)}
+            >
+              <option value="week">Week</option>
+              <option value="month">Month</option>
+              <option value="year">Year</option>
+            </select>
             
             {/* Next Arrow - only show when not on current period */}
             {currentOffset < 0 && (
@@ -4843,8 +5014,82 @@ function InsightsSection({ receipts = [], categoryTotals = {}, calculatedTotals 
                 Today
               </button>
             )}
+
+            {/* Comparison Toggle */}
+            <button
+              onClick={() => setShowComparison(!showComparison)}
+              className={`px-3 py-1 text-xs font-medium rounded transition-colors duration-200 ${
+                showComparison 
+                  ? 'bg-blue-600 text-white' 
+                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+              }`}
+              title="Toggle comparison mode"
+            >
+              Compare
+            </button>
           </div>
         </div>
+
+        {/* Comparison Mode Controls */}
+        {showComparison && (
+          <div className="w-full flex flex-col gap-3 mb-4 p-4 bg-blue-50 rounded-xl border border-blue-200">
+            <div className="flex flex-row gap-2 items-center justify-center">
+              <span className="text-xs font-semibold text-blue-700">Compare:</span>
+                             <select
+                 className="bg-white rounded-full px-3 py-1 text-xs font-semibold border border-blue-300 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                 value={comparisonType}
+                 onChange={e => setComparisonType(e.target.value)}
+               >
+                 <option value="category">Categories</option>
+                 <option value="period">Periods</option>
+               </select>
+            </div>
+            
+            
+
+            {/* Category Comparison */}
+            {comparisonType === 'category' && (
+              <div className="flex flex-row gap-2 items-center justify-center">
+                <select
+                  className="bg-blue-100 rounded-full px-3 py-1 text-xs font-semibold border border-blue-300 focus:outline-none"
+                  value={comparisonCategoryA}
+                  onChange={e => setComparisonCategoryA(e.target.value)}
+                >
+                  <option value="">Select category</option>
+                  {allCategories.map(cat => <option key={cat} value={cat}>{cat}</option>)}
+                </select>
+                <span className="text-blue-600 font-bold">vs</span>
+                <select
+                  className="bg-blue-100 rounded-full px-3 py-1 text-xs font-semibold border border-blue-300 focus:outline-none"
+                  value={comparisonCategoryB}
+                  onChange={e => setComparisonCategoryB(e.target.value)}
+                >
+                  <option value="">Select category</option>
+                  {allCategories.map(cat => <option key={cat} value={cat}>{cat}</option>)}
+                </select>
+              </div>
+            )}
+
+                         {/* Smart Period Comparison */}
+             {comparisonType === 'period' && (
+               <div className="flex flex-col gap-2 items-center justify-center">
+                 <div className="text-xs text-blue-600 font-medium">Compare with previous period:</div>
+                 <div className="flex flex-row gap-2 items-center justify-center">
+                   <select
+                     className="bg-blue-100 rounded-full px-3 py-1 text-xs font-semibold border border-blue-300 focus:outline-none"
+                     value={comparisonPeriodType}
+                     onChange={e => setComparisonPeriodType(e.target.value)}
+                   >
+                     <option value="week">Previous Week</option>
+                     <option value="month">Previous Month</option>
+                     <option value="year">Previous Year</option>
+                   </select>
+                 </div>
+               </div>
+             )}
+          </div>
+        )}
+
         {/* Date range and stats */}
         <div className="w-full flex flex-row items-center justify-between mb-2 text-xs font-semibold text-gray-500">
           <span>{periodLabel}</span>
@@ -4854,10 +5099,31 @@ function InsightsSection({ receipts = [], categoryTotals = {}, calculatedTotals 
           <span className="text-2xl font-bold text-red-500">{formatCurrency(expenses, settings?.baseCurrency || 'EUR')}</span>
           <span className="text-2xl font-bold text-gray-900">{formatCurrency(spentPerDay, settings?.baseCurrency || 'EUR')}</span>
         </div>
+
         {/* Bar Chart */}
-        <div className="w-full h-40 md:h-48 mb-2">
+        <div className="w-full h-40 md:h-48 mb-4">
           <Bar data={barData} options={barOptions} />
         </div>
+
+        {/* Location Insights */}
+        {topLocations.length > 0 && (
+          <div className="w-full mb-4">
+            <h4 className="text-sm font-semibold text-gray-700 mb-2 text-center">📍 Top Spending Locations</h4>
+            <div className="flex flex-wrap justify-center gap-2">
+              {topLocations.map((location, index) => (
+                <div key={index} className="bg-blue-50 rounded-lg px-3 py-2 border border-blue-200">
+                  <div className="text-xs text-blue-600 font-medium truncate max-w-[120px]" title={location.location}>
+                    {location.location}
+                  </div>
+                  <div className="text-sm font-bold text-blue-800">
+                    {formatCurrency(location.amount, settings?.baseCurrency || 'EUR')}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Category Legend */}
         <div className="flex flex-row flex-wrap items-center justify-center gap-4 mt-2 w-full">
           {legend.map(l => (
@@ -4866,9 +5132,9 @@ function InsightsSection({ receipts = [], categoryTotals = {}, calculatedTotals 
               <span className="text-xs font-semibold text-gray-700">{l.name}</span>
               <span className="text-xs text-gray-400">{l.percent}%</span>
               <div className="flex flex-col">
-              <span className="text-xs text-gray-500 font-medium">
-                {formatCurrency(periodCategoryTotals[l.name], settings?.baseCurrency || 'EUR')}
-              </span>
+                <span className="text-xs text-gray-500 font-medium">
+                  {formatCurrency(periodCategoryTotals[l.name], settings?.baseCurrency || 'EUR')}
+                </span>
                 {/* Show original currency amounts if available */}
                 {(() => {
                   const categoryReceipts = periodReceipts.filter(r => (r.category || 'Uncategorized') === l.name);

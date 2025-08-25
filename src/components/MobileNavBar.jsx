@@ -1,6 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { useLoading } from "@/contexts/LoadingContext";
-import { Camera, Users } from 'lucide-react';
+import { Camera, Users, MapPin } from 'lucide-react';
 
 // Custom SVGs for premium look
 const WalletSVG = ({ className }) => (
@@ -68,7 +68,7 @@ export default function MobileNavBar({ currentTab, onTabChange, needsFixCount = 
       >
         {/* Animated gradient shimmer for branding */}
         <div className="absolute inset-0 z-0 pointer-events-none animate-shimmer" style={{ background: 'linear-gradient(120deg, rgba(59,130,246,0.08) 0%, rgba(139,92,246,0.10) 50%, rgba(59,130,246,0.08) 100%)', opacity: 0.7 }} />
-        {/* Expenses, Upload (center, floating FAB, slightly above nav), Receipts, Group */}
+        {/* Expenses, Upload (center, floating FAB, slightly above nav), Receipts, Map, Group */}
         <div className="flex flex-1 h-full">
           {/* Expenses */}
         <button
@@ -107,7 +107,16 @@ export default function MobileNavBar({ currentTab, onTabChange, needsFixCount = 
               )}
             </div>
           </button>
-          {/* Exports removed from nav as requested */}
+          {/* Map */}
+          <button
+            onClick={() => handleTabChange('map')}
+            className={`flex-1 flex flex-col items-center justify-center h-20 transition-all duration-300 ease-in-out active:scale-95 ${currentTab === 'map' ? 'text-blue-400' : 'text-slate-400 opacity-60 grayscale-[50%] hover:opacity-100 hover:grayscale-0'}`}
+            aria-label="Map"
+            tabIndex={0}
+            style={{ touchAction: 'manipulation' }}
+          >
+            <MapPin className="h-7 w-7" />
+          </button>
           {/* Group */}
           <button
             onClick={() => handleTabChange('group')}

@@ -1,6 +1,6 @@
 import { AuthProvider, useAuth } from "@/contexts/AuthContext"
 import { LoadingProvider } from "@/contexts/LoadingContext"
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import ReceiptUploader from './components/ReceiptUploader'
 import LandingPage from './components/LandingPage'
 import { Toaster } from "@/components/ui/toaster"
@@ -11,6 +11,7 @@ import MobileNavBar from './components/MobileNavBar';
 import { GroupProvider } from './contexts/GroupContext';
 import GroupHomeScreen from './components/GroupHomeScreen';
 import GroupExpensesPage from './components/GroupExpensesPage';
+import MapPage from './components/MapPage';
 
 // Create a RootContent component that will consume the AuthContext
 function ExpensesScreen(props) {
@@ -63,6 +64,8 @@ function RootContent() {
     mainContent = <UploadScreen onTabChange={setCurrentTab} />;
   } else if (currentTab === 'group') {
     mainContent = <GroupHomeScreen onTabChange={setCurrentTab} onGroupEnter={setSelectedGroup} />;
+  } else if (currentTab === 'map') {
+    mainContent = <MapPage />;
   } else if (currentTab === 'settings') {
     mainContent = <Settings onClose={() => setCurrentTab('expenses')} />;
   }
@@ -70,6 +73,20 @@ function RootContent() {
   return (
     <div className="min-h-screen w-full flex flex-col bg-gradient-to-br from-gray-900 via-indigo-950 to-purple-950" style={{ overflowX: 'hidden' }}>
       <AuthHeader />
+      {/* Listen for global tab change requests as a fallback */}
+      {(() => {
+        // Inline IIFE to attach a one-time effect without refactoring structure
+        // eslint-disable-next-line react-hooks/rules-of-hooks
+        useEffect(() => {
+          const handler = (e) => {
+            const targetTab = e?.detail || 'map';
+            setCurrentTab(targetTab);
+          };
+          document.addEventListener('requestTabChange', handler);
+          return () => document.removeEventListener('requestTabChange', handler);
+        }, []);
+        return null;
+      })()}
       <div key={currentTab} className="flex-grow animate-content-fade-in">
         {mainContent}
       </div>
