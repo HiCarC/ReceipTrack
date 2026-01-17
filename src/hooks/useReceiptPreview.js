@@ -11,10 +11,12 @@ export default function useReceiptPreview({
   captureSource,
   setCaptureSource,
   setIsCameraOpen,
+  stopCamera,
   setCurrentStep,
   handleOpenCamera,
   processOCR,
   toast,
+  onTabChange,
 }) {
   const handleImageChange = useCallback((e) => {
     const selectedFile = e.target.files[0];
@@ -34,6 +36,13 @@ export default function useReceiptPreview({
   const handleConfirmPreview = useCallback(() => {
     setShowFullScreenPreview(false);
     setCaptureSource(null);
+    setIsCameraOpen(false);
+    if (stopCamera) {
+      stopCamera();
+    }
+    if (onTabChange) {
+      onTabChange('expenses');
+    }
     if (file) {
       setProcessingStage('detecting_edges');
       setTimeout(() => setProcessingStage('enhancing'), 400);
@@ -61,9 +70,12 @@ export default function useReceiptPreview({
     previewImageSrc,
     processOCR,
     setCaptureSource,
+    setIsCameraOpen,
     setProcessingStage,
     setShowFullScreenPreview,
+    stopCamera,
     toast,
+    onTabChange,
   ]);
 
   const handleRetakePreview = useCallback(() => {
@@ -71,13 +83,16 @@ export default function useReceiptPreview({
     setPreviewImageSrc(null);
     setFile(null);
     setProcessingStage(null);
+    setIsCameraOpen(false);
+    if (stopCamera) {
+      stopCamera();
+    }
     if (captureSource === 'camera') {
       setCaptureSource(null);
       handleOpenCamera();
       return;
     }
     setCaptureSource(null);
-    setIsCameraOpen(false);
     setCurrentStep('upload_options');
   }, [
     captureSource,
@@ -89,6 +104,7 @@ export default function useReceiptPreview({
     setPreviewImageSrc,
     setProcessingStage,
     setShowFullScreenPreview,
+    stopCamera,
   ]);
 
   return {

@@ -1,5 +1,6 @@
 import React from 'react';
 import { Edit, Store, Trash2 } from 'lucide-react';
+import { estimateTaxForReceipt } from '@/utils/taxEstimator';
 
 export default function ReceiptsTabView({
   user,
@@ -12,6 +13,7 @@ export default function ReceiptsTabView({
   setExpandedReceiptId,
   getTimeLabel,
   getBaseAmount,
+  getBaseTax,
   formatCurrency,
   settings,
   isOcrProcessing,
@@ -119,115 +121,129 @@ export default function ReceiptsTabView({
                 {section.label}
               </h3>
               <div className="flex flex-col gap-3">
-                {section.receipts.map((receipt) => (
-                  <div
-                    key={receipt.id}
-                    className="space-y-2"
-                    style={{ contentVisibility: 'auto', containIntrinsicSize: '1px 220px' }}
-                  >
+                {section.receipts.map((receipt) => {
+                  const taxMeta = estimateTaxForReceipt(receipt, settings);
+                  return (
                     <div
-                      className="flex items-center justify-between rounded-2xl bg-app-surface p-3 shadow-sm cursor-pointer"
-                      onClick={() => setExpandedReceiptId(expandedReceiptId === receipt.id ? null : receipt.id)}
+                      key={receipt.id}
+                      className="space-y-2"
+                      style={{ contentVisibility: 'auto', containIntrinsicSize: '1px 220px' }}
                     >
-                      <div className="flex items-center gap-4">
-                        <div className="flex h-12 w-12 items-center justify-center rounded-full bg-blue-500/10 text-blue-400">
-                          <Store className="h-5 w-5" />
-                        </div>
-                        <div>
-                          <p className="text-base font-semibold text-white">{receipt.merchant || 'Unknown'}</p>
-                          <p className="text-sm text-app-muted">
-                            {(receipt.category || 'Other')} {getTimeLabel(receipt) ? `- ${getTimeLabel(receipt)}` : ''}
-                          </p>
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <div className="text-base font-semibold text-white">
-                          {formatCurrency(getBaseAmount(receipt), settings?.baseCurrency || 'EUR')}
-                        </div>
-                        {receipt.currency && receipt.currency !== (settings?.baseCurrency || 'EUR') && (
-                          <div className="text-xs text-app-muted">
-                            {formatCurrency(receipt.total || 0, receipt.currency)}
+                      <div
+                        className="flex items-center justify-between rounded-2xl bg-app-surface p-3 shadow-sm cursor-pointer"
+                        onClick={() => setExpandedReceiptId(expandedReceiptId === receipt.id ? null : receipt.id)}
+                      >
+                        <div className="flex items-center gap-4">
+                          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-blue-500/10 text-blue-400">
+                            <Store className="h-5 w-5" />
                           </div>
-                        )}
-                      </div>
-                    </div>
-                    {expandedReceiptId === receipt.id && (
-                      <div className="rounded-2xl bg-[#151c27] border border-white/5 p-3 text-sm text-slate-200">
-                        <div className="grid grid-cols-2 gap-3">
                           <div>
-                            <p className="text-xs text-slate-400">Base Total</p>
-                            <p className="text-sm font-semibold">
-                              {formatCurrency(getBaseAmount(receipt), settings?.baseCurrency || 'EUR')}
+                            <p className="text-base font-semibold text-white">{receipt.merchant || 'Unknown'}</p>
+                            <p className="text-sm text-app-muted">
+                              {(receipt.category || 'Other')} {getTimeLabel(receipt) ? `- ${getTimeLabel(receipt)}` : ''}
                             </p>
-                            {receipt.currency && receipt.currency !== (settings?.baseCurrency || 'EUR') && (
-                              <p className="text-xs text-slate-400">
-                                {formatCurrency(receipt.total || 0, receipt.currency)}
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <div className="text-base font-semibold text-white">
+                            {formatCurrency(getBaseAmount(receipt), settings?.baseCurrency || 'EUR')}
+                          </div>
+                          {receipt.currency && receipt.currency !== (settings?.baseCurrency || 'EUR') && (
+                            <div className="text-xs text-app-muted">
+                              {formatCurrency(receipt.total || 0, receipt.currency)}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                      {expandedReceiptId === receipt.id && (
+                        <div className="rounded-2xl bg-[#151c27] border border-white/5 p-3 text-sm text-slate-200">
+                          <div className="grid grid-cols-2 gap-3">
+                            <div>
+                              <p className="text-xs text-slate-400">Base Total</p>
+                              <p className="text-sm font-semibold">
+                                {formatCurrency(getBaseAmount(receipt), settings?.baseCurrency || 'EUR')}
                               </p>
-                            )}
-                          </div>
-                          <div>
-                            <p className="text-xs text-slate-400">Category</p>
-                            <p className="text-sm font-semibold">{receipt.category || 'Other'}</p>
-                          </div>
-                          <div>
-                            <p className="text-xs text-slate-400">Date</p>
-                            <p className="text-sm font-semibold">
-                              {receipt.transactionDate && receipt.transactionDate.toDate ? receipt.transactionDate.toDate().toLocaleDateString() : ''}
-                            </p>
-                          </div>
-                          <div>
-                            <p className="text-xs text-slate-400">Payment</p>
-                            <p className="text-sm font-semibold">{receipt.paymentMethod || 'Not specified'}</p>
-                          </div>
-                        </div>
-                        {receipt.note && (
-                          <div className="mt-3 text-xs text-slate-400">
-                            Note: <span className="text-slate-200">{receipt.note}</span>
-                          </div>
-                        )}
-                        {receipt.items && receipt.items.length > 0 && (
-                          <div className="mt-3">
-                            <p className="text-xs text-slate-400 mb-1">Items</p>
-                            <div className="space-y-1">
-                              {receipt.items.map((item, index) => (
-                                <div key={index} className="flex items-center justify-between text-xs text-slate-300">
-                                  <span className="truncate">{item.name}</span>
-                                  <span>{item.price}</span>
-                                </div>
-                              ))}
+                              {receipt.currency && receipt.currency !== (settings?.baseCurrency || 'EUR') && (
+                                <p className="text-xs text-slate-400">
+                                  {formatCurrency(receipt.total || 0, receipt.currency)}
+                                </p>
+                              )}
+                            </div>
+                            <div>
+                              <p className="text-xs text-slate-400">
+                                Tax Paid
+                                {taxMeta.isEstimated && (
+                                  <span className="ml-1 text-[10px] uppercase text-slate-500">est.</span>
+                                )}
+                              </p>
+                              <p className="text-sm font-semibold">
+                                {formatCurrency(getBaseTax ? getBaseTax(receipt) : (parseFloat(receipt.tax) || 0), settings?.baseCurrency || 'EUR')}
+                              </p>
+                            </div>
+                            <div>
+                              <p className="text-xs text-slate-400">Category</p>
+                              <p className="text-sm font-semibold">{receipt.category || 'Other'}</p>
+                            </div>
+                            <div>
+                              <p className="text-xs text-slate-400">Date</p>
+                              <p className="text-sm font-semibold">
+                                {receipt.transactionDate && receipt.transactionDate.toDate ? receipt.transactionDate.toDate().toLocaleDateString() : ''}
+                              </p>
+                            </div>
+                            <div>
+                              <p className="text-xs text-slate-400">Payment</p>
+                              <p className="text-sm font-semibold">{receipt.paymentMethod || 'Not specified'}</p>
                             </div>
                           </div>
-                        )}
-                        <div className="mt-3 flex items-center justify-end gap-3 text-xs text-slate-400">
-                          <button
-                            type="button"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              if (onEditReceipt) onEditReceipt(receipt);
-                            }}
-                            className="flex items-center gap-1 rounded-full border border-white/10 bg-white/5 px-2 py-1 text-slate-200 hover:bg-white/10"
-                            aria-label="Edit receipt"
-                          >
-                            <Edit className="h-3.5 w-3.5" />
-                            Edit
-                          </button>
-                          <button
-                            type="button"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              if (onDeleteReceipt) onDeleteReceipt(event, receipt.id);
-                            }}
-                            className="flex items-center gap-1 rounded-full border border-white/10 bg-white/5 px-2 py-1 text-rose-200 hover:bg-rose-500/10"
-                            aria-label="Delete receipt"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                            Delete
-                          </button>
+                          {receipt.note && (
+                            <div className="mt-3 text-xs text-slate-400">
+                              Note: <span className="text-slate-200">{receipt.note}</span>
+                            </div>
+                          )}
+                          {receipt.items && receipt.items.length > 0 && (
+                            <div className="mt-3">
+                              <p className="text-xs text-slate-400 mb-1">Items</p>
+                              <div className="space-y-1">
+                                {receipt.items.map((item, index) => (
+                                  <div key={index} className="flex items-center justify-between text-xs text-slate-300">
+                                    <span className="truncate">{item.name}</span>
+                                    <span>{item.price}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          <div className="mt-3 flex items-center justify-end gap-3 text-xs text-slate-400">
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                if (onEditReceipt) onEditReceipt(receipt);
+                              }}
+                              className="flex items-center gap-1 rounded-full border border-white/10 bg-white/5 px-2 py-1 text-slate-200 hover:bg-white/10"
+                              aria-label="Edit receipt"
+                            >
+                              <Edit className="h-3.5 w-3.5" />
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                if (onDeleteReceipt) onDeleteReceipt(event, receipt.id);
+                              }}
+                              className="flex items-center gap-1 rounded-full border border-white/10 bg-white/5 px-2 py-1 text-rose-200 hover:bg-rose-500/10"
+                              aria-label="Delete receipt"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                              Delete
+                            </button>
+                          </div>
                         </div>
-                      </div>
-                    )}
-                  </div>
-                ))}
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </div>
           ))

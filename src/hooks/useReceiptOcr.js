@@ -195,7 +195,88 @@ const useReceiptOcr = ({
   selectedGroupId,
   setRecentGroups,
   normalizeDate,
+  receipts,
 }) => {
+  const normalizeMerchant = (value) => {
+    if (!value) return '';
+    return value
+      .toLowerCase()
+      .replace(/[^a-z0-9\\s]/g, ' ')
+      .replace(/\\s+/g, ' ')
+      .trim();
+  };
+
+  const tokenSimilarity = (a, b) => {
+    if (!a || !b) return 0;
+    const aTokens = new Set(a.split(' ').filter(Boolean));
+    const bTokens = new Set(b.split(' ').filter(Boolean));
+    if (!aTokens.size || !bTokens.size) return 0;
+    let intersection = 0;
+    aTokens.forEach((token) => {
+      if (bTokens.has(token)) intersection += 1;
+    });
+    const union = aTokens.size + bTokens.size - intersection;
+    return union ? intersection / union : 0;
+  };
+
+  const normalizeAmount = (value) => {
+    const num = parseFloat(value);
+    return Number.isFinite(num) ? num : 0;
+  };
+
+  const toDateOnly = (value) => {
+    if (!value) return null;
+    if (typeof value.toDate === 'function') return value.toDate();
+    if (value?.seconds) return new Date(value.seconds * 1000);
+    const dateObj = new Date(value);
+    return Number.isNaN(dateObj.getTime()) ? null : dateObj;
+  };
+
+  const diffInDays = (a, b) => {
+    if (!a || !b) return null;
+    const utcA = Date.UTC(a.getFullYear(), a.getMonth(), a.getDate());
+    const utcB = Date.UTC(b.getFullYear(), b.getMonth(), b.getDate());
+    return Math.abs((utcA - utcB) / 86400000);
+  };
+
+  const isLikelyDuplicate = (candidate) => {
+    if (!candidate || !Array.isArray(receipts) || receipts.length === 0) return null;
+    const candidateMerchant = normalizeMerchant(candidate.merchant);
+    const candidateAmount = normalizeAmount(candidate.total);
+    const candidateDate = toDateOnly(candidate.date);
+
+    let bestMatch = null;
+    let bestScore = 0;
+
+    receipts.forEach((receipt) => {
+      const receiptMerchant = normalizeMerchant(receipt.merchant);
+      const receiptAmount = normalizeAmount(receipt.total);
+      const receiptDate = toDateOnly(receipt.transactionDate || receipt.date);
+
+      const amountTolerance = Math.max(0.5, candidateAmount * 0.01);
+      const amountMatch = Math.abs(candidateAmount - receiptAmount) <= amountTolerance ? 1 : 0;
+      const dateDiff = diffInDays(candidateDate, receiptDate);
+      const dateMatch = dateDiff !== null && dateDiff <= 1 ? 1 : 0;
+      const merchantScore = tokenSimilarity(candidateMerchant, receiptMerchant);
+      const merchantMatch = merchantScore >= 0.7 ? 1 : merchantScore;
+
+      if (!dateMatch || !amountMatch) {
+        return;
+      }
+
+      const score = amountMatch * 0.4 + dateMatch * 0.3 + merchantMatch * 0.3;
+      if (score > bestScore) {
+        bestScore = score;
+        bestMatch = receipt;
+      }
+    });
+
+    if (bestScore >= 0.8) {
+      return { receipt: bestMatch, score: bestScore };
+    }
+    return null;
+  };
+
   const autoSaveReceipt = useCallback(async (ocrData) => {
     if (!user) {
       toast({
@@ -241,6 +322,25 @@ const useReceiptOcr = ({
         addressComponents: ocrData.addressComponents,
         addressNotes: ocrData.addressNotes,
       };
+
+      const duplicate = isLikelyDuplicate({
+        merchant: receiptData.merchant,
+        total: receiptData.total,
+        date: ocrData.date,
+      });
+
+      if (duplicate) {
+        toast({
+          title: "Possible Duplicate",
+          description: "This receipt looks like one you already saved. If it is new, you can edit and save it manually.",
+        });
+        setIsLoading(false);
+        setIsOcrProcessing(false);
+        setFile(null);
+        setPreviewImageSrc(null);
+        setCurrentStep('upload_options');
+        return;
+      }
 
       await createReceipt(receiptData);
 
@@ -305,6 +405,21 @@ const useReceiptOcr = ({
     setShowSuccessState,
     toast,
     user,
+  ], [
+    createReceipt,
+    fetchReceipts,
+    onTabChange,
+    previewImageSrc,
+    setCurrentStep,
+    setFile,
+    setIsBusy,
+    setIsLoading,
+    setIsOcrProcessing,
+    setPreviewImageSrc,
+    setShowSuccessState,
+    toast,
+    user,
+    receipts,
   ]);
 
   const processOCR = useCallback(async (file) => {
@@ -323,6 +438,7 @@ const useReceiptOcr = ({
         },
         body: JSON.stringify({
           model: "gpt-4o",
+          response_format: { type: "json_object" },
           messages: [
             {
               role: "user",
@@ -337,15 +453,43 @@ const useReceiptOcr = ({
       });
 
       const data = await response.json();
+      if (!response.ok) {
+        const apiMessage = data?.error?.message || "OCR request failed.";
+        throw new Error(apiMessage);
+      }
       const replyText = data?.choices?.[0]?.message?.content || '';
 
+      let parsedJSON = null;
       const jsonMatch = replyText.match(/```json\\s*({[\\s\\S]*?})\\s*```/i);
-      if (!jsonMatch || !jsonMatch[1]) {
-        console.error("OCR parsing error: No valid JSON block found in the response.", replyText);
-        throw new Error("No valid JSON block found in the OCR response.");
+      if (jsonMatch && jsonMatch[1]) {
+        parsedJSON = JSON.parse(jsonMatch[1]);
+      } else {
+        const objectMatch = replyText.match(/\\{[\\s\\S]*\\}/);
+        if (objectMatch && objectMatch[0]) {
+          parsedJSON = JSON.parse(objectMatch[0]);
+        } else {
+          try {
+            parsedJSON = JSON.parse(replyText);
+          } catch {
+            const firstBrace = replyText.indexOf("{");
+            const lastBrace = replyText.lastIndexOf("}");
+            if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+              try {
+                parsedJSON = JSON.parse(replyText.slice(firstBrace, lastBrace + 1));
+              } catch {
+                console.error("OCR parsing error: No valid JSON block found in the response.", replyText);
+                throw new Error("No valid JSON block found in the OCR response.");
+              }
+            } else {
+              console.error("OCR parsing error: No valid JSON block found in the response.", replyText);
+              throw new Error("No valid JSON block found in the OCR response.");
+            }
+            if (!parsedJSON) {
+              throw new Error("No valid JSON block found in the OCR response.");
+            }
+          }
+        }
       }
-
-      const parsedJSON = JSON.parse(jsonMatch[1]);
 
       let addressRaw = null;
       let geocodeResult = null;
@@ -411,6 +555,17 @@ const useReceiptOcr = ({
         return { ...item, price };
       });
 
+      let normalizedTax = 0;
+      if (parsedJSON.tax) {
+        const cleanedTax = parsedJSON.tax.toString().replace(/[^\d.,-]/g, '').replace(',', '.');
+        normalizedTax = parseFloat(cleanedTax) || 0;
+      } else if (parsedJSON.subtotal && parsedJSON.amount) {
+        const subtotalVal = parseFloat(parsedJSON.subtotal.toString().replace(/[^\d.,-]/g, '').replace(',', '.')) || 0;
+        const totalVal = parseFloat(parsedJSON.amount.toString().replace(/[^\d.,-]/g, '').replace(',', '.')) || 0;
+        const diff = totalVal - subtotalVal;
+        normalizedTax = diff > 0 ? diff : 0;
+      }
+
       const ocrData = {
         merchant: parsedJSON.store || '',
         total: parsedJSON.amount ? parsedJSON.amount.replace(/[^\\d.,]/g, '').replace(',', '.') : '',
@@ -420,7 +575,7 @@ const useReceiptOcr = ({
         currency: parsedJSON.currency || 'EUR',
         items: normalizedItems,
         subtotal: parsedJSON.subtotal ? parsedJSON.subtotal.replace(/[^\\d.,]/g, '').replace(',', '.') : '',
-        tax: 0,
+        tax: normalizedTax,
         addressRaw: addressRaw,
         addressParsed: geocodeResult?.addressParsed,
         addressHash: geocodeResult?.addressHash,
@@ -516,6 +671,7 @@ const useReceiptOcr = ({
     setRecentGroups,
     toast,
     user,
+    receipts,
   ]);
 
   return { processOCR };

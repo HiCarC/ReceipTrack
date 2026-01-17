@@ -26,6 +26,33 @@ const PHONE_PATTERNS = [
   /\d{3}\s\d{3}\s\d{4}/,             // US: 123 456 7890
 ];
 
+const INVALID_ADDRESS_TOKENS = [
+  'amount',
+  'subtotal',
+  'total',
+  'tax',
+  'date',
+  'currency',
+  'items',
+  'payment',
+  'category',
+];
+
+const looksLikeAddress = (addressRaw) => {
+  if (!addressRaw || typeof addressRaw !== 'string') return false;
+  const trimmed = addressRaw.trim();
+  if (trimmed.length < 8) return false;
+  if (trimmed.includes('{"') || trimmed.includes('":')) return false;
+  const lower = trimmed.toLowerCase();
+  if (INVALID_ADDRESS_TOKENS.some((token) => lower.includes(token))) return false;
+  const hasLetters = /[A-Za-z]/.test(trimmed);
+  if (!hasLetters) return false;
+  const hasAddressKeyword = ADDRESS_KEYWORDS.some((keyword) => lower.includes(keyword));
+  const hasPostcode = POSTCODE_PATTERNS.some((pattern) => pattern.test(trimmed));
+  const hasDigits = /\d/.test(trimmed);
+  return hasAddressKeyword || hasPostcode || (hasDigits && hasLetters);
+};
+
 // Extract address from OCR text using heuristics
 export function extractAddressFromText(text) {
   if (!text || typeof text !== 'string') return null;
@@ -307,6 +334,7 @@ export async function getPostcodeCentroid(countryCode, postcode) {
 // Main geocoding function with caching and fallbacks
 export async function geocodeAddress(addressRaw, addressParsed = null) {
   if (!addressRaw) return null;
+  if (!looksLikeAddress(addressRaw)) return null;
   
   // Parse address if not provided
   if (!addressParsed) {

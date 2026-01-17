@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { getDonutSegments } from '@/utils/analyticsUi';
+import { estimateTaxForReceipt } from '@/utils/taxEstimator';
 
 export default function useReceiptAnalytics({
   receipts,
@@ -69,8 +70,15 @@ export default function useReceiptAnalytics({
     );
   };
 
+  const computeTaxValue = (receipt) => {
+    const { amount } = estimateTaxForReceipt(receipt, settings);
+    return amount || 0;
+  };
+
   const [baseAmountByReceipt, setBaseAmountByReceipt] = useState({});
+  const [baseTaxByReceipt, setBaseTaxByReceipt] = useState({});
   const lastBaseAmountRef = useRef(null);
+  const lastBaseTaxRef = useRef(null);
 
   const areMapsEqual = (next, prev) => {
     if (next === prev) return true;
@@ -90,6 +98,7 @@ export default function useReceiptAnalytics({
     const loadBaseAmounts = async () => {
       if (!enabled) {
         if (isMounted) setBaseAmountByReceipt({});
+        if (isMounted) setBaseTaxByReceipt({});
         return;
       }
       const now = new Date();
@@ -129,21 +138,52 @@ export default function useReceiptAnalytics({
           return [key, Math.abs(amount)];
         })
       );
+      const taxEntries = await Promise.all(
+        receiptsToConvert.map(async (receipt) => {
+          const key = getReceiptKey(receipt);
+          const taxValue = computeTaxValue(receipt);
+          if (!taxValue) return [key, 0];
+          const amount = await convertToBaseCurrency(
+            taxValue,
+            receipt.currency || settings?.baseCurrency || 'EUR',
+            receipt.transactionDate || receipt.date
+          );
+          return [key, Math.abs(amount)];
+        })
+      );
       if (!isMounted) return;
       const next = {};
       entries.forEach(([key, value]) => {
         if (key) next[key] = value;
       });
+      const nextTax = {};
+      taxEntries.forEach(([key, value]) => {
+        if (key) nextTax[key] = value;
+      });
       if (!areMapsEqual(next, lastBaseAmountRef.current)) {
         lastBaseAmountRef.current = next;
         setBaseAmountByReceipt(next);
+      }
+      if (!areMapsEqual(nextTax, lastBaseTaxRef.current)) {
+        lastBaseTaxRef.current = nextTax;
+        setBaseTaxByReceipt(nextTax);
       }
     };
     loadBaseAmounts();
     return () => {
       isMounted = false;
     };
-  }, [convertToBaseCurrency, receipts, settings?.baseCurrency, enabled, analyticsRange, normalizeToLocalMidnight, weekStart, weekEnd]);
+  }, [
+    convertToBaseCurrency,
+    receipts,
+    settings?.baseCurrency,
+    settings?.taxRates,
+    enabled,
+    analyticsRange,
+    normalizeToLocalMidnight,
+    weekStart,
+    weekEnd,
+  ]);
 
   const getBaseAmount = (receipt) => {
     const key = getReceiptKey(receipt);
@@ -151,6 +191,14 @@ export default function useReceiptAnalytics({
       return baseAmountByReceipt[key];
     }
     return Math.abs(parseFloat(receipt.total) || 0);
+  };
+
+  const getBaseTax = (receipt) => {
+    const key = getReceiptKey(receipt);
+    if (key && baseTaxByReceipt[key] !== undefined) {
+      return baseTaxByReceipt[key];
+    }
+    return computeTaxValue(receipt);
   };
 
   const analyticsSummary = useMemo(() => {
@@ -327,6 +375,7 @@ export default function useReceiptAnalytics({
     const topCategoryShare = topCategories
       .slice(0, 3)
       .reduce((sum, entry) => sum + entry.pct, 0);
+    const totalTax = receiptsInRange.reduce((sum, receipt) => sum + getBaseTax(receipt), 0);
 
     return {
       range,
@@ -340,6 +389,7 @@ export default function useReceiptAnalytics({
       transactionCount,
       averageTicket,
       topCategoryShare,
+      totalTax,
     };
   }, [
     analyticsCategoryTotals,
@@ -349,6 +399,7 @@ export default function useReceiptAnalytics({
     analyticsSummary.total,
     activitySeries.data,
     enabled,
+    getBaseTax,
   ]);
 
   return {
@@ -362,5 +413,6 @@ export default function useReceiptAnalytics({
     activitySeries,
     analyticsReport,
     getBaseAmount,
+    getBaseTax,
   };
 }

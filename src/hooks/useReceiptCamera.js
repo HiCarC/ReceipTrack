@@ -147,14 +147,20 @@ export default function useReceiptCamera({
       canvasRef.current.height = videoElement.videoHeight;
       context.drawImage(videoElement, 0, 0, canvasRef.current.width, canvasRef.current.height);
 
+      const previewDataUrl = canvasRef.current.toDataURL('image/jpeg');
+      setCaptureSource('camera');
+      setPreviewImageSrc(previewDataUrl);
+      setShowFullScreenPreview(true);
+      setIsCameraOpen(false);
+      stopCamera();
+
       canvasRef.current.toBlob((blob) => {
-        const capturedFile = new File([blob], 'captured-receipt.jpg', { type: 'image/jpeg' });
-        setCaptureSource('camera');
-        setFile(capturedFile);
-        setPreviewImageSrc(canvasRef.current.toDataURL('image/jpeg'));
-        setShowFullScreenPreview(true);
-        setIsCameraOpen(false);
-        stopCamera();
+        if (blob) {
+          const capturedFile = new File([blob], 'captured-receipt.jpg', { type: 'image/jpeg' });
+          setFile(capturedFile);
+        } else {
+          setFile(null);
+        }
       }, 'image/jpeg', 0.9);
     } else {
       toast({

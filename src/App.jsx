@@ -92,7 +92,7 @@ function RootContent() {
       <div key={currentTab} className="flex-grow animate-content-fade-in">
         {mainContent}
       </div>
-      {user && isMobile && (
+      {user && isMobile && currentTab !== 'upload' && (
         <>
           <MobileNavBar
             currentTab={currentTab}
@@ -100,24 +100,22 @@ function RootContent() {
             needsFixCount={needsFixCount}
             showScanButton={false}
           />
-          {currentTab !== 'upload' && (
-            <button
-              type="button"
-              onClick={() => {
-                setScanAnimating(true);
-                setTimeout(() => {
-                  setCurrentTab('upload');
-                  setScanAnimating(false);
-                }, 220);
-              }}
-              className={`fixed left-1/2 bottom-24 z-[2147483647] flex h-14 w-14 -translate-x-1/2 items-center justify-center rounded-full bg-app-primary text-white shadow-2xl shadow-blue-900/40 transition-all duration-200 ease-out ${
-                scanAnimating ? 'scale-150 opacity-40' : 'active:scale-95'
-              }`}
-              aria-label="Scan receipt"
-            >
-              <ScanLine className="h-6 w-6" />
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={() => {
+              setScanAnimating(true);
+              setTimeout(() => {
+                setCurrentTab('upload');
+                setScanAnimating(false);
+              }, 220);
+            }}
+            className={`fixed left-1/2 bottom-24 z-[2147483647] flex h-14 w-14 -translate-x-1/2 items-center justify-center rounded-full bg-app-primary text-white shadow-2xl shadow-blue-900/40 transition-all duration-200 ease-out ${
+              scanAnimating ? 'scale-150 opacity-40' : 'active:scale-95'
+            }`}
+            aria-label="Scan receipt"
+          >
+            <ScanLine className="h-6 w-6" />
+          </button>
         </>
       )}
       <Toaster />

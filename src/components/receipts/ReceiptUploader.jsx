@@ -40,6 +40,7 @@ import useReceiptCamera from '@/hooks/useReceiptCamera';
 import useReceiptData from '@/hooks/useReceiptData';
 import useReceiptPreview from '@/hooks/useReceiptPreview';
 import useReceiptGroups from '@/hooks/useReceiptGroups';
+import { estimateTaxForReceipt } from '@/utils/taxEstimator';
 Chart.register(ArcElement, Tooltip, Legend, CategoryScale, LinearScale, PointElement, LineElement, TimeScale, Filler, BarElement, annotationPlugin);
 
 // Define supported currencies
@@ -406,6 +407,7 @@ export default function ReceiptUploader({ className, showOnly, onTabChange, onNe
     selectedGroupId,
     setRecentGroups,
     normalizeDate,
+    receipts,
   });
 
   const {
@@ -422,10 +424,12 @@ export default function ReceiptUploader({ className, showOnly, onTabChange, onNe
     captureSource,
     setCaptureSource,
     setIsCameraOpen,
+    stopCamera,
     setCurrentStep,
     handleOpenCamera,
     processOCR,
     toast,
+    onTabChange,
   });
 
   useEffect(() => {
@@ -1420,6 +1424,21 @@ export default function ReceiptUploader({ className, showOnly, onTabChange, onNe
     },
     [baseAmountsById, getReceiptKey]
   );
+  const getReceiptBaseTax = useCallback(
+    (receipt) => {
+      if (!receipt) return 0;
+      const taxMeta = estimateTaxForReceipt(receipt, settings);
+      const taxRaw = parseFloat(taxMeta?.amount) || 0;
+      if (!taxRaw) return 0;
+      const baseTotal = getReceiptBaseAmount(receipt);
+      const totalRaw = parseFloat(receipt.total) || 0;
+      if (totalRaw > 0 && baseTotal > 0 && receipt.currency !== (settings?.baseCurrency || 'EUR')) {
+        return Math.abs(baseTotal * (taxRaw / totalRaw));
+      }
+      return taxRaw;
+    },
+    [getReceiptBaseAmount, settings, settings?.baseCurrency]
+  );
 
   const daySections = useMemo(
     () => buildDaySections(receipts, normalizeToLocalMidnight),
@@ -1485,7 +1504,8 @@ export default function ReceiptUploader({ className, showOnly, onTabChange, onNe
           expandedReceiptId={expandedReceiptId}
           setExpandedReceiptId={setExpandedReceiptId}
           getTimeLabel={getTimeLabel}
-          getBaseAmount={getBaseAmount}
+          getBaseAmount={getReceiptBaseAmount}
+          getBaseTax={getReceiptBaseTax}
           formatCurrency={formatCurrency}
           settings={settings}
           isOcrProcessing={isOcrProcessing}
@@ -1587,6 +1607,13 @@ export default function ReceiptUploader({ className, showOnly, onTabChange, onNe
           pendingDeleteId={pendingDeleteId}
           setPendingDeleteId={setPendingDeleteId}
           handleDeleteReceipt={handleDeleteReceiptAndClose}
+        />
+        <ReceiptFullScreenPreview
+          show={showFullScreenPreview}
+          previewImageSrc={previewImageSrc}
+          processingStage={processingStage}
+          handleRetakePreview={handleRetakePreview}
+          handleConfirmPreview={handleConfirmPreview}
         />
       </>
     );

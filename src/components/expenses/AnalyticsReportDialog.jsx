@@ -66,6 +66,12 @@ export default function AnalyticsReportDialog({
                     {analyticsReport.transactionCount}
                   </div>
                 </div>
+                <div className="rounded-xl bg-black/30 p-3">
+                  <div className="text-xs text-app-muted">Taxes Paid</div>
+                  <div className="mt-1 font-semibold">
+                    {formatCurrency(analyticsReport.totalTax || 0, settings?.baseCurrency || "EUR")}
+                  </div>
+                </div>
               </div>
             </div>
 
