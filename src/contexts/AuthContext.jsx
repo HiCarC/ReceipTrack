@@ -1,5 +1,5 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
-import { getAuth, onAuthStateChanged, signInWithPopup, GoogleAuthProvider, signOut, signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail as firebaseSendPasswordResetEmail, sendEmailVerification as firebaseSendEmailVerification, updateProfile as firebaseUpdateProfile, updateEmail as firebaseUpdateEmail, verifyBeforeUpdateEmail } from 'firebase/auth';
+import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
+import { getAuth, onAuthStateChanged, signInWithPopup, GoogleAuthProvider, signOut, signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail as firebaseSendPasswordResetEmail, sendEmailVerification as firebaseSendEmailVerification, updateProfile as firebaseUpdateProfile, updateEmail as firebaseUpdateEmail, verifyBeforeUpdateEmail, connectAuthEmulator } from 'firebase/auth';
 import { doc, updateDoc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../firebase';
 
@@ -13,12 +13,48 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const auth = getAuth();
+  const emulatorConnectedRef = useRef(false);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
-      if (user) {
-        // Get additional user data from Firestore
-        const userDocRef = doc(db, 'users', user.uid);
+    let unsubscribe = () => {};
+    let cancelled = false;
+
+    const tryConnectEmulator = async () => {
+      if (!import.meta.env.DEV || typeof window === 'undefined') return false;
+      if (import.meta.env.VITE_USE_FIREBASE_EMULATORS !== 'true') return false;
+      if (window.location.hostname !== 'localhost') return false;
+      const emulatorHost = import.meta.env.VITE_FIREBASE_AUTH_EMULATOR_HOST || 'http://localhost:9099';
+      const projectId = import.meta.env.VITE_FIREBASE_PROJECT_ID;
+      if (!projectId) return false;
+      if (emulatorConnectedRef.current) return true;
+
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 500);
+      try {
+        const res = await fetch(
+          `${emulatorHost}/emulator/v1/projects/${projectId}/config`,
+          { signal: controller.signal }
+        );
+        if (res.ok) {
+          connectAuthEmulator(auth, emulatorHost, { disableWarnings: true });
+          emulatorConnectedRef.current = true;
+          return true;
+        }
+      } catch (error) {
+        // Ignore emulator probe failures/timeouts in dev.
+      } finally {
+        clearTimeout(timeout);
+      }
+      return false;
+    };
+
+    const init = async () => {
+      await tryConnectEmulator();
+      if (cancelled) return;
+      unsubscribe = onAuthStateChanged(auth, async (user) => {
+        if (user) {
+          // Get additional user data from Firestore
+          const userDocRef = doc(db, 'users', user.uid);
         const userDoc = await getDoc(userDocRef);
         if (userDoc.exists()) {
           setUser({ ...user, ...userDoc.data() });
@@ -36,10 +72,16 @@ export function AuthProvider({ children }) {
       } else {
         setUser(null);
       }
-      setLoading(false);
-    });
+        setLoading(false);
+      });
+    };
 
-    return unsubscribe;
+    init();
+
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
   }, [auth]);
 
   const signInWithGoogle = async () => {

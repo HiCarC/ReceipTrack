@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Settings</title>
+<!-- Google Fonts -->
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;700&amp;display=swap" rel="stylesheet"/>
+<!-- Material Symbols -->
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<!-- Tailwind CSS -->
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<!-- Theme Config -->
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#135bec",
+                        "background-light": "#f6f6f8",
+                        "background-dark": "#101622",
+                        "surface-light": "#ffffff",
+                        "surface-dark": "#1a2230", // Slightly lighter than background-dark for cards/lists
+                    },
+                    fontFamily: {
+                        "display": ["Manrope", "sans-serif"]
+                    },
+                    borderRadius: {"DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "2xl": "1rem", "full": "9999px"},
+                },
+            },
+        }
+    </script>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+  </head>
+<body class="bg-background-light dark:bg-background-dark font-display text-[#111418] dark:text-white transition-colors duration-200 antialiased pb-24">
+<!-- Top App Bar -->
+<header class="sticky top-0 z-50 bg-background-light/95 dark:bg-background-dark/95 backdrop-blur-md">
+<div class="flex flex-col gap-2 px-4 pb-2 pt-2">
+<div class="flex items-center h-12 justify-between">
+<!-- Left spacer or back button if needed -->
+<div class="w-8"></div>
+<!-- Right action or spacer -->
+<div class="w-8"></div>
+</div>
+<h1 class="text-3xl font-bold leading-tight tracking-tight">Settings</h1>
+</div>
+</header>
+<!-- Main Content -->
+<main class="flex flex-col w-full max-w-md mx-auto">
+<!-- Profile Header -->
+<div class="p-4">
+<div class="flex flex-col sm:flex-row gap-4 items-center sm:items-start bg-surface-light dark:bg-surface-dark p-5 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-800">
+<div class="shrink-0 relative">
+<div class="bg-center bg-no-repeat bg-cover rounded-full h-20 w-20 ring-4 ring-background-light dark:ring-background-dark" data-alt="Portrait of a user with a friendly smile" style='background-image: url("https://lh3.googleusercontent.com/aida-public/AB6AXuAf6G1abShyuvvpyKDkcvgOmeu-BXcV9CnD6eeEVpHo9tonTigZR_dX5zmaFoVtGP_V45Oihk99zWyC5uCByE-3mshdZ_SQ5aUEweM_1ckN5Uj1IJfhL9MKf5T79jK2OL1DeRBk70sRB0digAhdRV2QdRGXSEoTF8wvO6gUCgEI8y3ENe785WqFeB3-rl2hJBMrP-IYpbPTNkhrvfXEtpmvPulFEXqlHjcfBOhVPv7uvaAX2ibAOcC4n2B7SLcjggso3jvkNPZ9MDBh");'>
+</div>
+<button class="absolute bottom-0 right-0 bg-primary text-white p-1.5 rounded-full hover:bg-primary/90 transition-colors shadow-lg">
+<span class="material-symbols-outlined text-[16px]">edit</span>
+</button>
+</div>
+<div class="flex flex-col justify-center items-center sm:items-start text-center sm:text-left flex-1">
+<p class="text-xl font-bold leading-tight">Alex Doe</p>
+<p class="text-gray-500 dark:text-[#9da6b9] text-sm font-medium mt-1">alex.doe@example.com</p>
+<button class="mt-3 text-primary text-sm font-bold hover:underline">Edit Profile</button>
+</div>
+</div>
+</div>
+<!-- Section: General -->
+<div class="mt-2">
+<h3 class="text-gray-500 dark:text-[#9da6b9] text-xs font-bold uppercase tracking-wider px-6 pb-2 pt-4">General</h3>
+<div class="flex flex-col bg-surface-light dark:bg-surface-dark rounded-2xl mx-4 overflow-hidden border border-gray-100 dark:border-gray-800 shadow-sm">
+<!-- Currency -->
+<div class="flex items-center gap-4 px-4 py-3.5 justify-between hover:bg-gray-50 dark:hover:bg-gray-800/50 cursor-pointer transition-colors group">
+<div class="flex items-center gap-3">
+<div class="text-primary flex items-center justify-center rounded-lg bg-primary/10 shrink-0 size-10">
+<span class="material-symbols-outlined text-[24px]">attach_money</span>
+</div>
+<p class="text-base font-medium leading-normal flex-1 truncate">Base Currency</p>
+</div>
+<div class="flex items-center gap-2">
+<p class="text-gray-500 dark:text-[#9da6b9] text-base font-normal">USD</p>
+<span class="material-symbols-outlined text-gray-400 text-[20px]">chevron_right</span>
+</div>
+</div>
+<div class="h-px bg-gray-100 dark:bg-gray-800 mx-4"></div>
+<!-- Date Format -->
+<div class="flex items-center gap-4 px-4 py-3.5 justify-between hover:bg-gray-50 dark:hover:bg-gray-800/50 cursor-pointer transition-colors group">
+<div class="flex items-center gap-3">
+<div class="text-primary flex items-center justify-center rounded-lg bg-primary/10 shrink-0 size-10">
+<span class="material-symbols-outlined text-[24px]">calendar_month</span>
+</div>
+<p class="text-base font-medium leading-normal flex-1 truncate">Date Format</p>
+</div>
+<div class="flex items-center gap-2">
+<p class="text-gray-500 dark:text-[#9da6b9] text-base font-normal">MM/DD/YYYY</p>
+<span class="material-symbols-outlined text-gray-400 text-[20px]">chevron_right</span>
+</div>
+</div>
+<div class="h-px bg-gray-100 dark:bg-gray-800 mx-4"></div>
+<!-- Appearance -->
+<div class="flex items-center gap-4 px-4 py-3.5 justify-between hover:bg-gray-50 dark:hover:bg-gray-800/50 cursor-pointer transition-colors group">
+<div class="flex items-center gap-3">
+<div class="text-primary flex items-center justify-center rounded-lg bg-primary/10 shrink-0 size-10">
+<span class="material-symbols-outlined text-[24px]">dark_mode</span>
+</div>
+<p class="text-base font-medium leading-normal flex-1 truncate">Appearance</p>
+</div>
+<div class="flex items-center gap-2">
+<p class="text-gray-500 dark:text-[#9da6b9] text-base font-normal">Dark</p>
+<span class="material-symbols-outlined text-gray-400 text-[20px]">chevron_right</span>
+</div>
+</div>
+</div>
+</div>
+<!-- Section: Features -->
+<div class="mt-4">
+<h3 class="text-gray-500 dark:text-[#9da6b9] text-xs font-bold uppercase tracking-wider px-6 pb-2 pt-2">Features</h3>
+<div class="flex flex-col bg-surface-light dark:bg-surface-dark rounded-2xl mx-4 overflow-hidden border border-gray-100 dark:border-gray-800 shadow-sm">
+<!-- Budget -->
+<div class="flex items-center gap-4 px-4 py-3.5 justify-between hover:bg-gray-50 dark:hover:bg-gray-800/50 cursor-pointer transition-colors">
+<div class="flex items-center gap-3">
+<div class="text-primary flex items-center justify-center rounded-lg bg-primary/10 shrink-0 size-10">
+<span class="material-symbols-outlined text-[24px]">account_balance_wallet</span>
+</div>
+<p class="text-base font-medium leading-normal flex-1 truncate">Monthly Budget</p>
+</div>
+<div class="flex items-center gap-2">
+<p class="text-gray-500 dark:text-[#9da6b9] text-base font-normal">$2,500</p>
+<span class="material-symbols-outlined text-gray-400 text-[20px]">chevron_right</span>
+</div>
+</div>
+<div class="h-px bg-gray-100 dark:bg-gray-800 mx-4"></div>
+<!-- Location Services (Toggle) -->
+<div class="flex items-center gap-4 px-4 py-3.5 justify-between">
+<div class="flex items-center gap-3">
+<div class="text-primary flex items-center justify-center rounded-lg bg-primary/10 shrink-0 size-10">
+<span class="material-symbols-outlined text-[24px]">location_on</span>
+</div>
+<div class="flex flex-col">
+<p class="text-base font-medium leading-normal">Location Insights</p>
+<p class="text-xs text-gray-500 dark:text-gray-400">Tag expenses by place</p>
+</div>
+</div>
+<!-- Toggle Switch -->
+<div aria-checked="true" class="relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent bg-primary transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2" role="switch">
+<span aria-hidden="true" class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out translate-x-5"></span>
+</div>
+</div>
+<div class="h-px bg-gray-100 dark:bg-gray-800 mx-4"></div>
+<!-- Notifications -->
+<div class="flex items-center gap-4 px-4 py-3.5 justify-between hover:bg-gray-50 dark:hover:bg-gray-800/50 cursor-pointer transition-colors">
+<div class="flex items-center gap-3">
+<div class="text-primary flex items-center justify-center rounded-lg bg-primary/10 shrink-0 size-10">
+<span class="material-symbols-outlined text-[24px]">notifications</span>
+</div>
+<p class="text-base font-medium leading-normal flex-1 truncate">Notifications</p>
+</div>
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-gray-400 text-[20px]">chevron_right</span>
+</div>
+</div>
+</div>
+</div>
+<!-- Section: Data & Security -->
+<div class="mt-4">
+<h3 class="text-gray-500 dark:text-[#9da6b9] text-xs font-bold uppercase tracking-wider px-6 pb-2 pt-2">Data &amp; Security</h3>
+<div class="flex flex-col bg-surface-light dark:bg-surface-dark rounded-2xl mx-4 overflow-hidden border border-gray-100 dark:border-gray-800 shadow-sm">
+<!-- Export Data -->
+<div class="flex items-center gap-4 px-4 py-3.5 justify-between hover:bg-gray-50 dark:hover:bg-gray-800/50 cursor-pointer transition-colors">
+<div class="flex items-center gap-3">
+<div class="text-primary flex items-center justify-center rounded-lg bg-primary/10 shrink-0 size-10">
+<span class="material-symbols-outlined text-[24px]">ios_share</span>
+</div>
+<p class="text-base font-medium leading-normal flex-1 truncate">Export Data</p>
+</div>
+<div class="flex items-center gap-2">
+<p class="text-gray-500 dark:text-[#9da6b9] text-base font-normal">CSV, PDF</p>
+<span class="material-symbols-outlined text-gray-400 text-[20px]">chevron_right</span>
+</div>
+</div>
+<div class="h-px bg-gray-100 dark:bg-gray-800 mx-4"></div>
+<!-- Group Management -->
+<div class="flex items-center gap-4 px-4 py-3.5 justify-between hover:bg-gray-50 dark:hover:bg-gray-800/50 cursor-pointer transition-colors">
+<div class="flex items-center gap-3">
+<div class="text-primary flex items-center justify-center rounded-lg bg-primary/10 shrink-0 size-10">
+<span class="material-symbols-outlined text-[24px]">group</span>
+</div>
+<p class="text-base font-medium leading-normal flex-1 truncate">Manage Groups</p>
+</div>
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-gray-400 text-[20px]">chevron_right</span>
+</div>
+</div>
+<div class="h-px bg-gray-100 dark:bg-gray-800 mx-4"></div>
+<!-- FaceID (Toggle) -->
+<div class="flex items-center gap-4 px-4 py-3.5 justify-between">
+<div class="flex items-center gap-3">
+<div class="text-primary flex items-center justify-center rounded-lg bg-primary/10 shrink-0 size-10">
+<span class="material-symbols-outlined text-[24px]">face</span>
+</div>
+<p class="text-base font-medium leading-normal flex-1 truncate">FaceID Lock</p>
+</div>
+<!-- Toggle Switch (Off state) -->
+<div aria-checked="false" class="relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent bg-gray-200 dark:bg-gray-700 transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2" role="switch">
+<span aria-hidden="true" class="pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out translate-x-0"></span>
+</div>
+</div>
+<div class="h-px bg-gray-100 dark:bg-gray-800 mx-4"></div>
+<!-- Storage Usage Indicator -->
+<div class="flex flex-col gap-2 px-4 py-4">
+<div class="flex items-center justify-between">
+<div class="flex items-center gap-3">
+<div class="text-primary flex items-center justify-center rounded-lg bg-primary/10 shrink-0 size-10">
+<span class="material-symbols-outlined text-[24px]">cloud_queue</span>
+</div>
+<p class="text-base font-medium leading-normal">Storage Usage</p>
+</div>
+<p class="text-xs text-gray-500 dark:text-[#9da6b9]">1.2 GB of 5 GB</p>
+</div>
+<div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2 mt-1 ml-[52px] w-[calc(100%-52px)]">
+<div class="bg-primary h-2 rounded-full" style="width: 24%"></div>
+</div>
+</div>
+</div>
+</div>
+<!-- Section: Support & Legal -->
+<div class="mt-4">
+<h3 class="text-gray-500 dark:text-[#9da6b9] text-xs font-bold uppercase tracking-wider px-6 pb-2 pt-2">Support &amp; Legal</h3>
+<div class="flex flex-col bg-surface-light dark:bg-surface-dark rounded-2xl mx-4 overflow-hidden border border-gray-100 dark:border-gray-800 shadow-sm">
+<!-- Help Center -->
+<div class="flex items-center gap-4 px-4 py-3.5 justify-between hover:bg-gray-50 dark:hover:bg-gray-800/50 cursor-pointer transition-colors">
+<div class="flex items-center gap-3">
+<div class="text-primary flex items-center justify-center rounded-lg bg-primary/10 shrink-0 size-10">
+<span class="material-symbols-outlined text-[24px]">help</span>
+</div>
+<p class="text-base font-medium leading-normal flex-1 truncate">Help Center</p>
+</div>
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-gray-400 text-[20px]">open_in_new</span>
+</div>
+</div>
+<div class="h-px bg-gray-100 dark:bg-gray-800 mx-4"></div>
+<!-- Privacy -->
+<div class="flex items-center gap-4 px-4 py-3.5 justify-between hover:bg-gray-50 dark:hover:bg-gray-800/50 cursor-pointer transition-colors">
+<div class="flex items-center gap-3">
+<div class="text-primary flex items-center justify-center rounded-lg bg-primary/10 shrink-0 size-10">
+<span class="material-symbols-outlined text-[24px]">privacy_tip</span>
+</div>
+<p class="text-base font-medium leading-normal flex-1 truncate">Privacy Policy</p>
+</div>
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-gray-400 text-[20px]">chevron_right</span>
+</div>
+</div>
+</div>
+</div>
+<!-- Logout Button -->
+<div class="px-4 mt-8 mb-4">
+<button class="w-full bg-red-500/10 dark:bg-red-900/20 text-red-600 dark:text-red-400 font-bold py-3.5 rounded-xl hover:bg-red-500/20 dark:hover:bg-red-900/30 transition-colors flex items-center justify-center gap-2">
+<span class="material-symbols-outlined text-[20px]">logout</span>
+                Log Out
+            </button>
+<p class="text-center text-xs text-gray-400 dark:text-gray-600 mt-4">Version 2.4.1 (Build 8902)</p>
+</div>
+</main>
+<!-- Bottom Navigation -->
+<nav class="fixed bottom-0 left-0 w-full bg-surface-light dark:bg-surface-dark border-t border-gray-200 dark:border-gray-800 pb-safe">
+<div class="flex justify-around items-center h-16 max-w-md mx-auto">
+<a class="flex flex-col items-center justify-center w-full h-full text-gray-400 hover:text-primary transition-colors" href="#">
+<span class="material-symbols-outlined text-[24px]">dashboard</span>
+<span class="text-[10px] font-medium mt-1">Home</span>
+</a>
+<a class="flex flex-col items-center justify-center w-full h-full text-gray-400 hover:text-primary transition-colors" href="#">
+<span class="material-symbols-outlined text-[24px]">receipt_long</span>
+<span class="text-[10px] font-medium mt-1">Expenses</span>
+</a>
+<div class="relative -top-5">
+<button class="bg-primary hover:bg-blue-600 text-white rounded-full p-4 shadow-lg shadow-blue-500/30 transition-colors">
+<span class="material-symbols-outlined text-[28px]">add</span>
+</button>
+</div>
+<a class="flex flex-col items-center justify-center w-full h-full text-gray-400 hover:text-primary transition-colors" href="#">
+<span class="material-symbols-outlined text-[24px]">pie_chart</span>
+<span class="text-[10px] font-medium mt-1">Reports</span>
+</a>
+<a class="flex flex-col items-center justify-center w-full h-full text-primary" href="#">
+<span class="material-symbols-outlined text-[24px] fill-current">settings</span>
+<span class="text-[10px] font-medium mt-1">Settings</span>
+</a>
+</div>
+</nav>
+<!-- Safe area spacing for bottom nav -->
+<div class="h-20"></div>
+</body></html>

@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Groups List</title>
+<!-- Google Fonts -->
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@200..800&amp;display=swap" rel="stylesheet"/>
+<!-- Material Symbols -->
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<!-- Tailwind CSS -->
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<!-- Tailwind Config -->
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#135bec",
+                        "background-light": "#f6f6f8",
+                        "background-dark": "#101622",
+                        "surface-dark": "#1e1e1e", // Defined in plan for cards
+                    },
+                    fontFamily: {
+                        "display": ["Manrope", "sans-serif"]
+                    },
+                    borderRadius: {
+                        "DEFAULT": "0.25rem", 
+                        "lg": "0.5rem", 
+                        "xl": "0.75rem", 
+                        "full": "9999px"
+                    },
+                },
+            },
+        }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        .material-symbols-outlined.filled {
+            font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        /* Custom scrollbar hiding for clean mobile look */
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .no-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+    </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+  </head>
+<body class="bg-background-light dark:bg-background-dark text-slate-900 dark:text-white font-display antialiased overflow-hidden h-screen flex flex-col selection:bg-primary selection:text-white">
+<!-- Top App Bar -->
+<header class="shrink-0 flex items-center justify-between px-5 py-4 bg-background-light dark:bg-background-dark border-b border-slate-200 dark:border-slate-800/50 z-10">
+<h1 class="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">My Groups</h1>
+<div class="flex items-center gap-2">
+<button class="flex items-center justify-center w-10 h-10 rounded-full hover:bg-slate-200 dark:hover:bg-slate-800 transition-colors text-slate-600 dark:text-slate-300">
+<span class="material-symbols-outlined">person_add</span>
+</button>
+<button class="flex items-center justify-center w-10 h-10 rounded-full hover:bg-slate-200 dark:hover:bg-slate-800 transition-colors text-slate-600 dark:text-slate-300">
+<span class="material-symbols-outlined">settings</span>
+</button>
+</div>
+</header>
+<!-- Main Content List -->
+<main class="flex-1 overflow-y-auto no-scrollbar relative">
+<div class="px-4 py-4 space-y-3 pb-24">
+<!-- List Item 1: Owed (Green) -->
+<div class="group relative flex items-center gap-4 bg-white dark:bg-[#1e1e1e] p-4 rounded-xl shadow-sm border border-slate-100 dark:border-slate-800/50 active:scale-[0.98] transition-all duration-200 cursor-pointer">
+<div class="relative shrink-0">
+<div class="h-14 w-14 rounded-full bg-slate-200 dark:bg-slate-700 bg-cover bg-center ring-2 ring-white dark:ring-slate-700" data-alt="Blurred cityscape background representing New York City" style='background-image: url("https://lh3.googleusercontent.com/aida-public/AB6AXuBVFL_wILSw52VhRWHa2L9Tst6zj_LRJnxsIUi2X3G_NsAUHI3sljs_SNJIWGtI3Td5nghESa0DHOK7vagLq6ALXrGEMrTC34_Ofq6Obvd1L5WmpaD9lOvW_oQw5iwoXzCuQaLAP6zOjP5-p0be2RHbUDnSchTVa25AkqwcU73UP95Xbrb8Bg12SKe55EuGFSYcaDAfyu5v1dW27zLKATPO-S026IQflSPdqBjj4iqPIjmYC2MxbdPlk3UYlpxpZQGK8qGdouxIdsgC");'>
+</div>
+<div class="absolute -bottom-1 -right-1 bg-white dark:bg-background-dark rounded-full p-0.5">
+<span class="text-lg">🗽</span>
+</div>
+</div>
+<div class="flex flex-col flex-1 min-w-0 justify-center">
+<div class="flex justify-between items-start">
+<h3 class="text-base font-bold text-slate-900 dark:text-white truncate pr-2">NYC Trip</h3>
+<span class="text-xs font-medium text-slate-400 shrink-0 mt-0.5">2h ago</span>
+</div>
+<p class="text-sm font-medium leading-normal truncate mt-0.5 text-emerald-600 dark:text-emerald-400">
+                        You are owed $120.50
+                    </p>
+</div>
+<div class="shrink-0 text-slate-400 group-hover:text-primary transition-colors">
+<span class="material-symbols-outlined">chevron_right</span>
+</div>
+</div>
+<!-- List Item 2: Owe (Red/Orange) -->
+<div class="group relative flex items-center gap-4 bg-white dark:bg-[#1e1e1e] p-4 rounded-xl shadow-sm border border-slate-100 dark:border-slate-800/50 active:scale-[0.98] transition-all duration-200 cursor-pointer">
+<div class="relative shrink-0">
+<div class="h-14 w-14 rounded-full bg-slate-200 dark:bg-slate-700 bg-cover bg-center ring-2 ring-white dark:ring-slate-700" data-alt="Abstract geometric shapes representing apartment building" style='background-image: url("https://lh3.googleusercontent.com/aida-public/AB6AXuApG9Uo16dF96wMRMDqOhcQpdYlRJvZH7jNLpqERH-elkhni11iCpkZcz8Sv-h5o2gBuwQUE5Hsh8TjeVlo1MuiYpMMjqHtm8nPzo6bzZ7iL7JhsOG-xNBFbk4JdSMu2s4x112QUdl8DfBUYmL-wiXsj0rJZpehXl-HTnTWnV3eP2YpPMAIBYBVtWnJTD6Iu-GFxIecYfXx8pZDTJOclLDpqJ-I2W7pURxzGLjUPBvayq3nmB_u-ORty3b9ZqDESudFQf-qvMhz2KOM");'>
+</div>
+<div class="absolute -bottom-1 -right-1 bg-white dark:bg-background-dark rounded-full p-0.5">
+<span class="text-lg">🏠</span>
+</div>
+</div>
+<div class="flex flex-col flex-1 min-w-0 justify-center">
+<div class="flex justify-between items-start">
+<h3 class="text-base font-bold text-slate-900 dark:text-white truncate pr-2">Apartment 4B</h3>
+<span class="text-xs font-medium text-slate-400 shrink-0 mt-0.5">1d ago</span>
+</div>
+<p class="text-sm font-medium leading-normal truncate mt-0.5 text-rose-600 dark:text-rose-400">
+                        You owe $45.00
+                    </p>
+</div>
+<div class="shrink-0 text-slate-400 group-hover:text-primary transition-colors">
+<span class="material-symbols-outlined">chevron_right</span>
+</div>
+</div>
+<!-- List Item 3: Settled (Grey) -->
+<div class="group relative flex items-center gap-4 bg-white dark:bg-[#1e1e1e] p-4 rounded-xl shadow-sm border border-slate-100 dark:border-slate-800/50 active:scale-[0.98] transition-all duration-200 cursor-pointer">
+<div class="relative shrink-0">
+<div class="h-14 w-14 rounded-full bg-slate-200 dark:bg-slate-700 bg-cover bg-center ring-2 ring-white dark:ring-slate-700" data-alt="Close up of food on a table" style='background-image: url("https://lh3.googleusercontent.com/aida-public/AB6AXuCkHBvVo5pUJ3GH_1bv4qkYgZ-vpI9MTInuqTKGzFIRQ8ach_prbZ5qeEANzB4HUkGmz6KCxS_4zkG3K2uUvoHGtcoRtCu2ZrSEwpLqQzILdsrru8tsTr22jQGpTtgG15dirQxL4uWkD-QdlfxopRvVafoMU_i5fI-V8uuSJAmrRHS8Q6TKAZ8V5amHNr-hJveMthK4jLSgyxA3rmayOO8ZYEUOpMmTaVSvd2HFZ0Rhmo8m4MeCp076Vq9DEmGCOjo_0SeFFONhvBxj");'>
+</div>
+<div class="absolute -bottom-1 -right-1 bg-white dark:bg-background-dark rounded-full p-0.5">
+<span class="text-lg">🍕</span>
+</div>
+</div>
+<div class="flex flex-col flex-1 min-w-0 justify-center">
+<div class="flex justify-between items-start">
+<h3 class="text-base font-bold text-slate-900 dark:text-white truncate pr-2">Friday Dinner</h3>
+<span class="text-xs font-medium text-slate-400 shrink-0 mt-0.5">3d ago</span>
+</div>
+<p class="text-sm font-medium leading-normal truncate mt-0.5 text-slate-500 dark:text-slate-400">
+                        Settled up
+                    </p>
+</div>
+<div class="shrink-0 text-slate-400 group-hover:text-primary transition-colors">
+<span class="material-symbols-outlined">chevron_right</span>
+</div>
+</div>
+<!-- List Item 4: Settled (Grey) - Extra Item to show list feel -->
+<div class="group relative flex items-center gap-4 bg-white dark:bg-[#1e1e1e] p-4 rounded-xl shadow-sm border border-slate-100 dark:border-slate-800/50 active:scale-[0.98] transition-all duration-200 cursor-pointer opacity-70">
+<div class="relative shrink-0">
+<div class="h-14 w-14 rounded-full bg-slate-200 dark:bg-slate-700 bg-cover bg-center ring-2 ring-white dark:ring-slate-700" data-alt="Mountain landscape with snow" style='background-image: url("https://lh3.googleusercontent.com/aida-public/AB6AXuCwc1sa0d1-efhPvUIOxKI3Oiw60N0iso-TAYnDKXl4G1SzQvdpsYY134IwI_Vva9ug-xbl_tF2zyFx5n9xcUeGRZbwjCr0dd1FHhqUAUYELoRtOebRJZA-l4TW-5rHUIO2yofQE9DKVZBiyU-HOuc6yK6AhRD50NX_ON5Tj9maO7fNNeyLkGMU7s1Nnc26hVxsZWODJ61Z0AMzMyIYB-ssz2fhTu8YbBQgWSvz9JM4TR6hYtm0v8YRnor6dErf2OjXxIej08ndVUsM");'>
+</div>
+<div class="absolute -bottom-1 -right-1 bg-white dark:bg-background-dark rounded-full p-0.5">
+<span class="text-lg">🏂</span>
+</div>
+</div>
+<div class="flex flex-col flex-1 min-w-0 justify-center">
+<div class="flex justify-between items-start">
+<h3 class="text-base font-bold text-slate-900 dark:text-white truncate pr-2">Tahoe Ski Trip</h3>
+<span class="text-xs font-medium text-slate-400 shrink-0 mt-0.5">2w ago</span>
+</div>
+<p class="text-sm font-medium leading-normal truncate mt-0.5 text-slate-500 dark:text-slate-400">
+                        Settled up
+                    </p>
+</div>
+<div class="shrink-0 text-slate-400 group-hover:text-primary transition-colors">
+<span class="material-symbols-outlined">chevron_right</span>
+</div>
+</div>
+</div>
+</main>
+<!-- Floating Action Button Area -->
+<div class="absolute bottom-[5.5rem] right-4 z-20">
+<button class="flex items-center justify-center h-14 pl-4 pr-6 bg-primary hover:bg-blue-600 text-white rounded-full shadow-lg shadow-primary/30 transition-all active:scale-95 group">
+<span class="material-symbols-outlined mr-2 group-hover:rotate-90 transition-transform">add</span>
+<span class="text-base font-bold tracking-wide">New Group</span>
+</button>
+</div>
+<!-- Bottom Navigation Bar -->
+<nav class="shrink-0 bg-white dark:bg-[#151a23] border-t border-slate-200 dark:border-slate-800 pb-safe pt-2 px-2 z-30">
+<!-- "pb-safe" handles iPhone Home Indicator area if supported, usually needs extra CSS but keeping simple here -->
+<ul class="flex justify-around items-center h-14 pb-2">
+<!-- Expenses Tab -->
+<li class="flex-1">
+<a class="flex flex-col items-center justify-center gap-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors" href="#">
+<span class="material-symbols-outlined">receipt_long</span>
+<span class="text-[10px] font-medium tracking-wide">Expenses</span>
+</a>
+</li>
+<!-- Analytics Tab -->
+<li class="flex-1">
+<a class="flex flex-col items-center justify-center gap-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors" href="#">
+<span class="material-symbols-outlined">monitoring</span>
+<span class="text-[10px] font-medium tracking-wide">Analytics</span>
+</a>
+</li>
+<!-- Groups Tab (Active) -->
+<li class="flex-1">
+<a class="flex flex-col items-center justify-center gap-1 text-primary relative" href="#">
+<!-- Active Indicator Dot -->
+<span class="absolute -top-1 w-1 h-1 rounded-full bg-primary"></span>
+<span class="material-symbols-outlined filled">groups</span>
+<span class="text-[10px] font-bold tracking-wide">Groups</span>
+</a>
+</li>
+<!-- Settings Tab -->
+<li class="flex-1">
+<a class="flex flex-col items-center justify-center gap-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors" href="#">
+<span class="material-symbols-outlined">account_circle</span>
+<span class="text-[10px] font-medium tracking-wide">Profile</span>
+</a>
+</li>
+</ul>
+</nav>
+</body></html>

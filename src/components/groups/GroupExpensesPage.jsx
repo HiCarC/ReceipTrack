@@ -1,0 +1,3530 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { ArrowLeft, Plus, Trash2, MoreVertical, Download, Share2, HelpCircle, HeartPulse } from 'lucide-react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, DialogClose } from '@/components/ui/dialog';
+import { Dialog as UIDialog, DialogContent as UIDialogContent, DialogTitle as UIDialogTitle, DialogDescription as UIDialogDescription } from '@/components/ui/dialog';
+import { db } from '@/firebase';
+import { collection, addDoc, query, where, onSnapshot, serverTimestamp, doc, updateDoc, deleteDoc, orderBy, setDoc, getDocs } from 'firebase/firestore';
+// Image uploading is disabled to avoid Firebase Storage usage in free tier
+import { useAuth } from '@/contexts/AuthContext';
+import { useNavigate } from 'react-router-dom';
+import { Helmet } from 'react-helmet-async';
+import useGroupBalances from '@/hooks/useGroupBalances';
+import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
+import QRCode from 'react-qr-code';
+import { Pie, Doughnut } from 'react-chartjs-2';
+import { Bar } from 'react-chartjs-2';
+import html2canvas from 'html2canvas';
+import { useToast } from '@/components/ui/use-toast';
+
+const EXPENSE_CATEGORIES = [
+  { name: 'Groceries', emoji: '🛒' },
+  { name: 'Dining', emoji: '🍽️' },
+  { name: 'Transportation', emoji: '🚌' },
+  { name: 'Shopping', emoji: '🛍️' },
+  { name: 'Bills', emoji: '💡' },
+  { name: 'Entertainment', emoji: '🎬' },
+  { name: 'Health', emoji: '💊' },
+  { name: 'Other', emoji: '💸' },
+];
+
+const TABS = [
+  { key: 'overview', label: 'Overview' },
+  { key: 'expenses', label: 'Expenses' },
+  { key: 'balances', label: 'Balances' },
+  { key: 'photos', label: 'Photos' },
+];
+
+// Helper to map UID to name
+function getMemberName(uid, group) {
+  const idx = (group.members || []).indexOf(uid);
+  return idx >= 0 ? (group.memberNames ? group.memberNames[idx] : uid) : uid;
+}
+
+// Helper to get the current user's claimed participant name
+function getMyParticipantName(group, user) {
+  if (!group || !user || !group.claimedBy) return null;
+  return Object.keys(group.claimedBy).find(name => group.claimedBy[name] === user.uid) || null;
+}
+// Helper to get name from UID
+function getNameByUid(group, uid) {
+  if (!group || !group.claimedBy) return uid;
+  const entry = Object.entries(group.claimedBy).find(([name, id]) => id === uid);
+  return entry ? entry[0] : uid;
+}
+
+function getInitials(name) {
+  if (!name) return '';
+  return name.split(' ').map(n => n[0]).join('').toUpperCase();
+}
+
+// Expense Detail View Component
+function ExpenseDetailView({ expense, group, onEdit, onDelete, onClose }) {
+  if (!expense) return null;
+  const paidByName = getNameByUid(group, expense.paidBy);
+  const currency = expense.currency || group.currency || 'EUR';
+  // Calculate participant shares
+  let participants = [];
+  if (expense.splits) {
+    participants = Object.entries(expense.splits).map(([uid, amount]) => ({
+      name: getNameByUid(group, uid),
+      isMe: group.claimedBy && group.claimedBy[getNameByUid(group, uid)] === expense.paidBy,
+      amount,
+    }));
+  }
+  return (
+    <div className="flex flex-col h-full bg-black/90 rounded-2xl relative">
+      {/* Accessibility: DialogTitle and DialogDescription for world-class UX/UI */}
+      <div className="flex items-center justify-between pt-6 pb-2 px-4">
+        <DialogTitle asChild>
+          <span className="text-2xl md:text-3xl font-bold text-white">{expense.label}</span>
+        </DialogTitle>
+        {/* Three-dots icon: always visible, opens edit window directly */}
+        <button
+          className="p-2 rounded-full hover:bg-slate-800 focus:outline-none ml-2"
+          onClick={onEdit}
+          aria-label="Edit expense"
+        >
+          <MoreVertical className="h-6 w-6 text-white" />
+        </button>
+      </div>
+      <DialogDescription asChild>
+        <div className="flex justify-start text-blue-200 text-base px-4 mb-2">{expense.date}</div>
+      </DialogDescription>
+      {/* Paid by section */}
+      <div className="px-4 mt-4">
+        <div className="uppercase text-xs font-semibold text-blue-200 mb-2 tracking-wide">PAID BY</div>
+        <div className="flex items-center bg-[#23232a] rounded-2xl p-4 mb-6 shadow border border-slate-700/40">
+          <div className="w-12 h-12 rounded-full bg-slate-700 flex items-center justify-center text-2xl font-bold text-white mr-4">
+            {getInitials(paidByName)}
+          </div>
+          <div className="flex-1">
+            <div className="font-semibold text-white text-lg">{paidByName}</div>
+            <div className="text-blue-300 text-xs">{expense.paidBy === group.claimedBy[paidByName] ? 'Me' : ''}</div>
+          </div>
+          <div className="font-bold text-2xl text-orange-400 ml-2">{expense.amount.toFixed(2)} <span className="text-lg">{currency}</span></div>
+        </div>
+      </div>
+      {/* Participants section */}
+      <div className="px-4">
+        <div className="uppercase text-xs font-semibold text-blue-200 mb-2 tracking-wide">PARTICIPANTS</div>
+        <div className="bg-[#23232a] rounded-2xl p-2 shadow border border-slate-700/40">
+          {participants.map((p, idx) => (
+            <div key={p.name} className={`flex items-center px-2 py-3 ${idx !== participants.length - 1 ? 'border-b border-slate-700/30' : ''}`}>
+              <div className={`w-10 h-10 rounded-full flex items-center justify-center text-lg font-bold mr-4 ${p.name === paidByName ? 'bg-slate-700 text-white' : 'bg-slate-600 text-blue-100'}`}>
+                {getInitials(p.name)}
+              </div>
+              <div className="flex-1 text-white text-base font-medium">{p.name}{p.name === paidByName ? <span className="text-blue-300 text-xs ml-1">Me</span> : ''}</div>
+              <div className="font-semibold text-lg text-blue-100">{p.amount.toFixed(2)} <span className="text-base">{currency}</span></div>
+            </div>
+          ))}
+        </div>
+      </div>
+      {/* Items (read-only) */}
+      {Array.isArray(expense.items) && expense.items.length > 0 && (
+        <div className="px-4 mt-4">
+          <div className="uppercase text-xs font-semibold text-blue-200 mb-2 tracking-wide">ITEMS</div>
+          <div className="bg-[#23232a] rounded-2xl p-2 shadow border border-slate-700/40">
+            {expense.items.map((it, idx) => (
+              <div key={idx} className={`flex items-center px-2 py-3 ${idx !== expense.items.length - 1 ? 'border-b border-slate-700/30' : ''}`}>
+                <div className="flex-1 text-white text-base">{it.name || it.text || '—'}</div>
+                <div className="font-semibold text-lg text-blue-100">{(parseFloat(it.price) || 0).toFixed(2)} <span className="text-base">{currency}</span></div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {/* Note (read-only) */}
+      {expense.note && (
+        <div className="px-4 mt-4">
+          <div className="uppercase text-xs font-semibold text-blue-200 mb-2 tracking-wide">NOTE</div>
+          <div className="bg-[#23232a] rounded-2xl p-3 shadow border border-slate-700/40 text-blue-100 text-sm whitespace-pre-wrap break-words">{expense.note}</div>
+        </div>
+      )}
+      <div className="flex-1" />
+      <button className="m-4 mt-8 text-blue-400 underline text-base font-semibold" onClick={onClose}>Close</button>
+    </div>
+  );
+}
+
+// Helper to check if a balance is settled
+function isSettled(settlements, fromUid, toUid) {
+  return settlements.some(s => s.from === fromUid && s.to === toUid && s.settled);
+}
+
+// Helper to get unsettled owes (pairs) for the breakdown modal
+function getUnsettledOwes(group, balances, settlements, myName, positive) {
+  const owes = [];
+  const claimedBy = group.claimedBy || {};
+  // Find the exact key in balances that matches myName (to avoid skipping others with similar names)
+  let myKey = Object.keys(balances).find(
+    k => k.trim().toLowerCase() === myName.trim().toLowerCase()
+  ) || myName;
+  if (positive) {
+    // They owe me: anyone with a negative balance (except me)
+    Object.entries(balances).forEach(([name, bal]) => {
+      if (name === myKey) return;
+      if (bal < 0) {
+        owes.push([name, Math.abs(bal)]);
+      }
+    });
+  } else {
+    // I owe them: anyone with a positive balance (except me)
+    Object.entries(balances).forEach(([name, bal]) => {
+      if (name === myKey) return;
+      if (bal > 0) {
+        owes.push([name, bal]);
+      }
+    });
+  }
+  return owes;
+}
+
+function GroupExpensesPage({ group, onBack, initialTab, prefill, forceAdd }) {
+  const { user } = useAuth();
+  const navigate = useNavigate();
+  const { toast } = useToast();
+  // const { groupId } = useParams();
+  const groupId = group?.id;
+  console.log('GroupExpensesPage groupId:', groupId);
+  const myName = getMyParticipantName(group, user);
+  // If user hasn't claimed a name, show a message and block actions
+  if (!myName) {
+    return (
+      <div className="min-h-screen bg-black/90 flex flex-col items-center justify-center">
+        <div className="text-white text-xl font-bold mb-4">You must claim your name to participate in this group.</div>
+        <button className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-6 rounded-xl shadow-xl transition-all duration-200 ease-in-out text-lg" onClick={onBack}>Back</button>
+      </div>
+    );
+  }
+  const [tab, setTab] = useState(() => {
+    if (initialTab && ['expenses', 'balances', 'photos'].includes(initialTab)) return initialTab;
+    return 'expenses';
+  });
+  const [tabFade, setTabFade] = useState(true);
+  const [expenses, setExpenses] = useState([]);
+  const [showAdd, setShowAdd] = useState(false);
+  const [label, setLabel] = useState(prefill?.label || '');
+  const [amount, setAmount] = useState(prefill?.amount || '');
+  const [paidBy, setPaidBy] = useState(myName);
+  const [date, setDate] = useState(() => prefill?.date || new Date().toISOString().slice(0,10));
+  const [editExpense, setEditExpense] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  // 1. Add new state for expense type, tag, photo, currency, split type, and per-member splits
+  const EXPENSE_TYPES = [
+    { key: 'expense', label: 'Expense' },
+    { key: 'income', label: 'Income' },
+    { key: 'transfer', label: 'Transfer...' },
+  ];
+  const SPLIT_TYPES = [
+    { key: 'equally', label: 'Equally' },
+    { key: 'shares', label: 'By Shares' },
+    { key: 'amounts', label: 'By Amounts' },
+  ];
+  const [expenseType, setExpenseType] = useState('expense');
+  const [tag, setTag] = useState('');
+  const [photo, setPhoto] = useState(prefill?.photo || null);
+  const [currency, setCurrency] = useState(prefill?.currency || group.currency || 'EUR');
+  const [note, setNote] = useState('');
+  const [items, setItems] = useState(() => []);
+  const [splitType, setSplitType] = useState('equally');
+  const [split, setSplit] = useState(() => {
+    const names = group.participants || [];
+    return names.reduce((acc, n) => ({ ...acc, [n]: true }), {});
+  });
+  const [splitAmounts, setSplitAmounts] = useState(() => {
+    const names = group.participants || [];
+    return names.reduce((acc, n) => ({ ...acc, [n]: '' }), {});
+  });
+  const [splitShares, setSplitShares] = useState(() => {
+    const names = group.participants || [];
+    return names.reduce((acc, n) => ({ ...acc, [n]: 1 }), {});
+  });
+
+  // Add splitEnabled state for add modal
+  const [splitEnabled, setSplitEnabled] = useState(!!prefill?.splitEnabled || false);
+  // Transfer specific state
+  const claimedNames = Object.keys(group.claimedBy || {});
+  const [transferFrom, setTransferFrom] = useState(myName || (claimedNames[0] || ''));
+  const [transferTo, setTransferTo] = useState(() => {
+    const other = claimedNames.find(n => n !== myName);
+    return other || claimedNames[0] || '';
+  });
+  // Auto-open add modal when prefill is provided or forceAdd is true; hydrate fields. Also read sessionStorage fallback.
+  useEffect(() => {
+    let effective = prefill;
+    if (!effective && typeof sessionStorage !== 'undefined') {
+      try {
+        const cached = sessionStorage.getItem(`group_prefill_${groupId}`);
+        if (cached) effective = JSON.parse(cached);
+      } catch {}
+    }
+    if (effective) {
+      if (effective.label) setLabel(effective.label);
+      if (effective.amount != null) setAmount(`${effective.amount}`);
+      if (effective.date) setDate(effective.date);
+      if (effective.currency) setCurrency(effective.currency);
+      if (effective.photo) setPhoto(effective.photo);
+      // If OCR JSON provided, surface it into note by default for audit
+      if (effective.ocrJson) {
+        try {
+          const trimmed = JSON.stringify(effective.ocrJson);
+          if (!note) setNote(trimmed);
+          if (Array.isArray(effective.ocrJson.items)) {
+            const mapped = effective.ocrJson.items.map(it => ({ name: it.description || it.name || '', price: (it.total || it.price || '').toString() }));
+            if (mapped.length) setItems(mapped);
+          }
+        } catch {}
+      }
+      if (typeof effective.splitEnabled === 'boolean') setSplitEnabled(!!effective.splitEnabled);
+      if (!showAdd) setShowAdd(true);
+      // consume prefill once modal opens so revisits don't re-open
+      try {
+        if (typeof window !== 'undefined' && window.__GROUP_PREFILL__?.groupId === groupId) delete window.__GROUP_PREFILL__;
+        sessionStorage.removeItem(`group_prefill_${groupId}`);
+      } catch {}
+    }
+    if (forceAdd && !showAdd) {
+      setShowAdd(true);
+    }
+  }, [prefill, groupId, showAdd, forceAdd]);
+  const [lastSplitType, setLastSplitType] = useState('equally');
+
+  // Load expenses for this group from Firestore
+  useEffect(() => {
+    if (!group?.id) return;
+    if (!group.claimedBy || !Object.values(group.claimedBy).includes(user?.uid)) {
+      setError('You must claim your name to view expenses.');
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    setError('');
+    // Use subcollection: groups/{groupId}/expenses
+    const expensesCol = collection(db, 'groups', group.id, 'expenses');
+    const q = query(
+      expensesCol,
+      orderBy('createdAt', 'desc')
+    );
+    const unsub = onSnapshot(q, (snapshot) => {
+      setError(''); // Clear any previous error on successful snapshot
+      setExpenses(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      setLoading(false);
+      
+      // Sync existing expenses to personal receipts if this is the first time loading
+      if (snapshot.docs.length > 0 && user?.uid) {
+        syncExistingGroupExpensesToPersonalReceipts(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      }
+    }, err => {
+      setError('Failed to load expenses');
+      setLoading(false);
+    });
+    return () => unsub();
+  }, [group?.id, group?.claimedBy, user?.uid]);
+
+  // Debug log removed to reduce render overhead
+
+  // Add expense
+  const handleAddExpense = async e => {
+    e.preventDefault();
+    if (!user || !group) return;
+    if (!group?.id) {
+      setError('Group ID is missing');
+      return;
+    }
+    setError('');
+    const myName = getMyParticipantName(group, user);
+    const parsedAmount = parseFloat(amount);
+    if (isNaN(parsedAmount) || parsedAmount <= 0) {
+      setError('Enter a valid amount');
+      return;
+    }
+    if (!label.trim()) {
+      setError('Enter a description');
+      return;
+    }
+    if (!paidBy) {
+      setError('Select who paid');
+      return;
+    }
+    if (!date) {
+      setError('Select a date');
+      return;
+    }
+    // Get selected participants for splitting
+    const selectedParticipants = (group.participants || []).filter(n => split[n]);
+    
+    if (splitEnabled && selectedParticipants.length === 0) {
+      setError('Select at least one participant');
+      return;
+    }
+    let splits = {};
+    let shares = {};
+    // Handle special types
+    if (expenseType === 'transfer') {
+      const fromUid = group.claimedBy[transferFrom];
+      const toUid = group.claimedBy[transferTo];
+      if (!fromUid || !toUid || fromUid === toUid) {
+        setError('Select two different members for a transfer');
+        return;
+      }
+      // Represent transfer as a reimbursement-like expense
+      splits = { [toUid]: parsedAmount };
+      shares = { [toUid]: 1 };
+      // Override payer
+      const payload = {
+        label: `${transferFrom} → ${transferTo}`,
+        tag,
+        amount: parsedAmount,
+        paidBy: fromUid,
+        date,
+        createdBy: user.uid,
+        createdAt: serverTimestamp(),
+        expenseType: 'reimbursement',
+        currency,
+        splitType: 'amounts',
+        splits,
+        shares,
+        photo: '',
+        photoDataUrl: '',
+        splitEnabled: true,
+        note: note || '',
+        items: [],
+      };
+      try {
+        await addDoc(collection(db, 'groups', group.id, 'expenses'), payload);
+        toast({ title: 'Transfer added', description: `${transferFrom} pays ${transferTo}` });
+        setShowAdd(false);
+        setTabFade(false);
+        setTimeout(() => { setTab('balances'); setTabFade(true); }, 120);
+      } catch (err) {
+        setError('Failed to add transfer');
+      }
+      return;
+    }
+    if (splitEnabled) {
+      if (splitType === 'equally') {
+        const share = parseFloat((parsedAmount / selectedParticipants.length).toFixed(2));
+        selectedParticipants.forEach(n => {
+          const uid = group.claimedBy[n];
+          const key = uid || n;
+          splits[key] = share;
+          shares[key] = 1;
+        });
+      } else if (splitType === 'amounts') {
+        let total = 0;
+        for (const n of selectedParticipants) {
+          const val = parseFloat(splitAmounts[n]);
+          if (isNaN(val) || val < 0) {
+            setError('Enter valid amounts for all selected');
+            return;
+          }
+          total += val;
+        }
+        if (Math.abs(total - parsedAmount) > 0.01) {
+          setError('Split amounts must sum to total');
+          return;
+        }
+        selectedParticipants.forEach(n => {
+          const uid = group.claimedBy[n];
+          const key = uid || n;
+          splits[key] = parseFloat(splitAmounts[n]);
+          shares[key] = 1;
+        });
+      } else if (splitType === 'shares') {
+        let totalShares = 0;
+        for (const n of selectedParticipants) {
+          const val = parseInt(splitShares[n]) || 0;
+          if (isNaN(val) || val <= 0) {
+            setError('Enter valid shares for all selected');
+            return;
+          }
+          totalShares += val;
+        }
+        selectedParticipants.forEach(n => {
+          const uid = group.claimedBy[n];
+          const key = uid || n;
+          const sharesCount = parseInt(splitShares[n]) || 0;
+          splits[key] = parseFloat(((parsedAmount * sharesCount) / totalShares).toFixed(2));
+          shares[key] = sharesCount;
+        });
+      }
+    }
+    try {
+      // Image upload disabled: persist inline data URL (if any) only inside the expense document
+      const photoUrl = '';
+      const photoDataUrlFallback = (photo && typeof photo === 'string' && photo.startsWith('data:')) ? photo : '';
+
+      // Use subcollection: groups/{groupId}/expenses
+      const groupExpenseData = {
+        label: label.trim(),
+        tag,
+        amount: parsedAmount,
+        paidBy: group.claimedBy[paidBy],
+        date,
+        createdBy: user.uid,
+        createdAt: serverTimestamp(),
+        expenseType,
+        currency,
+        splitType,
+        splits,
+        shares, // Save shares mapping
+        photo: photoUrl,
+        photoDataUrl: photoDataUrlFallback,
+        splitEnabled, // Save splitEnabled state
+        note: note || '',
+        items: (Array.isArray(items) ? items.filter(it => (it.name || it.price)).map(it => ({ name: it.name || '', price: parseFloat(it.price) || 0 })) : []),
+      };
+
+      const groupExpenseRef = await addDoc(collection(db, 'groups', group.id, 'expenses'), groupExpenseData);
+
+      // Sync to personal receipts ONLY if the current user paid for this expense
+      // Personal receipts should only show actual money spent or received, not future obligations
+      if (group.claimedBy[paidBy] === user.uid) {
+        await syncGroupExpenseToPersonalReceipts(groupExpenseRef.id, groupExpenseData, group);
+      }
+
+      // 3) Toast and auto-switch to balances
+      toast({ title: 'Saved to group', description: photoDataUrlFallback ? 'Expense added (photo kept locally).' : 'Expense added successfully.' });
+      setShowAdd(false);
+      setTabFade(false);
+      setTimeout(() => { setTab('balances'); setTabFade(true); }, 120);
+      setLabel('');
+      setAmount('');
+      setPaidBy(myName);
+      setDate(new Date().toISOString().slice(0,10));
+      setTag('');
+      setPhoto(null);
+      setNote('');
+      setItems([]);
+      setSplitType('equally');
+      setSplit(() => (group.participants || []).reduce((acc, n) => ({ ...acc, [n]: true }), {}));
+      setSplitAmounts(() => (group.participants || []).reduce((acc, n) => ({ ...acc, [n]: '' }), {}));
+      setSplitShares(() => (group.participants || []).reduce((acc, n) => ({ ...acc, [n]: 1 }), {}));
+    } catch (err) {
+      setError('Failed to add expense');
+    }
+  };
+
+  // Function to sync group expenses to personal receipts
+  const syncGroupExpenseToPersonalReceipts = async (groupExpenseId, groupExpenseData, group) => {
+    try {
+      const personalReceiptData = {
+        userId: user.uid,
+        merchant: groupExpenseData.label,
+        date: groupExpenseData.date,
+        transactionDate: groupExpenseData.createdAt,
+        total: groupExpenseData.amount,
+        subtotal: groupExpenseData.amount,
+        tax: 0,
+        paymentMethod: 'Other',
+        currency: groupExpenseData.currency || 'EUR',
+        items: groupExpenseData.items || [],
+        category: groupExpenseData.tag || 'Group Expense',
+        note: `Group: ${group.name}${groupExpenseData.note ? ` - ${groupExpenseData.note}` : ''}`,
+        createdAt: serverTimestamp(),
+        groupId: group.id,
+        groupExpenseId: groupExpenseId,
+        expenseType: groupExpenseData.expenseType,
+        isGroupExpense: true,
+        paidBy: groupExpenseData.paidBy,
+        splits: groupExpenseData.splits,
+        shares: groupExpenseData.shares,
+        splitEnabled: groupExpenseData.splitEnabled,
+        splitType: groupExpenseData.splitType,
+      };
+
+      await addDoc(collection(db, 'users', user.uid, 'receipts'), personalReceiptData);
+    } catch (error) {
+      console.error('Failed to sync group expense to personal receipts:', error);
+    }
+  };
+
+  // Function to sync reimbursements to personal receipts (positive amounts)
+  const syncReimbursementToPersonalReceipts = async (groupExpenseId, reimbursementData, group, amount) => {
+    try {
+      const personalReceiptData = {
+        userId: user.uid,
+        merchant: `Reimbursement from ${getNameByUid(group, reimbursementData.paidBy)}`,
+        date: reimbursementData.date,
+        transactionDate: reimbursementData.createdAt,
+        total: amount, // Positive amount for reimbursement
+        subtotal: amount,
+        tax: 0,
+        paymentMethod: 'Other',
+        currency: reimbursementData.currency || 'EUR',
+        items: [],
+        category: 'Reimbursement',
+        note: `Group: ${group.name} - Reimbursement`,
+          createdAt: serverTimestamp(),
+        groupId: group.id,
+        groupExpenseId: groupExpenseId,
+        expenseType: 'reimbursement',
+        isGroupExpense: true,
+        isReimbursement: true,
+        paidBy: reimbursementData.paidBy,
+        splits: reimbursementData.splits,
+        shares: reimbursementData.shares,
+        splitEnabled: reimbursementData.splitEnabled,
+        splitType: reimbursementData.splitType,
+      };
+
+      await addDoc(collection(db, 'users', user.uid, 'receipts'), personalReceiptData);
+    } catch (error) {
+      console.error('Failed to sync reimbursement to personal receipts:', error);
+    }
+  };
+
+
+
+  // Helper function to update personal receipt for group expense
+  const updatePersonalReceiptForGroupExpense = async (groupExpenseId, updatedExpense) => {
+    try {
+      // Find and update the corresponding personal receipt
+      const personalReceiptsQuery = query(
+        collection(db, 'users', user.uid, 'receipts'),
+        where('groupExpenseId', '==', groupExpenseId)
+      );
+      const personalReceiptsSnapshot = await getDocs(personalReceiptsQuery);
+      
+      personalReceiptsSnapshot.forEach(async (doc) => {
+        const receiptData = doc.data();
+        const isReimbursement = receiptData.isReimbursement;
+        
+        let updatedData = {};
+        if (isReimbursement) {
+          // Update reimbursement receipt
+          updatedData = {
+            merchant: `Reimbursement from ${getNameByUid(group, updatedExpense.paidBy)}`,
+            total: updatedExpense.amount,
+            subtotal: updatedExpense.amount,
+            date: updatedExpense.date,
+          };
+        } else {
+          // Update full group expense receipt
+          updatedData = {
+            merchant: updatedExpense.label,
+            total: updatedExpense.amount,
+            subtotal: updatedExpense.amount,
+            date: updatedExpense.date,
+          };
+        }
+        
+        await updateDoc(doc.ref, updatedData);
+      });
+    } catch (error) {
+      console.error('Failed to update personal receipt for group expense:', error);
+    }
+  };
+
+  // Helper function to delete personal receipts for group expense
+  const deletePersonalReceiptsForGroupExpense = async (groupExpenseId) => {
+    try {
+      // Find and delete all corresponding personal receipts
+      const personalReceiptsQuery = query(
+        collection(db, 'users', user.uid, 'receipts'),
+        where('groupExpenseId', '==', groupExpenseId)
+      );
+      const personalReceiptsSnapshot = await getDocs(personalReceiptsQuery);
+      
+      const deletePromises = personalReceiptsSnapshot.docs.map(doc => deleteDoc(doc.ref));
+      await Promise.all(deletePromises);
+    } catch (error) {
+      console.error('Failed to delete personal receipts for group expense:', error);
+    }
+  };
+
+  // Function to sync existing group expenses to personal receipts (for new group members)
+  const syncExistingGroupExpensesToPersonalReceipts = async (existingExpenses) => {
+    try {
+      // Check if we already have personal receipts for this group
+      const existingPersonalReceiptsQuery = query(
+        collection(db, 'users', user.uid, 'receipts'),
+        where('groupId', '==', group.id)
+      );
+      const existingPersonalReceiptsSnapshot = await getDocs(existingPersonalReceiptsQuery);
+      
+      // If we already have personal receipts for this group, don't sync again
+      if (!existingPersonalReceiptsSnapshot.empty) {
+        return;
+      }
+
+      // Sync each existing expense
+      for (const expense of existingExpenses) {
+        if (expense.expenseType === 'reimbursement') {
+          // Handle reimbursements
+          const toUid = Object.keys(expense.splits || {})[0];
+          if (toUid === user.uid) {
+            await syncReimbursementToPersonalReceipts(expense.id, expense, group, expense.amount);
+          }
+        } else {
+          // Handle regular expenses - only if user paid for them
+          if (expense.paidBy === user.uid) {
+            await syncGroupExpenseToPersonalReceipts(expense.id, expense, group);
+          }
+          // Note: We don't create entries for expenses others paid for, as personal receipts
+          // should only show actual money spent or received, not future obligations
+        }
+      }
+    } catch (error) {
+      console.error('Failed to sync existing group expenses to personal receipts:', error);
+    }
+  };
+
+  // Edit expense
+  const handleEditExpense = async e => {
+    e.preventDefault();
+    if (!user || !editExpense) return;
+    if (!group?.id) {
+      setError('Group ID is missing');
+      return;
+    }
+    setError('');
+    try {
+      // Use subcollection: groups/{groupId}/expenses
+      await updateDoc(doc(db, 'groups', group.id, 'expenses', editExpense.id), {
+        label: editExpense.label,
+        amount: parseFloat(editExpense.amount),
+        paidBy: editExpense.paidBy,
+        date: editExpense.date,
+      });
+      
+      // Update corresponding personal receipt if it exists
+      await updatePersonalReceiptForGroupExpense(editExpense.id, editExpense);
+      
+      setEditExpense(null);
+    } catch (err) {
+      setError('Failed to update expense');
+    }
+  };
+
+  // Delete expense
+  const handleDelete = async id => {
+    if (!group?.id) {
+      setError('Group ID is missing');
+      return;
+    }
+    try {
+      // Delete corresponding personal receipts first
+      await deletePersonalReceiptsForGroupExpense(id);
+      
+      // Use subcollection: groups/{groupId}/expenses
+      await deleteDoc(doc(db, 'groups', group.id, 'expenses', id));
+    } catch (err) {
+      setError('Failed to delete expense');
+    }
+  };
+
+  // Animated tab transitions
+  const handleTabChange = (newTab) => {
+    if (tab === newTab) return;
+    setTabFade(false);
+    setTimeout(() => {
+      setTab(newTab);
+      setTabFade(true);
+    }, 180); // match transition duration
+  };
+
+  // Update URL and document title/meta when tab changes
+  useEffect(() => {
+    // Defer URL change if Add modal is being opened via prefill to avoid losing modal state
+    const hasPrefill = (typeof window !== 'undefined' && window.__GROUP_PREFILL__ && window.__GROUP_PREFILL__.groupId === groupId);
+    if (!showAdd && !hasPrefill && groupId) {
+      navigate(`/group/${groupId}/${tab}`); // push to history
+    }
+    let tabLabel = tab.charAt(0).toUpperCase() + tab.slice(1);
+    document.title = `${group.name} – ${tabLabel} | ReceipTrack`;
+    // SEO: set meta description and canonical
+    const metaDesc = document.querySelector('meta[name="description"]');
+    if (metaDesc) metaDesc.setAttribute('content', `${group.name} – ${tabLabel} tab in ReceipTrack group expenses app.`);
+    let link = document.querySelector('link[rel="canonical"]');
+    if (!link) {
+      link = document.createElement('link');
+      link.setAttribute('rel', 'canonical');
+      document.head.appendChild(link);
+    }
+    link.setAttribute('href', window.location.href);
+  }, [tab, groupId, group.name, navigate, showAdd]);
+
+  // Add these handlers for edit dialog
+  const handleEditSave = async (updated) => {
+    if (!group?.id) {
+      setError('Group ID is missing');
+      return;
+    }
+    setError('');
+    try {
+      // Log the data before sending to Firestore
+      // Use subcollection: groups/{groupId}/expenses
+      // Ensure all required fields are present for update
+      const original = editExpense;
+      await updateDoc(doc(db, 'groups', group.id, 'expenses', editExpense.id), {
+        label: updated.label,
+        tag: updated.tag || '',
+        amount: updated.amount,
+        paidBy: updated.paidBy,
+        date: updated.date,
+        createdBy: original.createdBy || user.uid,
+        createdAt: original.createdAt || serverTimestamp(),
+        expenseType: updated.expenseType || original.expenseType || 'expense',
+        currency: updated.currency || original.currency || group.currency || 'EUR',
+        splitType: updated.splitType || original.splitType || 'equally',
+        splits: updated.splits, // Always update splits (for all split types)
+        shares: updated.shares, // Always update shares (for all split types)
+        photo: updated.photo || '',
+        splitEnabled: updated.splitEnabled !== undefined ? updated.splitEnabled : (original.splitEnabled !== undefined ? original.splitEnabled : true),
+      });
+      setEditExpense(null);
+    } catch (err) {
+      setError('Failed to update expense');
+      console.error('Failed to update expense:', err);
+    }
+  };
+
+  const handleEditDelete = async () => {
+    if (!group?.id) {
+      setError('Group ID is missing');
+      return;
+    }
+    try {
+      await deleteDoc(doc(db, 'groups', group.id, 'expenses', editExpense.id));
+      setEditExpense(null);
+    } catch (err) {
+      setError('Failed to delete expense');
+    }
+  };
+
+  const [showBreakdown, setShowBreakdown] = useState(false);
+  const [confirmMarkPaid, setConfirmMarkPaid] = useState(null); // {name, amount} or null
+
+  // Share handler
+  function handleRemind(name, amount) {
+    // Find the most recent relevant expense label (if any)
+    let recentExpense = null;
+    if (Array.isArray(expenses)) {
+      recentExpense = expenses
+        .filter(exp => {
+          // Owed person is in splits, and current user is paidBy
+          const paidByName = getNameByUid(group, exp.paidBy);
+          return paidByName === getMyParticipantName(group, user) && exp.splits && Object.keys(exp.splits).some(uid => getNameByUid(group, uid) === name);
+        })
+        .sort((a, b) => new Date(b.date) - new Date(a.date))[0];
+    }
+    const expenseLabel = recentExpense ? ` for "${recentExpense.label}"` : '';
+    const message = `Hi ${name},
+
+You owe me ${amount.toFixed(2)} ${group.currency || '€'} in the group "${group.name}"${expenseLabel}.
+
+Please settle up when you can. Thank you!`;
+    if (navigator.share) {
+      navigator.share({ title: 'Payment Reminder', text: message });
+    } else {
+      navigator.clipboard.writeText(message);
+      alert('Copied reminder to clipboard!');
+    }
+  }
+
+  async function handleMarkAsPaid({ name, amount }) {
+    if (!group || !user) return;
+    if (!group?.id) {
+      alert('Group ID is missing. Please try again.');
+      return;
+    }
+    const myName = getMyParticipantName(group, user);
+    let fromUid, toUid;
+    // If my balance is negative, I am paying (I owe)
+    if (myBalance < 0) {
+      fromUid = group.claimedBy[myName] || myName;
+      toUid = group.claimedBy[name] || name;
+    } else {
+      // If my balance is positive, I am being paid (they owe me)
+      fromUid = group.claimedBy[name] || name;
+      toUid = group.claimedBy[myName] || myName;
+    }
+    if (!fromUid || !toUid) {
+      alert('Could not find user ID for settlement.');
+      return;
+    }
+    try {
+      const settlementId = `${fromUid}_${toUid}`;
+      await setDoc(doc(db, 'groups', group.id, 'settlements', settlementId), {
+        from: fromUid,
+        to: toUid,
+        amount,
+        settled: true,
+        settledAt: serverTimestamp(),
+      });
+      // Add reimbursement expense to expenses collection
+      const payerName = getNameByUid(group, fromUid);
+      const payeeName = getNameByUid(group, toUid);
+      const now = new Date();
+      const reimbursementData = {
+        label: `${payerName} paid ${payeeName}`,
+        amount: amount,
+        paidBy: fromUid,
+        date: now.toISOString().slice(0,10),
+        createdBy: user.uid, // Use the authenticated user
+        createdAt: serverTimestamp(), // Always include createdAt
+        expenseType: 'reimbursement',
+        currency: group.currency || 'EUR',
+        splitType: 'reimbursement',
+        splits: { [toUid]: amount },
+        shares: { [toUid]: 1 },
+        splitEnabled: false,
+        tag: 'reimbursement',
+        photo: '',
+      };
+      
+      const reimbursementRef = await addDoc(collection(db, 'groups', group.id, 'expenses'), reimbursementData);
+      
+      // Sync reimbursement to personal receipts for the person being paid (positive amount)
+      if (toUid === user.uid) {
+        await syncReimbursementToPersonalReceipts(reimbursementRef.id, reimbursementData, group, amount);
+      }
+      
+      setConfirmMarkPaid(null);
+      setShowBreakdown(false);
+    } catch (error) {
+      console.error('Error marking as paid:', error);
+      alert('Error marking as paid. Please try again.');
+    }
+  }
+
+  const [settlements, setSettlements] = useState([]);
+  // Listen to settlements in real-time
+  useEffect(() => {
+    if (!group?.id) return;
+    const settlementsCol = collection(db, 'groups', group.id, 'settlements');
+    const unsub = onSnapshot(settlementsCol, (snapshot) => {
+      setSettlements(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    });
+    return () => unsub();
+  }, [group?.id]);
+
+  // Use the new hook for balances
+  const { balances, loading: balancesLoading, error: balancesError } = useGroupBalances(groupId);
+
+  // Before rendering the breakdown modal, define myBalance in the same scope
+  const myBalance = balances[myName] || 0;
+
+  // Add state for modals/dialogs at the top of the component
+  const [showShareGroup, setShowShareGroup] = useState(false);
+  const [showEditGroup, setShowEditGroup] = useState(false);
+  const [showInsights, setShowInsights] = useState(false);
+  const [showArchiveConfirm, setShowArchiveConfirm] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+
+  // In the component, add state for editing group fields
+  const [editGroupName, setEditGroupName] = useState(group.name);
+  const [editGroupCurrency, setEditGroupCurrency] = useState(group.currency);
+  const [editParticipants, setEditParticipants] = useState(group.participants || []);
+  const [editParticipantInput, setEditParticipantInput] = useState("");
+  const [editGroupLoading, setEditGroupLoading] = useState(false);
+  const [editGroupError, setEditGroupError] = useState("");
+
+  // In the Group Insights modal, compute insights from expenses and balances
+  const totalSpent = expenses.reduce((sum, exp) => sum + (parseFloat(exp.amount) || 0), 0);
+  const payerTotals = {};
+  expenses.forEach(exp => { if (exp.paidBy) payerTotals[exp.paidBy] = (payerTotals[exp.paidBy] || 0) + (parseFloat(exp.amount) || 0); });
+  const topPayerUid = Object.entries(payerTotals).sort((a, b) => b[1] - a[1])[0]?.[0];
+  const topPayerName = topPayerUid ? getNameByUid(group, topPayerUid) : '-';
+  const topPayerAmount = topPayerUid ? payerTotals[topPayerUid] : 0;
+  const spenderTotals = {};
+  Object.entries(balances).forEach(([name, bal]) => { spenderTotals[name] = bal; });
+  const topSpender = Object.entries(spenderTotals).sort((a, b) => a[1] - b[1])[0];
+  const topSpenderName = topSpender ? topSpender[0] : '-';
+  const topSpenderAmount = topSpender ? topSpender[1] : 0;
+  const participantCounts = {};
+  expenses.forEach(exp => { Object.keys(exp.splits || {}).forEach(uid => { participantCounts[uid] = (participantCounts[uid] || 0) + 1; }); });
+  const mostFrequentUid = Object.entries(participantCounts).sort((a, b) => b[1] - a[1])[0]?.[0];
+  const mostFrequentName = mostFrequentUid ? getNameByUid(group, mostFrequentUid) : '-';
+  const mostFrequentCount = mostFrequentUid ? participantCounts[mostFrequentUid] : 0;
+  const largestExpense = expenses.sort((a, b) => (parseFloat(b.amount) || 0) - (parseFloat(a.amount) || 0))[0];
+
+  // Add helper to check if user is group creator
+  function isGroupCreator(group, user) {
+    return group && user && group.createdBy === user.uid;
+  }
+
+  const [showNotOwnerDelete, setShowNotOwnerDelete] = useState(false);
+  const [simplifyDebts, setSimplifyDebts] = useState(false);
+
+  // In GroupExpensesPage, add these states at the top level (before return):
+  const [selectedCategory, setSelectedCategory] = useState(null);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [expandedExpenseId, setExpandedExpenseId] = useState(null);
+
+  // Add at the top level, after other helpers:
+  function getRecentExpenses(expenses, cat) {
+    return expenses
+      .filter(exp => (exp.tag || 'Other') === cat)
+      .sort((a, b) => {
+        const aTime = a.createdAt && typeof a.createdAt.seconds === 'number' ? a.createdAt.seconds : 0;
+        const bTime = b.createdAt && typeof b.createdAt.seconds === 'number' ? b.createdAt.seconds : 0;
+        return bTime - aTime;
+      })
+      .slice(0, 5);
+  }
+
+        return (
+    <>
+      <Helmet>
+        <title>{group.name} – {tab.charAt(0).toUpperCase() + tab.slice(1)} | ReceipTrack</title>
+        <meta name="description" content={`${group.name} – ${tab.charAt(0).toUpperCase() + tab.slice(1)} tab in ReceipTrack group expenses app.`} />
+        <link rel="canonical" href={window.location.href} />
+      </Helmet>
+    <div className="min-h-screen bg-app-bg flex flex-col text-app-fg">
+
+        {/* Group header */}
+        <div className="sticky top-0 z-30 border-b border-slate-800/70 bg-app-bg/95 backdrop-blur">
+          <div className="flex items-center px-4 pt-4 pb-2">
+            <button className="text-slate-300 hover:text-white p-2" onClick={onBack} aria-label="Back">
+              <ArrowLeft className="h-5 w-5" />
+            </button>
+            <h1 className="text-xl font-semibold text-white flex-1 text-center truncate px-2">{group.name}</h1>
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => setShowBreakdown(true)}
+                className="text-blue-400 text-sm font-semibold px-2 py-1 rounded-full hover:bg-blue-500/10"
+              >
+                Settle Up
+              </button>
+              <DropdownMenu.Root>
+                <DropdownMenu.Trigger asChild>
+                  <button className="p-2 rounded-full hover:bg-app-surface focus:outline-none" aria-label="Group options">
+                    <MoreVertical className="h-5 w-5 text-white" />
+                  </button>
+                </DropdownMenu.Trigger>
+                <DropdownMenu.Content className="z-50 min-w-[180px] bg-[#1c1f27] text-white rounded-xl shadow-xl border border-[#2a3241] py-2 px-1">
+                  <DropdownMenu.Item className="px-4 py-2 rounded hover:bg-white/5 cursor-pointer" onClick={() => setShowShareGroup(true)}>Share group</DropdownMenu.Item>
+                  <DropdownMenu.Item className="px-4 py-2 rounded hover:bg-white/5 cursor-pointer" onClick={() => setShowEditGroup(true)}>Edit group</DropdownMenu.Item>
+                  <DropdownMenu.Item className="px-4 py-2 rounded hover:bg-white/5 cursor-pointer" onClick={() => setShowInsights(true)}>Insights</DropdownMenu.Item>
+                  <DropdownMenu.Item className="px-4 py-2 rounded hover:bg-white/5 cursor-pointer" onClick={() => setShowArchiveConfirm(true)}>Archive group</DropdownMenu.Item>
+                  <DropdownMenu.Item className="px-4 py-2 rounded hover:bg-red-500/20 text-red-400 cursor-pointer" onClick={() => {
+                    if (isGroupCreator(group, user)) {
+                      setShowDeleteConfirm(true);
+                    } else {
+                      setShowNotOwnerDelete(true);
+                    }
+                  }}>Delete group</DropdownMenu.Item>
+                </DropdownMenu.Content>
+              </DropdownMenu.Root>
+            </div>
+          </div>
+          <p className="text-center text-xs text-app-muted pb-3">Default Currency: {group.currency || 'EUR'}</p>
+        </div>
+
+        {/* Group tabs */}
+        <div className="flex gap-6 border-b border-slate-800/70 px-4">
+          {TABS.map(t => (
+            <button
+              key={t.key}
+              className={`py-3 text-sm font-semibold transition-colors ${tab === t.key ? 'text-blue-400 border-b-2 border-blue-500' : 'text-slate-400 hover:text-white'}`}
+              onClick={() => handleTabChange(t.key)}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+        {tab === 'overview' && (
+          <>
+            <GroupInsightsOverview
+            expenses={expenses}
+            group={group}
+            myBalance={myBalance}
+            myName={myName}
+            onSettle={() => setShowBreakdown(true)}
+            selectedCategory={selectedCategory}
+            setSelectedCategory={setSelectedCategory}
+              modalOpen={modalOpen}
+              setModalOpen={setModalOpen}
+              expandedExpenseId={expandedExpenseId}
+              setExpandedExpenseId={setExpandedExpenseId}
+            />
+            <details className="w-full max-w-md mx-auto px-4">
+              <summary className="text-blue-400 text-sm font-semibold cursor-pointer">View report</summary>
+              <div className="mt-3 rounded-2xl bg-slate-900/70 border border-slate-800/70 p-4">
+                <GroupInsightsGraph expenses={expenses} group={group} />
+              </div>
+            </details>
+          </>
+        )}
+        <div className={`flex-1 transition-opacity duration-200 px-4 pb-24 ${tabFade ? 'opacity-100' : 'opacity-0'}`}>
+          {loading ? (
+            <div className="text-center text-blue-200/70 mt-12 text-lg">Loading expenses...</div>
+          ) : error ? (
+            <div className="text-center text-red-400 mt-12 text-lg">{error}</div>
+          ) : tab === 'expenses' && expenses.length === 0 ? (
+            <div className="flex flex-col items-center justify-center mt-8">
+              <svg width="64" height="64" viewBox="0 0 24 24" fill="none"><path d="M12 8v4l3 3" stroke="#888" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/><circle cx="12" cy="12" r="10" stroke="#888" strokeWidth="2"/></svg>
+              <div className="text-white text-lg font-semibold mt-4">No expenses yet</div>
+              <div className="text-blue-200 text-center mt-2 px-4">Add an expense by tapping the "+" button to start tracking and splitting your group expenses.</div>
+            </div>
+          ) : tab === 'expenses' && expenses.length > 0 && (
+            <div className="w-full max-w-md mx-auto flex flex-col gap-4">
+              {(() => {
+                const totalSpent = expenses.reduce((sum, exp) => sum + (parseFloat(exp.amount) || 0), 0);
+                const balanceValue = typeof myBalance === 'number' && !isNaN(myBalance) ? myBalance : 0;
+                const sorted = expenses.slice().sort((a, b) => {
+                  const aTime = a.createdAt && typeof a.createdAt.seconds === 'number' ? a.createdAt.seconds * 1000 : new Date(a.date || 0).getTime();
+                  const bTime = b.createdAt && typeof b.createdAt.seconds === 'number' ? b.createdAt.seconds * 1000 : new Date(b.date || 0).getTime();
+                  return bTime - aTime;
+                });
+                const grouped = groupExpensesByDay(sorted);
+                const myUid = group.claimedBy[myName];
+                const filters = ['All', 'Your Expenses', 'Category', 'Unsettled'];
+                return (
+                  <>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="rounded-2xl bg-slate-900/70 border border-slate-800/70 p-4">
+                        <div className="text-xs text-slate-400">Total Spent</div>
+                        <div className="mt-2 text-2xl font-semibold text-white">{totalSpent.toFixed(2)} {group.currency || 'EUR'}</div>
+                      </div>
+                      <div className="rounded-2xl bg-slate-900/70 border border-slate-800/70 p-4">
+                        <div className="text-xs text-slate-400">{balanceValue >= 0 ? 'You are owed' : 'You owe'}</div>
+                        <div className={balanceValue >= 0 ? 'mt-2 text-2xl font-semibold text-green-400' : 'mt-2 text-2xl font-semibold text-red-400'}>
+                          {Math.abs(balanceValue).toFixed(2)} {group.currency || 'EUR'}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex gap-2 overflow-x-auto pb-1">
+                      {filters.map((label, idx) => (
+                        <button
+                          key={label}
+                          type="button"
+                          aria-disabled={idx !== 0}
+                          className={idx === 0 ? 'px-4 py-2 rounded-full bg-blue-600 text-white text-sm font-semibold' : 'px-4 py-2 rounded-full bg-slate-800/70 text-slate-400 text-sm font-semibold'}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="space-y-4">
+                      {grouped.map(groupItem => (
+                        <div key={groupItem.label} className="space-y-3">
+                          <div className="text-xs text-slate-400 uppercase tracking-widest">{groupItem.label}</div>
+                          <div className="space-y-3">
+                            {groupItem.expenses.map(exp => {
+                              const isPayer = exp.paidBy === myUid;
+                              const isRecipient = exp.splits && Object.keys(exp.splits).includes(myUid) && !isPayer;
+                              const statusLabel = isPayer ? 'Lent' : (isRecipient ? 'Borrowed' : '');
+                              const statusClass = isPayer ? 'text-blue-400' : (isRecipient ? 'text-red-400' : 'text-slate-400');
+                              return (
+                                <div
+                                  key={exp.id}
+                                  className="flex items-center gap-3 rounded-2xl bg-slate-900/70 border border-slate-800/70 p-4 cursor-pointer hover:bg-slate-800/80 transition"
+                                  onClick={() => setEditExpense(exp)}
+                                >
+                                  <div className="h-12 w-12 rounded-full bg-slate-800 flex items-center justify-center text-sm font-semibold text-slate-200">
+                                    {(exp.tag || 'O').slice(0, 1)}
+                                  </div>
+                                  <div className="flex-1 min-w-0">
+                                    <div className="font-semibold text-white text-base truncate">{exp.label}</div>
+                                    <div className="text-slate-400 text-sm truncate">Paid by {getNameByUid(group, exp.paidBy)}</div>
+                                  </div>
+                                  <div className="text-right">
+                                    <div className="font-semibold text-white text-base">{parseFloat(exp.amount).toFixed(2)} {group.currency || 'EUR'}</div>
+                                    <div className={`text-xs ${statusClass}`}>{statusLabel}</div>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowAdd(true)}
+                      className="mt-2 w-full rounded-full bg-blue-600 hover:bg-blue-500 text-white font-semibold py-4 text-lg"
+                    >
+                      Add Expense
+                    </button>
+                  </>
+                );
+              })()}
+            </div>
+          )}
+          {/* BALANCES TAB */}
+          {tab === 'balances' && (
+            <div className="w-full max-w-md mx-auto flex flex-col gap-4">
+              {(() => {
+                if (balancesLoading) return <div className="text-center text-blue-200/70 mt-12 text-lg">Loading balances...</div>;
+                if (balancesError) return <div className="text-center text-red-400 mt-12 text-lg">{balancesError}</div>;
+                const myBalanceValue = balances[myName] || 0;
+                const owesList = getUnsettledOwes(group, balances, settlements, myName, myBalanceValue > 0);
+                const otherBalances = Object.entries(balances).filter(([name]) => name !== myName).slice(0, 3);
+                return (
+                  <>
+                    <div className="rounded-2xl bg-slate-900/70 border border-slate-800/70 p-5 flex items-center justify-between">
+                      <div>
+                        <div className="text-xs text-slate-400 uppercase">Total Balance</div>
+                        <div className={myBalanceValue >= 0 ? 'text-3xl font-semibold text-blue-400 mt-2' : 'text-3xl font-semibold text-red-400 mt-2'}>
+                          {myBalanceValue >= 0 ? '+' : '-'}{Math.abs(myBalanceValue).toFixed(2)} {group.currency || 'EUR'}
+                        </div>
+                        <div className="text-sm text-slate-400">{myBalanceValue >= 0 ? 'You are owed in total' : 'You owe in total'}</div>
+                      </div>
+                      <div className="h-12 w-12 rounded-full border-4 border-blue-500/40 flex items-center justify-center text-blue-400 text-lg">^</div>
+                    </div>
+
+                    <div className="rounded-2xl bg-slate-900/70 border border-slate-800/70 p-4 flex items-center justify-between">
+                      <div>
+                        <div className="text-sm font-semibold text-white">Simplify Debts</div>
+                        <div className="text-xs text-slate-400">Minimize transactions</div>
+                      </div>
+                      <label className="relative inline-flex items-center cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={simplifyDebts}
+                          onChange={e => setSimplifyDebts(e.target.checked)}
+                          className="sr-only"
+                        />
+                        <span className={simplifyDebts ? 'w-11 h-6 bg-blue-600 rounded-full transition' : 'w-11 h-6 bg-slate-700 rounded-full transition'}></span>
+                        <span className={simplifyDebts ? 'absolute left-1 top-1 h-4 w-4 bg-white rounded-full transition translate-x-5' : 'absolute left-1 top-1 h-4 w-4 bg-white rounded-full transition'}></span>
+                      </label>
+                    </div>
+
+                    <div className="flex items-center justify-between">
+                      <div className="text-lg font-semibold text-white">Your Transactions</div>
+                      <button type="button" className="text-blue-400 text-sm">View all</button>
+                    </div>
+                    <div className="space-y-3">
+                      {owesList.map(([name, bal]) => (
+                        <div key={name} className="rounded-2xl bg-slate-900/70 border border-slate-800/70 p-4 flex items-center gap-3">
+                          <div className="h-12 w-12 rounded-full bg-slate-800 flex items-center justify-center text-sm font-semibold text-slate-200">{getInitials(name)}</div>
+                          <div className="flex-1">
+                            <div className="text-white font-semibold">{name}</div>
+                            <div className={myBalanceValue > 0 ? 'text-green-400 text-sm' : 'text-red-400 text-sm'}>
+                              {myBalanceValue > 0 ? `owes you ${bal.toFixed(2)} ${group.currency || 'EUR'}` : `you owe ${bal.toFixed(2)} ${group.currency || 'EUR'}`}
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (myBalanceValue > 0) {
+                                handleRemind(name, Math.abs(bal));
+                              } else {
+                                setConfirmMarkPaid({ name, amount: Math.abs(bal) });
+                              }
+                            }}
+                            className={myBalanceValue > 0 ? 'px-4 py-2 rounded-full bg-slate-800 text-white text-sm font-semibold' : 'px-4 py-2 rounded-full bg-blue-600 text-white text-sm font-semibold'}
+                          >
+                            {myBalanceValue > 0 ? 'Remind' : 'Pay'}
+                          </button>
+                        </div>
+                      ))}
+                      {owesList.length === 0 && (
+                        <div className="text-sm text-slate-400">All settled up.</div>
+                      )}
+                    </div>
+
+                    <div className="mt-2">
+                      <div className="text-lg font-semibold text-white mb-2">Other Balances</div>
+                      <div className="text-sm text-slate-400 mb-3">Balances that do not involve you directly.</div>
+                      <div className="space-y-3">
+                        {otherBalances.map(([name, bal]) => (
+                          <div key={name} className="rounded-2xl bg-slate-900/70 border border-slate-800/70 p-4 flex items-center justify-between">
+                            <div>
+                              <div className="text-white font-semibold">{name}</div>
+                              <div className="text-xs text-slate-400">{bal > 0 ? 'is owed' : 'owes'} {Math.abs(bal).toFixed(2)} {group.currency || 'EUR'}</div>
+                            </div>
+                            <div className="h-8 w-8 rounded-full bg-slate-800 flex items-center justify-center text-slate-400">&gt;</div>
+                          </div>
+                        ))}
+                        {otherBalances.length === 0 && (
+                          <div className="text-sm text-slate-400">No other balances.</div>
+                        )}
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => setShowBreakdown(true)}
+                      className="mt-4 w-full rounded-full bg-blue-600 hover:bg-blue-500 text-white font-semibold py-4 text-lg"
+                    >
+                      Settle Up
+                    </button>
+                  </>
+                );
+              })()}
+            </div>
+          )}
+          {/* TODO: Photos tab */}
+        </div>
+      </div>
+      {tab !== 'expenses' && (
+        <button
+          className="fixed bottom-24 left-1/2 -translate-x-1/2 z-50 bg-blue-600 hover:bg-blue-700 text-white rounded-full w-14 h-14 md:w-16 md:h-16 flex items-center justify-center shadow-2xl border-4 border-blue-900 transition-all duration-300 ease-in-out active:scale-95 text-2xl md:text-3xl"
+          onClick={() => setShowAdd(true)}
+        >
+          <Plus className="h-8 w-8 md:h-10 md:w-10" />
+        </button>
+      )}
+      {/* Add Expense Modal */}
+      <Dialog open={showAdd} onOpenChange={setShowAdd}>
+        <DialogContent className="bg-gradient-to-b from-slate-950 via-slate-950 to-slate-900 text-white border border-slate-800/60 rounded-3xl shadow-2xl max-w-md w-[95vw] p-0 flex flex-col max-h-[92vh]">
+          <form onSubmit={handleAddExpense} className="flex flex-col max-h-[92vh]">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-800/70">
+              <button type="button" onClick={() => setShowAdd(false)} className="text-slate-300 text-lg" aria-label="Close">X</button>
+              <div className="text-base font-semibold">Add Group Expense</div>
+              <button type="submit" className="text-blue-400 font-semibold">Save</button>
+            </div>
+            <div className="flex-1 overflow-y-auto px-5 py-5 space-y-5">
+              <div className="flex gap-2">
+                {EXPENSE_TYPES.map(t => (
+                  <button
+                    key={t.key}
+                    className={expenseType === t.key ? 'flex-1 px-3 py-2 rounded-full text-sm font-semibold bg-blue-600 text-white' : 'flex-1 px-3 py-2 rounded-full text-sm font-semibold bg-slate-800/70 text-slate-300'}
+                    onClick={e => { e.preventDefault(); setExpenseType(t.key); }}
+                    type="button"
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+
+              {error && <div className="text-red-400 text-sm">{error}</div>}
+
+              <div className="rounded-2xl bg-slate-900/70 border border-slate-800/70 p-5 text-center">
+                <div className="text-xs text-slate-400 uppercase tracking-widest">Total Amount</div>
+                <div className="mt-3 flex items-center justify-center gap-2">
+                  <span className="text-3xl text-slate-400">{currency}</span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    className="w-40 text-4xl font-semibold text-white text-center bg-transparent border-none focus:outline-none"
+                    placeholder="0.00"
+                    value={amount}
+                    onChange={e => setAmount(e.target.value)}
+                    required
+                  />
+                </div>
+                <div className="mt-3 flex justify-center">
+                  <select
+                    className="rounded-full bg-slate-800 border border-slate-700 px-4 py-2 text-white text-sm"
+                    value={currency}
+                    onChange={e => setCurrency(e.target.value)}
+                  >
+                    <option value="EUR">EUR</option>
+                    <option value="USD">USD</option>
+                    <option value="GBP">GBP</option>
+                    <option value="JPY">JPY</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="rounded-2xl bg-slate-900/70 border border-slate-800/70 p-4 space-y-3">
+                <div className="flex items-center gap-3">
+                  <div className="h-10 w-10 rounded-full bg-slate-800 flex items-center justify-center text-sm font-semibold">L</div>
+                  <input
+                    className="flex-1 bg-transparent border-none text-white placeholder:text-slate-500 focus:outline-none"
+                    placeholder="What is this for?"
+                    value={label}
+                    onChange={e => setLabel(e.target.value)}
+                    required
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowCategoryDialog(true)}
+                  className="w-full flex items-center justify-between rounded-xl bg-slate-950/60 border border-slate-800 px-3 py-3 text-sm"
+                >
+                  <span className="text-slate-400">Category</span>
+                  <span className="text-white">{tag || 'Uncategorized'}</span>
+                </button>
+                <div className="flex items-center justify-between rounded-xl bg-slate-950/60 border border-slate-800 px-3 py-3 text-sm">
+                  <span className="text-slate-400">Date</span>
+                  <input
+                    type="date"
+                    className="bg-transparent text-white focus:outline-none"
+                    value={date}
+                    onChange={e => setDate(e.target.value)}
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <div className="text-xs text-slate-400 uppercase">Paid By</div>
+                <div className="flex gap-3 overflow-x-auto pb-1">
+                  {(group.participants || []).map(name => (
+                    <button
+                      key={name}
+                      type="button"
+                      onClick={() => setPaidBy(name)}
+                      className="flex flex-col items-center gap-2 min-w-[68px]"
+                    >
+                      <div className={paidBy === name ? 'h-12 w-12 rounded-full bg-blue-600 text-white flex items-center justify-center text-sm font-semibold' : 'h-12 w-12 rounded-full bg-slate-800 text-slate-300 flex items-center justify-center text-sm font-semibold'}>
+                        {getInitials(name)}
+                      </div>
+                      <span className={paidBy === name ? 'text-xs text-blue-300' : 'text-xs text-slate-400'}>
+                        {name}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="rounded-2xl bg-slate-900/70 border border-slate-800/70 p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="text-xs text-slate-400 uppercase">Split With</div>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={splitEnabled}
+                      onChange={e => {
+                        setSplitEnabled(e.target.checked);
+                        if (e.target.checked) {
+                          setSplitType(lastSplitType);
+                          const defaultSplit = {};
+                          defaultSplit[myName] = true;
+                          setSplit(defaultSplit);
+                          const defaultShares = {};
+                          const defaultAmounts = {};
+                          if (lastSplitType === 'shares') {
+                            defaultShares[myName] = 1;
+                          } else if (lastSplitType === 'amounts') {
+                            defaultAmounts[myName] = '';
+                          }
+                          setSplitShares(defaultShares);
+                          setSplitAmounts(defaultAmounts);
+                        } else {
+                          setLastSplitType(splitType);
+                          setSplit({});
+                          setSplitShares({});
+                          setSplitAmounts({});
+                        }
+                      }}
+                      className="sr-only"
+                    />
+                    <span className={splitEnabled ? 'w-10 h-5 bg-blue-600 rounded-full transition' : 'w-10 h-5 bg-slate-700 rounded-full transition'}></span>
+                    <span className={splitEnabled ? 'absolute left-1 top-1 h-3 w-3 bg-white rounded-full transition translate-x-5' : 'absolute left-1 top-1 h-3 w-3 bg-white rounded-full transition'}></span>
+                  </label>
+                </div>
+                {splitEnabled && (
+                  <div className="flex gap-2">
+                    {[{ key: 'equally', label: 'Equally' }, { key: 'shares', label: 'Percent' }, { key: 'amounts', label: 'Exact' }].map(opt => (
+                      <button
+                        key={opt.key}
+                        type="button"
+                        onClick={() => { setSplitType(opt.key); setLastSplitType(opt.key); }}
+                        className={splitType === opt.key ? 'flex-1 px-3 py-2 rounded-full text-xs font-semibold bg-blue-600 text-white' : 'flex-1 px-3 py-2 rounded-full text-xs font-semibold bg-slate-800/70 text-slate-300'}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {splitEnabled && (
+                  <div className="flex flex-col gap-2">
+                    {(group.participants || []).sort((a, b) => {
+                      if (a === myName) return -1;
+                      if (b === myName) return 1;
+                      return a.localeCompare(b);
+                    }).map(name => {
+                      const checked = !!split[name];
+                      const shares = splitType === 'shares' ? (parseInt(splitShares[name]) || 0) : 1;
+                      const effectiveShares = splitType === 'shares' ? (checked ? shares : 0) : (checked ? 1 : 0);
+                      const totalShares = splitType === 'shares' ? (group.participants || []).reduce((sum, n) => sum + (split[n] ? (parseInt(splitShares[n]) || 0) : 0), 0) : 1;
+                      const parsedAmount = parseFloat(amount) || 0;
+                      const calculatedAmount = splitType === 'shares' && totalShares > 0
+                        ? (parsedAmount * effectiveShares / totalShares)
+                        : (splitType === 'equally' && checked ? parsedAmount / (group.participants || []).filter(n => split[n]).length : (splitType === 'amounts' && checked ? parseFloat(splitAmounts[name]) || 0 : 0));
+                      return (
+                        <div key={name} className="flex items-center gap-3 bg-slate-950/60 border border-slate-800 rounded-xl p-3">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={e => {
+                              if (splitType === 'shares') {
+                                if (e.target.checked) {
+                                  setSplit(s => ({ ...s, [name]: true }));
+                                  setSplitShares(s => ({ ...s, [name]: Math.max(1, parseInt(s[name]) || 1) }));
+                                } else {
+                                  setSplit(s => ({ ...s, [name]: false }));
+                                  setSplitShares(s => ({ ...s, [name]: 0 }));
+                                }
+                              } else {
+                                setSplit(s => ({ ...s, [name]: e.target.checked }));
+                                if (!e.target.checked && splitType === 'amounts') {
+                                  setSplitAmounts(a => ({ ...a, [name]: '' }));
+                                }
+                              }
+                            }}
+                            className="accent-blue-600 h-5 w-5"
+                          />
+                          <span className="flex-1 text-white text-sm font-medium">{name}{name === myName ? ' (me)' : ''}</span>
+                          {splitType === 'equally' && checked && (
+                            <span className="text-slate-200 text-sm font-semibold">{amount && split[name] ? `${(parsedAmount / (group.participants || []).filter(n => split[n]).length).toFixed(2)} ${currency}` : `0.00 ${currency}`}</span>
+                          )}
+                          {splitType === 'shares' && (
+                            <>
+                              <div className="flex items-center gap-2">
+                                <button
+                                  type="button"
+                                  className="px-2 py-1 rounded-lg bg-slate-900 border border-slate-700 text-white text-sm disabled:opacity-50"
+                                  onClick={() => {
+                                    if (!checked) return;
+                                    if ((parseInt(splitShares[name]) || 0) === 1) {
+                                      setSplit(s => ({ ...s, [name]: false }));
+                                      setSplitShares(s => ({ ...s, [name]: 0 }));
+                                    } else {
+                                      setSplitShares(s => ({ ...s, [name]: Math.max(1, (parseInt(s[name]) || 1) - 1) }));
+                                    }
+                                  }}
+                                  disabled={!checked || (parseInt(splitShares[name]) || 0) <= 0}
+                                >-</button>
+                                <span className="w-8 text-center text-white text-sm font-semibold">{checked ? ((parseInt(splitShares[name]) || 1) + 'x') : '0x'}</span>
+                                <button
+                                  type="button"
+                                  className="px-2 py-1 rounded-lg bg-slate-900 border border-slate-700 text-white text-sm"
+                                  onClick={() => {
+                                    if (!checked) {
+                                      setSplit(s => ({ ...s, [name]: true }));
+                                      setSplitShares(s => ({ ...s, [name]: 1 }));
+                                    } else {
+                                      setSplitShares(s => ({ ...s, [name]: (parseInt(s[name]) || 1) + 1 }));
+                                    }
+                                  }}
+                                >+</button>
+                              </div>
+                              <span className="text-slate-200 text-sm font-semibold w-24 text-right">{checked && effectiveShares > 0 && totalShares > 0 ? calculatedAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0.00'} {currency}</span>
+                            </>
+                          )}
+                          {splitType === 'amounts' && checked && (
+                            <input
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              className="w-24 rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-white text-sm"
+                              placeholder="0.00"
+                              value={splitAmounts[name]}
+                              onChange={e => setSplitAmounts(a => ({ ...a, [name]: e.target.value }))}
+                            />
+                          )}
+                          {splitType === 'amounts' && checked && (
+                            <span className="text-slate-200 text-sm font-semibold">{splitAmounts[name] ? `${parseFloat(splitAmounts[name]).toFixed(2)} ${currency}` : `0.00 ${currency}`}</span>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {expenseType === 'income' && (
+                <div className="rounded-2xl bg-slate-900/70 border border-slate-800/70 p-4 text-slate-300 text-sm">
+                  Income: the payer receives from selected participants.
+                </div>
+              )}
+              {expenseType === 'transfer' && (
+                <div className="rounded-2xl bg-slate-900/70 border border-slate-800/70 p-4 flex flex-col gap-2">
+                  <div className="text-slate-300 text-sm font-semibold">Transfer</div>
+                  <div className="flex gap-2">
+                    <select className="flex-1 rounded-xl bg-slate-900 border border-slate-700 px-3 py-2 text-white" value={transferFrom} onChange={e => setTransferFrom(e.target.value)}>
+                      {claimedNames.map(n => <option key={n} value={n}>{n}</option>)}
+                    </select>
+                    <span className="text-slate-400 self-center">to</span>
+                    <select className="flex-1 rounded-xl bg-slate-900 border border-slate-700 px-3 py-2 text-white" value={transferTo} onChange={e => setTransferTo(e.target.value)}>
+                      {claimedNames.filter(n => n !== transferFrom).map(n => <option key={n} value={n}>{n}</option>)}
+                    </select>
+                  </div>
+                  <div className="text-slate-400 text-xs">Creates a reimbursement-style expense from {transferFrom} to {transferTo}.</div>
+                </div>
+              )}
+
+              <div className="rounded-2xl bg-slate-900/70 border border-slate-800/70 p-4">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-slate-300 text-sm font-semibold">Line Items (optional)</div>
+                  <button type="button" className="text-blue-400 text-sm" onClick={() => setItems(i => [...i, { name: '', price: '' }])}>Add item</button>
+                </div>
+                {(!items || items.length === 0) && (
+                  <div className="text-slate-400 text-xs">Add lines if you want to itemize.</div>
+                )}
+                {items && items.map((it, idx) => (
+                  <div key={idx} className="flex items-center gap-2 mt-2">
+                    <input
+                      className="flex-1 rounded-lg bg-slate-950 border border-slate-800 px-3 py-2 text-white placeholder:text-slate-500 text-sm"
+                      placeholder="Item name"
+                      value={it.name}
+                      onChange={e => setItems(arr => arr.map((row, i) => i === idx ? { ...row, name: e.target.value } : row))}
+                    />
+                    <input
+                      className="w-24 rounded-lg bg-slate-950 border border-slate-800 px-3 py-2 text-white placeholder:text-slate-500 text-sm"
+                      placeholder="0.00"
+                      type="number"
+                      step="0.01"
+                      value={it.price}
+                      onChange={e => setItems(arr => arr.map((row, i) => i === idx ? { ...row, price: e.target.value } : row))}
+                    />
+                    <button type="button" className="text-red-400 text-xs" onClick={() => setItems(arr => arr.filter((_, i) => i !== idx))}>Remove</button>
+                  </div>
+                ))}
+              </div>
+
+              <div className="rounded-2xl border border-dashed border-slate-700/80 p-6 text-center text-slate-400">
+                <div className="text-sm font-semibold text-white">Scan Receipt</div>
+                <div className="text-xs text-slate-400">Auto-extract items and prices</div>
+              </div>
+            </div>
+            <div className="px-5 pb-5">
+              <button type="submit" className="w-full bg-blue-600 hover:bg-blue-500 text-white font-semibold py-4 rounded-full text-lg">Save Expense</button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+      {/* Edit Expense Modal */}
+      <Dialog open={!!editExpense} onOpenChange={v => { if (!v) setEditExpense(null); }}>
+        <DialogContent className="bg-slate-900 text-white border-none rounded-2xl shadow-2xl max-w-md w-[95vw] p-0 flex flex-col h-[90vh] max-h-[90dvh]">
+          {/* Show detail view or edit form */}
+          {!editExpense?.editMode ? (
+            <ExpenseDetailView
+              expense={editExpense}
+            group={group}
+              onEdit={() => setEditExpense({ ...editExpense, editMode: true })}
+              onDelete={() => { handleEditDelete(); setEditExpense(null); }}
+              onClose={() => setEditExpense(null)}
+            />
+          ) : (
+            <div className="flex-1 overflow-y-auto px-0" style={{ height: '100%', maxHeight: '80vh', minHeight: '300px' }}>
+              <EditExpenseForm
+                editExpense={editExpense}
+                group={group}
+                user={user}
+                onSave={handleEditSave}
+                onDelete={handleEditDelete}
+                onCancel={() => setEditExpense(null)}
+              />
+          </div>
+          )}
+        </DialogContent>
+      </Dialog>
+      {/* Mark as Paid Confirmation Dialog */}
+      <UIDialog open={!!confirmMarkPaid} onOpenChange={v => { if (!v) setConfirmMarkPaid(null); }}>
+              <UIDialogContent className="bg-slate-950 text-white border border-slate-800/70 rounded-3xl shadow-2xl max-w-sm w-[96vw] p-0 flex flex-col">
+        <UIDialogTitle asChild>
+          <span className="sr-only">Settle Up</span>
+        </UIDialogTitle>
+        <UIDialogDescription asChild>
+          <span className="sr-only">Confirm the payment details before recording a reimbursement.</span>
+        </UIDialogDescription>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-800/70">
+          <button
+            className="text-slate-300 text-lg"
+            onClick={() => setConfirmMarkPaid(null)}
+            aria-label="Close"
+          >
+            X
+          </button>
+          <div className="text-base font-semibold">Settle Up</div>
+          <button
+            className="text-blue-400 font-semibold"
+            onClick={() => { setConfirmMarkPaid(null); handleMarkAsPaid(confirmMarkPaid); }}
+          >
+            Save
+          </button>
+        </div>
+        <div className="p-5 space-y-5">
+          {confirmMarkPaid && (
+            <>
+              <div className="flex items-center justify-between">
+                <div className="flex flex-col items-center gap-2">
+                  <div className="h-12 w-12 rounded-full bg-slate-800 flex items-center justify-center text-sm font-semibold">{getInitials(myName)}</div>
+                  <div className="text-xs text-slate-400">You</div>
+                </div>
+                <div className="text-blue-400 text-xs font-semibold uppercase">Paying</div>
+                <div className="flex flex-col items-center gap-2">
+                  <div className="h-12 w-12 rounded-full bg-slate-800 flex items-center justify-center text-sm font-semibold">{getInitials(confirmMarkPaid.name)}</div>
+                  <div className="text-xs text-slate-400">{confirmMarkPaid.name}</div>
+                </div>
+              </div>
+              <div className="text-center">
+                <div className="text-4xl font-semibold text-white">{confirmMarkPaid.amount.toFixed(2)} {group.currency || 'EUR'}</div>
+                <div className="text-xs text-slate-400 mt-1">Full amount owing</div>
+              </div>
+              <div className="rounded-2xl bg-slate-900/70 border border-slate-800/70 px-4 py-3">
+                <div className="text-xs text-slate-400">Date</div>
+                <div className="text-sm text-white mt-1">{new Date().toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</div>
+              </div>
+              <div className="rounded-2xl bg-slate-900/70 border border-slate-800/70 px-4 py-3">
+                <div className="text-xs text-slate-400">Note</div>
+                <input
+                  type="text"
+                  placeholder="What is this for?"
+                  className="w-full bg-transparent text-sm text-white placeholder:text-slate-500 mt-2 focus:outline-none"
+                />
+              </div>
+              <div className="rounded-2xl bg-slate-900/70 border border-slate-800/70 px-4 py-3">
+                <div className="text-xs text-slate-400">Location</div>
+                <div className="text-sm text-white mt-1">Not set</div>
+              </div>
+            </>
+          )}
+        </div>
+        <div className="px-5 pb-5">
+          <button
+            className="w-full bg-blue-600 hover:bg-blue-500 text-white font-semibold py-4 rounded-full text-lg"
+            onClick={() => { setConfirmMarkPaid(null); handleMarkAsPaid(confirmMarkPaid); }}
+          >
+            Confirm Payment
+          </button>
+          <div className="text-xs text-slate-500 text-center mt-3">Recorded as a reimbursement</div>
+        </div>
+      </UIDialogContent>
+      </UIDialog>
+      {/* After the balances list rendering, add the breakdown modal */}
+      <UIDialog open={showBreakdown} onOpenChange={setShowBreakdown}>
+        <UIDialogContent className="bg-slate-950 text-white border border-slate-800/70 rounded-3xl shadow-2xl max-w-sm w-[96vw] p-0 flex flex-col">
+          <UIDialogTitle asChild>
+            <div className="flex flex-col items-center gap-2 pt-4 pb-2">
+              <span className="text-base font-bold text-white mb-1">{myBalance > 0 ? 'They owe you' : myBalance < 0 ? 'You owe' : 'All settled up!'}</span>
+              <span className={`text-xl font-bold px-3 py-1 rounded-full ${myBalance > 0 ? 'bg-green-500/90 text-white' : myBalance < 0 ? 'bg-red-500/90 text-white' : 'bg-slate-700 text-white'}`}>{Math.abs(myBalance).toFixed(2)} {group.currency || '€'}</span>
+            </div>
+          </UIDialogTitle>
+          <UIDialogDescription asChild>
+            <span className="sr-only">Detailed breakdown of group balances and actions</span>
+          </UIDialogDescription>
+          {/* Section title for owes list */}
+          <div className="w-full text-center text-slate-400 text-xs font-semibold mt-2 mb-1 uppercase tracking-wide">{myBalance > 0 ? 'People who owe you' : myBalance < 0 ? 'People you owe' : 'No debts'}</div>
+          {/* Owes list, always scrollable and mobile-first */}
+          <div style={{ maxHeight: '320px', overflowY: 'auto' }} className="flex flex-col gap-3 px-5 pb-6">
+            {getUnsettledOwes(group, balances, settlements, myName, myBalance > 0).map(([name, bal]) => (
+              <div key={name} className="rounded-2xl bg-slate-900/70 border border-slate-800/70 p-4 flex flex-col items-center shadow">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="font-semibold text-white text-base">{myBalance > 0 ? `${name} owes you` : `You owe ${name}`}</span>
+                </div>
+                <div className="font-bold text-lg mb-2">{Math.abs(bal).toFixed(2)} {group.currency || '€'}</div>
+                <div className="flex gap-2 w-full">
+                  <button className="flex-1 bg-blue-600 hover:bg-blue-500 text-white font-semibold py-2 rounded-full shadow transition-all text-sm" onClick={() => setConfirmMarkPaid({ name, amount: Math.abs(bal) })}>Mark as paid</button>
+                  <button className="flex-1 bg-slate-800 text-white font-semibold py-2 rounded-full shadow border border-slate-700 transition-all text-sm" onClick={() => handleRemind(name, Math.abs(bal))}>Remind</button>
+                </div>
+              </div>
+            ))}
+            {getUnsettledOwes(group, balances, settlements, myName, myBalance > 0).length === 0 && (
+              <div className="text-slate-400 text-center mt-4">All settled up!</div>
+            )}
+          </div>
+        </UIDialogContent>
+      </UIDialog>
+      {showShareGroup && (
+        <Dialog open onOpenChange={setShowShareGroup}>
+          <DialogContent className="bg-slate-900 text-white border-none rounded-2xl shadow-2xl max-w-md w-[95vw] p-0 flex flex-col items-center">
+            <DialogTitle className="text-2xl font-bold text-center mt-4 mb-2">Share this group</DialogTitle>
+            <DialogDescription className="text-blue-300 text-center">Invite others to join your group using the link or QR code below.</DialogDescription>
+            <div className="w-full flex flex-col items-center p-4 pt-0">
+              {group?.id ? (
+                <>
+                  <div className="mb-2 text-blue-200 text-center break-all">{`${window.location.origin}/join/${group.id}`}</div>
+                  <QRCode value={`${window.location.origin}/join/${group.id}`} size={180} bgColor="#fff" fgColor="#222" />
+                </>
+              ) : (
+                <div className="text-red-400 text-center">Error: Group not found</div>
+              )}
+            </div>
+            <div className="flex gap-2 w-full px-4 mb-4">
+              <button className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 rounded-lg shadow" disabled={!group?.id} onClick={async () => { 
+                if (group?.id) {
+                  await navigator.clipboard.writeText(`${window.location.origin}/join/${group.id}`); 
+                  alert('Link copied!'); 
+                }
+              }}>Copy Link</button>
+              <button className="flex-1 bg-green-600 hover:bg-green-700 text-white font-semibold py-2 rounded-lg shadow" disabled={!group?.id} onClick={async () => { 
+                if (group?.id) {
+                  if (navigator.share) { 
+                    await navigator.share({ title: 'Join my group', url: `${window.location.origin}/join/${group.id}` }); 
+                  } else { 
+                    await navigator.clipboard.writeText(`${window.location.origin}/join/${group.id}`); 
+                    alert('Link copied!'); 
+                  } 
+                }
+              }}>Share</button>
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
+      {showEditGroup && (
+        <Dialog open onOpenChange={setShowEditGroup}>
+          <DialogContent className="bg-slate-900 text-white border-none rounded-2xl shadow-2xl max-w-md w-[95vw] p-0 flex flex-col items-center">
+            <DialogTitle className="text-2xl font-bold text-center mt-4 mb-2">Edit Group</DialogTitle>
+            <DialogDescription className="text-blue-300 text-center">Update group details below.</DialogDescription>
+            <form className="w-full flex flex-col gap-3 p-4" onSubmit={async e => {
+              e.preventDefault();
+              if (!group?.id) {
+                setEditGroupError('Group ID is missing. Please try again.');
+                return;
+              }
+              setEditGroupLoading(true);
+              setEditGroupError("");
+              try {
+                await updateDoc(doc(db, 'groups', group.id), {
+                  name: editGroupName.trim(),
+                  currency: editGroupCurrency,
+                  participants: editParticipants,
+                });
+                // Update local state so UI reflects changes immediately
+                setEditGroupName(editGroupName.trim());
+                setEditGroupCurrency(editGroupCurrency);
+                setEditParticipants([...editParticipants]);
+                if (typeof onGroupUpdate === 'function') {
+                  onGroupUpdate({ ...group, name: editGroupName.trim(), currency: editGroupCurrency, participants: [...editParticipants] });
+                }
+                setShowEditGroup(false);
+              } catch (err) {
+                setEditGroupError('Failed to update group.');
+              } finally {
+                setEditGroupLoading(false);
+              }
+            }}>
+              <label className="flex flex-col gap-1">
+                <span className="text-blue-200">Group name</span>
+                <input className="rounded-lg bg-slate-800 px-4 py-3 text-white" value={editGroupName} onChange={e => setEditGroupName(e.target.value)} required />
+              </label>
+              <label className="flex flex-col gap-1">
+                <span className="text-blue-200">Currency</span>
+                <select className="rounded-lg bg-slate-800 px-4 py-3 text-white" value={editGroupCurrency} onChange={e => setEditGroupCurrency(e.target.value)}>
+                  <option value="EUR">Euro (€)</option>
+                  <option value="USD">US Dollar ($)</option>
+                  <option value="GBP">British Pound (£)</option>
+                  <option value="JPY">Japanese Yen (¥)</option>
+                </select>
+              </label>
+              <label className="flex flex-col gap-1">
+                <span className="text-blue-200">Participants</span>
+                <div className="flex gap-2 mb-2">
+                  <input className="flex-1 rounded-lg bg-slate-800 px-4 py-3 text-white" value={editParticipantInput} onChange={e => setEditParticipantInput(e.target.value)} placeholder="Add a participant name" onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); if (editParticipantInput.trim() && !editParticipants.includes(editParticipantInput.trim())) { setEditParticipants([...editParticipants, editParticipantInput.trim()]); setEditParticipantInput(""); } } }} />
+                  <button type="button" className="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-4 py-2 rounded-lg shadow" onClick={() => { if (editParticipantInput.trim() && !editParticipants.includes(editParticipantInput.trim())) { setEditParticipants([...editParticipants, editParticipantInput.trim()]); setEditParticipantInput(""); } }}>Add</button>
+                </div>
+                <ul className="flex flex-wrap gap-2">
+                  {editParticipants.map((p, idx) => (
+                    <li key={p} className="bg-slate-800 px-3 py-1 rounded-lg flex items-center gap-2">
+                      <span>{p}</span>
+                      <button type="button" className="text-red-400 hover:text-red-600 text-xs font-bold" onClick={() => setEditParticipants(editParticipants.filter(x => x !== p))} aria-label={`Remove ${p}`}>×</button>
+                    </li>
+                  ))}
+                </ul>
+              </label>
+              {editGroupError && <div className="text-red-400 text-sm mb-2">{editGroupError}</div>}
+              <div className="flex gap-2 w-full mt-2">
+                <button type="submit" className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 rounded-lg shadow" disabled={editGroupLoading}>{editGroupLoading ? 'Saving...' : 'Save'}</button>
+                <button type="button" className="flex-1 bg-slate-700 hover:bg-slate-800 text-white font-semibold py-2 rounded-lg shadow" onClick={() => setShowEditGroup(false)} disabled={editGroupLoading}>Cancel</button>
+              </div>
+            </form>
+          </DialogContent>
+        </Dialog>
+      )}
+      {showInsights && (
+        <Dialog open onOpenChange={setShowInsights}>
+          <DialogContent className="bg-slate-900 text-white border-none rounded-2xl shadow-2xl max-w-xs w-[95vw] p-0 flex flex-col items-center">
+            <DialogTitle className="text-2xl font-bold text-center mt-4 mb-2">Group Insights</DialogTitle>
+            <DialogDescription className="text-blue-300 text-center mb-4">Key stats for your group.</DialogDescription>
+            <div className="w-full flex flex-col gap-5 p-4 text-center">
+              <div className="flex flex-col items-center gap-1">
+                <span className="text-lg font-semibold text-blue-200">Total spent</span>
+                <span className="text-3xl font-extrabold text-green-400">{totalSpent.toFixed(2)} {group.currency || '€'}</span>
+              </div>
+              <div className="flex flex-col items-center gap-1">
+                <span className="text-lg font-semibold text-blue-200">Expenses</span>
+                <span className="text-2xl font-bold text-blue-400">{expenses.length}</span>
+              </div>
+              <div className="flex flex-col items-center gap-1">
+                <span className="text-lg font-semibold text-blue-200">Top payer</span>
+                <span className="text-xl font-bold text-yellow-400">{topPayerName}</span>
+                <span className="text-blue-200 text-base">{topPayerAmount.toFixed(2)} {group.currency || '€'}</span>
+              </div>
+              <div className="flex flex-col items-center gap-1">
+                <span className="text-lg font-semibold text-blue-200">Largest expense</span>
+                <span className="text-xl font-bold text-orange-400">{largestExpense ? largestExpense.label : '-'}</span>
+                <span className="text-blue-200 text-base">{largestExpense ? (parseFloat(largestExpense.amount) || 0).toFixed(2) : '-'} {group.currency || '€'}</span>
+              </div>
+            </div>
+            <div className="flex gap-2 w-full px-4 mb-4 mt-2">
+              <button className="flex-1 bg-slate-700 hover:bg-slate-800 text-white font-semibold py-2 rounded-lg shadow" onClick={() => setShowInsights(false)}>Close</button>
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
+      {showArchiveConfirm && (
+        <Dialog open onOpenChange={setShowArchiveConfirm}>
+          <DialogContent className="bg-slate-900 text-white border-none rounded-2xl shadow-2xl max-w-xs w-[95vw] p-0 flex flex-col items-center">
+            <DialogTitle className="text-xl font-bold text-center mt-4 mb-2">Archive Group?</DialogTitle>
+            <DialogDescription className="text-blue-300 text-center">Are you sure you want to archive this group? You can restore it later.</DialogDescription>
+            <div className="flex gap-2 w-full px-4 mb-4 mt-4">
+              <button className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 rounded-lg shadow" onClick={async () => {
+                if (!group?.id) {
+                  console.error('Group ID is undefined, cannot archive');
+                  alert('Error: Group not found. Please try again.');
+                  return;
+                }
+                console.log('Attempting to archive group (confirm):', { groupId: group.id, userId: user.uid, currentArchivedBy: group.archivedBy });
+                try {
+                  const groupRef = doc(db, 'groups', group.id);
+                  const newArchivedBy = Array.from(new Set([...(group.archivedBy || []), user.uid]));
+                  console.log('New archivedBy array (confirm):', newArchivedBy);
+                  await updateDoc(groupRef, {
+                    archivedBy: newArchivedBy
+                  });
+                  console.log('Successfully archived group (confirm)');
+                  setShowArchiveConfirm(false);
+                  navigate('/');
+                } catch (error) {
+                  console.error('Error archiving group (confirm):', error);
+                  console.error('Error details (confirm):', {
+                    code: error.code,
+                    message: error.message,
+                    groupId: group.id,
+                    userId: user.uid
+                  });
+                  alert(`Error archiving group: ${error.message || 'Unknown error'}`);
+                }
+              }}>Archive</button>
+              <button className="flex-1 bg-slate-700 hover:bg-slate-800 text-white font-semibold py-2 rounded-lg shadow" onClick={() => setShowArchiveConfirm(false)}>Cancel</button>
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
+      {showDeleteConfirm && (
+        <Dialog open onOpenChange={setShowDeleteConfirm}>
+          <DialogContent className="bg-slate-900 text-white border-none rounded-2xl shadow-2xl max-w-xs w-[95vw] p-0 flex flex-col items-center">
+            <DialogTitle className="text-xl font-bold text-center mt-4 mb-2">Delete Group?</DialogTitle>
+            <DialogDescription className="text-blue-300 text-center">This action cannot be undone. Are you sure you want to delete this group?</DialogDescription>
+            <div className="flex gap-2 w-full px-4 mb-4 mt-4">
+              <button className="flex-1 bg-red-600 hover:bg-red-700 text-white font-semibold py-2 rounded-lg shadow" onClick={async () => { 
+              if (!group?.id) {
+                console.error('Group ID is undefined, cannot delete');
+                alert('Error: Group not found. Please try again.');
+                return;
+              }
+              try {
+                await deleteDoc(doc(db, 'groups', group.id)); 
+                setShowDeleteConfirm(false); 
+                navigate('/'); 
+              } catch (error) {
+                console.error('Error deleting group:', error);
+                alert('Error deleting group. Please try again.');
+              }
+            }}>Delete</button>
+              <button className="flex-1 bg-slate-700 hover:bg-slate-800 text-white font-semibold py-2 rounded-lg shadow" onClick={() => setShowDeleteConfirm(false)}>Cancel</button>
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
+      {showNotOwnerDelete && (
+        <Dialog open onOpenChange={setShowNotOwnerDelete}>
+          <DialogContent className="bg-slate-900 text-white border-none rounded-2xl shadow-2xl max-w-xs w-[95vw] p-0 flex flex-col items-center">
+            <DialogTitle className="text-xl font-bold text-center mt-4 mb-2">Cannot Delete Group</DialogTitle>
+            <DialogDescription className="text-blue-300 text-center">You are not the owner. Only the group creator can delete this group. You can archive it to hide it from your list.</DialogDescription>
+            <div className="flex gap-2 w-full px-4 mb-4 mt-4">
+              <button className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 rounded-lg shadow" onClick={async () => {
+                // Archive for this user by adding their UID to archivedBy array
+                if (!group?.id) {
+                  console.error('Group ID is undefined, cannot archive');
+                  alert('Error: Group not found. Please try again.');
+                  return;
+                }
+                console.log('Attempting to archive group:', { groupId: group.id, userId: user.uid, currentArchivedBy: group.archivedBy });
+                try {
+                  const groupRef = doc(db, 'groups', group.id);
+                  const newArchivedBy = Array.from(new Set([...(group.archivedBy || []), user.uid]));
+                  console.log('New archivedBy array:', newArchivedBy);
+                  await updateDoc(groupRef, {
+                    archivedBy: newArchivedBy
+                  });
+                  console.log('Successfully archived group');
+                  setShowNotOwnerDelete(false);
+                  navigate('/');
+                } catch (error) {
+                  console.error('Error archiving group:', error);
+                  console.error('Error details:', {
+                    code: error.code,
+                    message: error.message,
+                    groupId: group.id,
+                    userId: user.uid
+                  });
+                  alert(`Error archiving group: ${error.message || 'Unknown error'}`);
+                }
+              }}>Archive</button>
+              <button className="flex-1 bg-slate-700 hover:bg-slate-800 text-white font-semibold py-2 rounded-lg shadow" onClick={() => setShowNotOwnerDelete(false)}>Cancel</button>
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
+      <Dialog open={modalOpen} onOpenChange={setModalOpen}>
+        <DialogContent className="max-w-md w-[95vw] bg-slate-900/95 text-white rounded-2xl shadow-2xl animate-fade-in-up p-0 flex flex-col min-h-[60vh] max-h-[90vh] h-full">
+          {selectedCategory && (
+            <>
+              {/* Sticky header */}
+              <DialogHeader className="p-6 pb-4 flex-shrink-0 border-b border-white/10 relative sticky top-0 z-20 bg-slate-900/95 backdrop-blur-xl">
+                <DialogTitle className="flex items-center gap-3 text-2xl font-bold text-indigo-200 tracking-tight overflow-hidden">
+                  <span className="text-3xl flex-shrink-0">{selectedCategory.emoji}</span>
+                  <span className="truncate min-w-0">{selectedCategory.name}</span>
+                </DialogTitle>
+                <DialogDescription className="text-blue-200/80 mt-1 text-sm">
+                  Category breakdown, recent expenses, and stats.
+                </DialogDescription>
+                {/* Top-right X close button */}
+                <DialogClose asChild>
+                  <button
+                    className="absolute right-4 top-4 rounded-full p-2 bg-slate-800 hover:bg-slate-700 text-blue-200 hover:text-white transition-colors focus:outline-none focus:ring-2 focus:ring-blue-400"
+                    aria-label="Close"
+                  >
+                    <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                  </button>
+                </DialogClose>
+              </DialogHeader>
+              {/* Stats/info row for modal */}
+              <div className="flex flex-row items-center justify-between px-6 pt-2 pb-3 bg-slate-900/95 z-10" style={{borderBottom: '1px solid rgba(255,255,255,0.06)'}}>
+                <div>
+                  <div className="text-2xl font-extrabold text-indigo-100 leading-tight">{selectedCategory.amount?.toFixed(2)} {group.currency || '€'}</div>
+                  <div className="text-xs text-blue-200/80 font-semibold">{selectedCategory.percent}% of total</div>
+                </div>
+                <div className="w-12 h-12 rounded-full flex items-center justify-center text-3xl font-bold ml-2" style={{background: selectedCategory.color, color: '#fff'}}>{selectedCategory.emoji}</div>
+              </div>
+              {/* Scrollable content */}
+              <div className="flex-1 overflow-y-auto p-6 flex flex-col gap-4">
+                {/* Recent expenses */}
+                <div className="mt-2">
+                  <div className="text-xs text-blue-200/80 mb-2">Recent expenses in this category</div>
+                  {(() => {
+                    const recent = getRecentExpenses(expenses, selectedCategory.name);
+                    const grouped = groupExpensesByMonth(recent);
+                    if (grouped.length === 0) {
+                      return <div className="text-blue-300/70 text-center py-4">No expenses in this category yet.</div>;
+                    }
+                    return grouped.map((monthGroup, monthIdx) => (
+                      <div key={monthIdx} className="space-y-2">
+                        {/* Month delimiter */}
+                        <div className="flex items-center gap-2 py-1">
+                          <div className="flex-1 h-px bg-gradient-to-r from-transparent via-blue-400/30 to-transparent"></div>
+                          <span className="text-xs font-semibold text-blue-300/80 px-2 py-1 bg-blue-400/10 rounded-full">{monthGroup.label}</span>
+                          <div className="flex-1 h-px bg-gradient-to-r from-transparent via-blue-400/30 to-transparent"></div>
+                        </div>
+                        {/* Expenses for this month */}
+                        {monthGroup.expenses.map((exp, idx) => {
+                          const isExpanded = expandedExpenseId === exp.id;
+                          const payerName = getNameByUid(group, exp.paidBy);
+                          const payerInitials = payerName.split(' ').map(n => n[0]).join('').toUpperCase();
+                          const payerColor = '#6366F1';
+                          return (
+                            <li key={exp.id || idx} className="bg-slate-800/80 rounded-lg shadow-inner overflow-hidden transition-all duration-300 ease-in-out">
+                              <button
+                                className="w-full grid grid-cols-[auto_1fr_auto] items-center gap-x-3 px-3 py-2 text-left focus:outline-none"
+                                onClick={() => setExpandedExpenseId(isExpanded ? null : exp.id)}
+                                aria-expanded={isExpanded}
+                                aria-controls={`exp-details-${exp.id}`}
+                                aria-label={`Expand details for expense ${exp.label || ''}`}
+                              >
+                                {/* Avatar */}
+                                <div className="w-8 h-8 rounded-full flex items-center justify-center text-base font-bold mr-2" style={{background: payerColor, color: '#fff'}}>{payerInitials}</div>
+                                <div className="flex flex-col overflow-hidden">
+                                  <span className="font-medium text-white text-sm truncate flex items-center gap-1">
+                                    {exp.label || 'Expense'}
+                                    {exp.tag && <span className="ml-1 text-lg">{exp.tag.split(' ')[0]}</span>}
+                                  </span>
+                                  <span className="text-xs text-blue-200">by {payerName}</span>
+                                  <span className="text-xs text-gray-400">{formatDateFriendly(exp.date)}</span>
+                                  {exp.note && <span className="text-xs text-blue-300 mt-1">{exp.note}</span>}
+                                </div>
+                                <div className="font-bold text-lg text-blue-100 ml-2">{parseFloat(exp.amount).toFixed(2)} {group.currency || '€'}</div>
+                                <div className="transition-transform duration-300 ml-2" style={{ transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)' }}>
+                                  <svg className="h-5 w-5 text-blue-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+                                </div>
+                              </button>
+                              <div
+                                id={`exp-details-${exp.id}`}
+                                style={{ maxHeight: isExpanded ? '220px' : '0px', opacity: isExpanded ? 1 : 0, transform: isExpanded ? 'translateY(0)' : 'translateY(-8px)' }}
+                                className="transition-all duration-300 ease-in-out overflow-hidden bg-slate-900/90 border-t border-blue-700/30"
+                              >
+                                <div className="p-3">
+                                  {exp.splits ? (
+                                    <div className="mb-2">
+                                      <div className="text-xs text-blue-200 mb-1">Participants & Splits</div>
+                                      <ul className="text-xs text-gray-300 space-y-0.5">
+                                        {Object.entries(exp.splits).map(([uid, share]) => (
+                                          <li key={uid} className="flex justify-between">
+                                            <span>{getNameByUid(group, uid)}</span>
+                                            <span>{parseFloat(share).toFixed(2)} {group.currency || '€'}</span>
+                                          </li>
+                                        ))}
+                                      </ul>
+                                    </div>
+                                  ) : (
+                                    <div className="text-xs text-gray-400 italic">No split details</div>
+                                  )}
+                                  {/* Add more details if needed, e.g., notes, attachments, etc. */}
+                                </div>
+                              </div>
+                            </li>
+                          );
+                        })}
+                      </div>
+                    ));
+                  })()}
+                </div>
+              </div>
+              {/* Sticky footer */}
+              <DialogFooter className="p-4 border-t border-white/10 sticky bottom-0 z-20 bg-slate-900/95 backdrop-blur-xl flex-shrink-0">
+                <button onClick={() => setModalOpen(false)} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 rounded-xl transition-colors">Close</button>
+              </DialogFooter>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
+function EditExpenseForm({ editExpense, group, user, onSave, onDelete, onCancel }) {
+  const EXPENSE_TYPES = [
+    { key: 'expense', label: 'Expense' },
+    { key: 'income', label: 'Income' },
+    { key: 'transfer', label: 'Transfer...' },
+  ];
+  const SPLIT_TYPES = [
+    { key: 'equally', label: 'Equally' },
+    { key: 'shares', label: 'By Shares' },
+    { key: 'amounts', label: 'By Amounts' },
+  ];
+  const members = group.participants || [];
+  // --- Refactored state initialization ---
+  const [expenseType, setExpenseType] = useState(editExpense.expenseType || 'expense');
+  const [label, setLabel] = useState(editExpense.label || '');
+  const [tag, setTag] = useState(editExpense.tag || '');
+  const [photo, setPhoto] = useState(editExpense.photo || null);
+  const [amount, setAmount] = useState(editExpense.amount?.toString() || '');
+  const [currency, setCurrency] = useState(editExpense.currency || group.currency || 'EUR');
+  const [paidBy, setPaidBy] = useState(editExpense.paidBy || members[0] || '');
+  const [date, setDate] = useState(editExpense.date || new Date().toISOString().slice(0,10));
+  const [splitType, setSplitType] = useState(editExpense.splitType || 'equally');
+  // --- Always initialize split states from saved data, using correct splitType ---
+  const getInitialSplit = (splitType, splits, shares) => {
+    if (!splits && !shares) return members.reduce((acc, m) => ({ ...acc, [m]: true }), {});
+    if (splitType === 'equally' || splitType === 'amounts') {
+      return members.reduce((acc, m) => {
+        const uid = group.claimedBy[m];
+        // Check both splits[uid] and splits[m]
+        return { ...acc, [m]: ((uid && splits && splits[uid] !== undefined && splits[uid] !== null) || (splits && splits[m] !== undefined && splits[m] !== null)) };
+      }, {});
+    } else if (splitType === 'shares') {
+      return members.reduce((acc, m) => {
+        const uid = group.claimedBy[m];
+        const share = (uid && shares) ? shares[uid] : (shares ? shares[m] : 0);
+        return { ...acc, [m]: share > 0 };
+      }, {});
+    }
+    return members.reduce((acc, m) => ({ ...acc, [m]: true }), {});
+  };
+  const getInitialSplitAmounts = (splitType, splits) => {
+    if (splitType === 'amounts' && splits) {
+      return members.reduce((acc, m) => {
+        const uid = group.claimedBy[m];
+        // Check both splits[uid] and splits[m]
+        return { ...acc, [m]: splits[uid] !== undefined ? splits[uid].toString() : (splits[m] !== undefined ? splits[m].toString() : '') };
+      }, {});
+    }
+    return members.reduce((acc, m) => ({ ...acc, [m]: '' }), {});
+  };
+  const getInitialSplitShares = (splitType, shares, splits) => {
+    if (splitType === 'shares' && shares) {
+      return members.reduce((acc, m) => {
+        const uid = group.claimedBy[m];
+        // Check both shares[uid] and shares[m]
+        const share = (uid && shares) ? shares[uid] : (shares ? shares[m] : 0);
+        return { ...acc, [m]: share !== undefined ? share : 0 };
+      }, {});
+    }
+    if (splitType === 'shares' && splits) {
+      return members.reduce((acc, m) => {
+        const uid = group.claimedBy[m];
+        return { ...acc, [m]: (splits[uid] !== undefined || splits[m] !== undefined) ? 1 : 0 };
+      }, {});
+    }
+    return members.reduce((acc, m) => ({ ...acc, [m]: 1 }), {});
+  };
+  const [split, setSplit] = useState(() => getInitialSplit(splitType, editExpense.splits, editExpense.shares));
+  const [splitAmounts, setSplitAmounts] = useState(() => getInitialSplitAmounts(splitType, editExpense.splits));
+  const [splitShares, setSplitShares] = useState(() => getInitialSplitShares(splitType, editExpense.shares, editExpense.splits));
+  const [formError, setFormError] = useState('');
+  const [splitEnabled, setSplitEnabled] = useState(() => {
+    if (editExpense.splitEnabled !== undefined) return editExpense.splitEnabled;
+    if (editExpense.splits) return Object.values(editExpense.splits).some(v => v !== undefined);
+    return true;
+  });
+
+  // --- useEffect: always update all split states when editExpense or splitType changes ---
+  React.useEffect(() => {
+    setExpenseType(editExpense.expenseType || 'expense');
+    setLabel(editExpense.label || '');
+    setTag(editExpense.tag || '');
+    setPhoto(editExpense.photo || null);
+    setAmount(editExpense.amount?.toString() || '');
+    setCurrency(editExpense.currency || group.currency || 'EUR');
+    setPaidBy(editExpense.paidBy || members[0] || '');
+    setDate(editExpense.date || new Date().toISOString().slice(0,10));
+    setSplitType(editExpense.splitType || 'equally');
+    setSplit(getInitialSplit(editExpense.splitType || 'equally', editExpense.splits, editExpense.shares));
+    setSplitAmounts(getInitialSplitAmounts(editExpense.splitType || 'equally', editExpense.splits));
+    setSplitShares(getInitialSplitShares(editExpense.splitType || 'equally', editExpense.shares, editExpense.splits));
+    if (editExpense.splitEnabled !== undefined) {
+      setSplitEnabled(editExpense.splitEnabled);
+    } else if (editExpense.splits) {
+      setSplitEnabled(Object.values(editExpense.splits).some(v => v !== undefined));
+    } else {
+      setSplitEnabled(true);
+    }
+  }, [editExpense, members]);
+  // When splitType changes (by user), reset relevant states
+  const handleSplitTypeChange = (e) => {
+    const newType = e.target.value;
+    setSplitType(newType);
+    if (newType === 'equally') {
+      setSplit(members.reduce((acc, m) => ({ ...acc, [m]: true }), {}));
+    } else if (newType === 'amounts') {
+      setSplit(members.reduce((acc, m) => ({ ...acc, [m]: true }), {}));
+      setSplitAmounts(members.reduce((acc, m) => ({ ...acc, [m]: '' }), {}));
+    } else if (newType === 'shares') {
+      setSplit(members.reduce((acc, m) => ({ ...acc, [m]: true }), {}));
+      setSplitShares(members.reduce((acc, m) => ({ ...acc, [m]: 1 }), {}));
+    }
+  };
+
+  const handleSubmit = e => {
+    e.preventDefault();
+    setFormError('');
+    console.log('EditExpenseForm handleSubmit values:', {
+      label, tag, amount, paidBy, date, expenseType, currency, splitType, split, splitAmounts, splitShares, splitEnabled, group, editExpense
+    });
+    if (!label.trim()) {
+      setFormError('Title is required');
+      return;
+    }
+    const parsedAmount = parseFloat(amount);
+    if (isNaN(parsedAmount) || parsedAmount <= 0) {
+      setFormError('Amount must be a positive number');
+      return;
+    }
+    if (!paidBy) {
+      setFormError('Paid By is required');
+      return;
+    }
+    if (!date) {
+      setFormError('Date is required');
+      return;
+    }
+    // Split validation
+    const selected = members.filter(m => split[m]);
+    if (selected.length === 0 && splitEnabled) {
+      setFormError('Select at least one participant');
+      return;
+    }
+    let splits = {};
+    let shares = {};
+    if (splitEnabled) {
+      if (splitType === 'equally') {
+        const share = parseFloat((parsedAmount / selected.length).toFixed(2));
+        selected.forEach(m => {
+          const uid = group.claimedBy[m];
+          const key = uid || m;
+          splits[key] = share;
+          shares[key] = 1;
+        });
+      } else if (splitType === 'amounts') {
+        let total = 0;
+        for (const m of selected) {
+          const val = parseFloat(splitAmounts[m]);
+          if (isNaN(val) || val < 0) {
+            setFormError('Enter valid amounts for all selected');
+            return;
+          }
+          total += val;
+        }
+        if (Math.abs(total - parsedAmount) > 0.01) {
+          setFormError('Split amounts must sum to total');
+          return;
+        }
+        selected.forEach(m => {
+          const uid = group.claimedBy[m];
+          const key = uid || m;
+          splits[key] = parseFloat(splitAmounts[m]);
+          shares[key] = 1;
+        });
+      } else if (splitType === 'shares') {
+        let totalShares = 0;
+        for (const m of selected) {
+          const val = parseInt(splitShares[m]) || 0;
+          if (isNaN(val) || val <= 0) {
+            setFormError('Enter valid shares for all selected');
+            return;
+          }
+          totalShares += val;
+        }
+        selected.forEach(m => {
+          const uid = group.claimedBy[m];
+          const key = uid || m;
+          const sharesCount = parseInt(splitShares[m]) || 0;
+          splits[key] = parseFloat(((parsedAmount * sharesCount) / totalShares).toFixed(2));
+          shares[key] = sharesCount;
+        });
+      }
+    }
+    const updatedData = {
+      label: label.trim(),
+      tag,
+      amount: parsedAmount,
+      paidBy: group.claimedBy[paidBy] || paidBy,
+      date,
+      expenseType,
+      currency,
+      splitType,
+      splits,
+      shares, // Save shares mapping
+      photo: photo || '',
+      splitEnabled,
+    };
+    console.log('EditExpenseForm onSave updatedData:', updatedData);
+    onSave(updatedData);
+  };
+
+  const [showCategoryDialog, setShowCategoryDialog] = useState(false);
+  const [customCategory, setCustomCategory] = useState('');
+
+        return (
+    <form onSubmit={handleSubmit} className="flex flex-col gap-4 px-4 md:px-6 pb-6">
+      {/* Mobile-optimized expense type buttons */}
+      <div className="flex gap-2 mb-2">
+        {EXPENSE_TYPES.map(t => (
+          <button
+            key={t.key}
+            className={`flex-1 px-3 md:px-4 py-3 md:py-2 rounded-xl md:rounded-lg text-sm md:text-base font-semibold border transition-all duration-200 ${expenseType === t.key ? 'bg-blue-600 text-white border-blue-600 shadow-lg' : 'bg-slate-800 text-blue-200 border-slate-700 hover:bg-slate-700'}`}
+            onClick={e => { e.preventDefault(); setExpenseType(t.key); }}
+            type="button"
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+      
+      {formError && <div className="text-red-400 text-sm mb-2 px-2">{formError}</div>}
+      
+      {/* Mobile-optimized input row with better spacing */}
+      <div className="flex gap-2 items-center">
+        <input
+          className="flex-1 rounded-xl md:rounded-lg bg-slate-800 border border-blue-700/40 px-4 py-4 md:py-3 text-white placeholder-blue-200/60 focus:border-blue-400 focus:ring-2 focus:ring-blue-400 outline-none text-base"
+          placeholder="E.g. Drinks"
+          value={label}
+          onChange={e => setLabel(e.target.value)}
+          required
+        />
+        <button type="button" className="bg-slate-800 rounded-xl md:rounded-lg p-3 md:p-2 ml-1 hover:bg-slate-700 transition-colors" title="Tag" onClick={() => setShowCategoryDialog(true)}>
+          <span role="img" aria-label="tag" className="text-lg">{tag ? tag.split(' ')[0] : '🏷️'}</span>
+        </button>
+        <button type="button" className="bg-slate-800 rounded-xl md:rounded-lg p-3 md:p-2 ml-1 hover:bg-slate-700 transition-colors" title="Photo" onClick={() => setPhoto(photo ? null : 'photo')}>
+          <span role="img" aria-label="photo" className="text-lg">📷</span>
+        </button>
+      </div>
+      
+      {/* Mobile-optimized amount and currency row */}
+      <div className="flex gap-2 items-center">
+        <input
+          type="number"
+          step="0.01"
+          min="0"
+          className="flex-1 rounded-xl md:rounded-lg bg-slate-800 border border-blue-700/40 px-4 py-4 md:py-3 text-white placeholder-blue-200/60 focus:border-blue-400 focus:ring-2 focus:ring-blue-400 outline-none text-base"
+          placeholder="0.00"
+          value={amount}
+          onChange={e => setAmount(e.target.value)}
+          required
+        />
+        <select
+          className="rounded-xl md:rounded-lg bg-slate-800 border border-blue-700/40 px-3 md:px-2 py-4 md:py-3 text-white focus:border-blue-400 focus:ring-2 focus:ring-blue-400 outline-none text-base"
+          value={currency}
+          onChange={e => setCurrency(e.target.value)}
+        >
+          <option value="EUR">€</option>
+          <option value="USD">$</option>
+          <option value="GBP">£</option>
+          <option value="JPY">¥</option>
+        </select>
+      </div>
+      
+      {/* Mobile-optimized paid by and date row */}
+      <div className="flex flex-col md:flex-row gap-2">
+        <select
+          className="flex-1 rounded-xl md:rounded-lg bg-slate-800 border border-blue-700/40 px-4 py-4 md:py-3 text-white focus:border-blue-400 focus:ring-2 focus:ring-blue-400 outline-none text-base"
+          value={paidBy}
+          onChange={e => setPaidBy(e.target.value)}
+        >
+          {members.map(p => (
+            <option key={p} value={p}>{getNameByUid(group, group.claimedBy[p])}</option>
+          ))}
+        </select>
+        <input
+          type="date"
+          className="flex-1 rounded-xl md:rounded-lg bg-slate-800 border border-blue-700/40 px-4 py-4 md:py-3 text-white focus:border-blue-400 focus:ring-2 focus:ring-blue-400 outline-none text-base"
+          value={date}
+          onChange={e => setDate(e.target.value)}
+          required
+        />
+      </div>
+      
+      {/* Mobile-optimized split controls */}
+      <div className="flex items-center gap-3 mb-3 p-3 bg-slate-800/50 rounded-xl">
+        <input
+          type="checkbox"
+          checked={splitEnabled}
+          onChange={e => {
+            setSplitEnabled(e.target.checked);
+            if (e.target.checked) {
+              setSplit(members.reduce((acc, m) => ({ ...acc, [m]: true }), {}));
+            } else {
+              setSplit(members.reduce((acc, m) => ({ ...acc, [m]: false }), {}));
+            }
+          }}
+          className="accent-blue-600 h-6 w-6 md:h-5 md:w-5"
+        />
+        <span className="text-white font-semibold text-base">Split Expense</span>
+        <select
+          className="ml-auto rounded-lg bg-slate-900 border border-blue-700/40 px-3 md:px-2 py-2 md:py-1 text-white text-sm md:text-base"
+          value={splitType}
+          onChange={handleSplitTypeChange}
+          disabled={!splitEnabled}
+        >
+          {SPLIT_TYPES.map(t => (
+            <option key={t.key} value={t.key}>{t.label}</option>
+          ))}
+        </select>
+      </div>
+      
+      {/* Mobile-optimized split participants */}
+      <div className="flex flex-col gap-2 mt-2">
+        {splitEnabled && members.map(m => {
+          const checked = !!split[m];
+          const shares = splitType === 'shares' ? (parseInt(splitShares[m]) || 0) : 1;
+          const effectiveShares = splitType === 'shares' ? (checked ? shares : 0) : (checked ? 1 : 0);
+          const totalShares = splitType === 'shares' ? members.reduce((sum, n) => sum + (split[n] ? (parseInt(splitShares[n]) || 0) : 0), 0) : 1;
+          const parsedAmount = parseFloat(amount) || 0;
+          const calculatedAmount = splitType === 'shares' && totalShares > 0
+            ? (parsedAmount * effectiveShares / totalShares)
+            : (splitType === 'equally' && checked ? parsedAmount / members.filter(n => split[n]).length : (splitType === 'amounts' && checked ? parseFloat(splitAmounts[m]) || 0 : 0));
+        return (
+            <div key={m} className="flex items-center gap-3 bg-slate-800 rounded-xl p-4 md:p-3 mb-2">
+              <input
+                type="checkbox"
+                checked={checked}
+                onChange={e => {
+                  if (splitType === 'shares') {
+                    if (e.target.checked) {
+                      setSplit(s => ({ ...s, [m]: true }));
+                      setSplitShares(s => ({ ...s, [m]: Math.max(1, parseInt(s[m]) || 1) }));
+                    } else {
+                      setSplit(s => ({ ...s, [m]: false }));
+                      setSplitShares(s => ({ ...s, [m]: 0 }));
+                    }
+                  } else {
+                    setSplit(s => ({ ...s, [m]: e.target.checked }));
+                    if (!e.target.checked && splitType === 'amounts') {
+                      setSplitAmounts(a => ({ ...a, [m]: '' }));
+                    }
+                  }
+                }}
+                className="accent-blue-600 h-6 w-6 md:h-5 md:w-5"
+              />
+              <span className="flex-1 text-white text-base font-medium">{m}</span>
+              
+              {/* Equally */}
+              {splitType === 'equally' && checked && (
+                <span className="text-blue-200 text-sm md:text-base font-semibold">{amount && split[m] ? `${(parsedAmount / members.filter(n => split[n]).length).toFixed(2)} ${currency}` : `0.00 ${currency}`}</span>
+              )}
+              
+              {/* By Shares */}
+              {splitType === 'shares' && (
+                <>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      className="px-3 md:px-2 py-2 md:py-1 rounded-lg bg-slate-900 border border-blue-700/40 text-white text-xl md:text-lg disabled:opacity-50 hover:bg-slate-700 transition-colors"
+                      onClick={() => {
+                        if (!checked) return;
+                        if ((parseInt(splitShares[m]) || 0) === 1) {
+                          setSplit(s => ({ ...s, [m]: false }));
+                          setSplitShares(s => ({ ...s, [m]: 0 }));
+                        } else {
+                          setSplitShares(s => ({ ...s, [m]: Math.max(1, (parseInt(s[m]) || 1) - 1) }));
+                        }
+                      }}
+                      disabled={!checked || (parseInt(splitShares[m]) || 0) <= 0}
+                    >–</button>
+                    <span className="w-8 md:w-6 text-center text-white text-base font-semibold">{checked ? ((parseInt(splitShares[m]) || 1) + 'x') : '0x'}</span>
+                    <button
+                      type="button"
+                      className="px-3 md:px-2 py-2 md:py-1 rounded-lg bg-slate-900 border border-blue-700/40 text-white text-xl md:text-lg hover:bg-slate-700 transition-colors"
+                      onClick={() => {
+                        if (!checked) {
+                          setSplit(s => ({ ...s, [m]: true }));
+                          setSplitShares(s => ({ ...s, [m]: 1 }));
+                        } else {
+                          setSplitShares(s => ({ ...s, [m]: (parseInt(s[m]) || 1) + 1 }));
+                        }
+                      }}
+                    >+</button>
+                  </div>
+                  <span className="text-blue-200 text-sm md:text-base font-semibold w-24 md:w-20 text-right">{checked && effectiveShares > 0 && totalShares > 0 ? calculatedAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0.00'} {currency}</span>
+                </>
+              )}
+              
+              {/* By Amounts */}
+              {splitType === 'amounts' && checked && (
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  className="w-28 md:w-24 rounded-lg bg-slate-900 border border-blue-700/40 px-3 md:px-2 py-2 text-white focus:border-blue-400 focus:ring-2 focus:ring-blue-400 outline-none text-base"
+                  placeholder="0.00"
+                  value={splitAmounts[m]}
+                  onChange={e => setSplitAmounts(a => ({ ...a, [m]: e.target.value }))}
+                />
+              )}
+              {splitType === 'amounts' && checked && (
+                <span className="text-blue-200 text-sm md:text-base font-semibold">{splitAmounts[m] ? `${parseFloat(splitAmounts[m]).toFixed(2)} ${currency}` : `0.00 ${currency}`}</span>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      
+      {/* Mobile-optimized action buttons */}
+      <DialogFooter className="mt-6 flex flex-col gap-3">
+        <button
+          type="submit"
+          className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-4 md:py-3 rounded-xl shadow-xl transition-all duration-200 ease-in-out text-lg"
+        >
+          Save Changes
+        </button>
+        <button
+          type="button"
+          className="w-full bg-red-600 hover:bg-red-700 text-white font-semibold py-4 md:py-3 rounded-xl shadow-xl transition-all duration-200 ease-in-out text-lg"
+          onClick={onDelete}
+        >
+          Delete Expense
+        </button>
+        <button
+          type="button"
+          className="w-full bg-slate-700 hover:bg-slate-800 text-white font-semibold py-4 md:py-3 rounded-xl shadow-xl transition-all duration-200 ease-in-out text-lg"
+          onClick={onCancel}
+        >
+          Cancel
+        </button>
+      </DialogFooter>
+      {/* Category Picker Dialog */}
+      <Dialog open={showCategoryDialog} onOpenChange={setShowCategoryDialog}>
+        <DialogContent className="bg-slate-900 text-white border-none rounded-2xl shadow-2xl max-w-md w-[95vw] p-0">
+          <DialogHeader className="px-6 pt-6">
+            <DialogTitle className="text-2xl font-bold mb-2">Choose Category</DialogTitle>
+            <DialogDescription>Select a category for this expense.</DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col gap-2 px-6 pb-6">
+            {EXPENSE_CATEGORIES.map(cat => (
+              <button
+                key={cat.name}
+                className="flex items-center gap-3 px-4 py-3 rounded-lg bg-slate-800 hover:bg-blue-800 text-lg font-medium transition-colors"
+                onClick={() => {
+                  setTag(cat.name);
+                  setShowCategoryDialog(false);
+                }}
+              >
+                <span className="text-2xl">{cat.emoji}</span>
+                <span>{cat.name}</span>
+              </button>
+            ))}
+            <div className="mt-2">
+              <input
+                className="w-full rounded-lg bg-slate-700 border border-blue-700/40 px-4 py-2 text-white placeholder-blue-200/60 focus:border-blue-400 focus:ring-2 focus:ring-blue-400 outline-none"
+                placeholder="Add custom category"
+                value={customCategory}
+                onChange={e => setCustomCategory(e.target.value)}
+              />
+              <button
+                className="mt-2 w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 rounded-lg shadow transition-all"
+                onClick={() => {
+                  if (customCategory.trim()) {
+                    setTag(customCategory.trim());
+                    setShowCategoryDialog(false);
+                    setCustomCategory('');
+                  }
+                }}
+              >Add Custom Category</button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </form>
+  );
+} 
+
+function GroupInsightsOverview({ expenses, group, selectedCategory, setSelectedCategory, modalOpen, setModalOpen, expandedExpenseId, setExpandedExpenseId, myBalance = 0, myName, onSettle }) {
+  // Calculate category totals
+  const categoryTotals = {};
+  let totalSpent = 0;
+  expenses.forEach(exp => {
+    const cat = exp.tag || 'Other';
+    const amt = parseFloat(exp.amount) || 0;
+    totalSpent += amt;
+    categoryTotals[cat] = (categoryTotals[cat] || 0) + amt;
+  });
+  const sortedCategories = Object.entries(categoryTotals).sort((a, b) => b[1] - a[1]);
+  const topCategories = sortedCategories.slice(0, 4);
+  const categoryLabels = sortedCategories.map(([cat]) => cat);
+  const categoryData = sortedCategories.map(([, amt]) => amt);
+  const chartColors = categoryLabels.map(cat => getCategoryColor(cat));
+  const currency = group.currency || 'EUR';
+  const myBalanceValue = typeof myBalance === 'number' && !isNaN(myBalance) ? myBalance : 0;
+  const myUid = group?.claimedBy?.[myName];
+
+  const doughnutData = {
+    labels: categoryLabels,
+    datasets: [
+      {
+        data: categoryData,
+        backgroundColor: chartColors,
+        borderWidth: 2,
+        borderColor: '#0f172a',
+      },
+    ],
+  };
+
+  const recentExpenses = expenses
+    .slice()
+    .sort((a, b) => {
+      const aTime = a.createdAt && typeof a.createdAt.seconds === 'number' ? a.createdAt.seconds * 1000 : new Date(a.date || 0).getTime();
+      const bTime = b.createdAt && typeof b.createdAt.seconds === 'number' ? b.createdAt.seconds * 1000 : new Date(b.date || 0).getTime();
+      return bTime - aTime;
+    })
+    .slice(0, 3);
+
+  const getRecentExpenses = (expenses, cat) => {
+    return expenses
+      .filter(exp => (exp.tag || 'Other') === cat)
+      .sort((a, b) => {
+        const aTime = a.createdAt && typeof a.createdAt.seconds === 'number' ? a.createdAt.seconds * 1000 : new Date(a.date || 0).getTime();
+        const bTime = b.createdAt && typeof b.createdAt.seconds === 'number' ? b.createdAt.seconds * 1000 : new Date(b.date || 0).getTime();
+        return bTime - aTime;
+      })
+      .slice(0, 5);
+  };
+
+  const owesYou = myBalanceValue > 0 ? myBalanceValue : 0;
+  const youOwe = myBalanceValue < 0 ? Math.abs(myBalanceValue) : 0;
+
+  return (
+    <div className="w-full max-w-md mx-auto mt-4 mb-6 px-4 space-y-4">
+      <div className="rounded-2xl bg-gradient-to-r from-blue-900/40 via-blue-800/20 to-blue-900/40 border border-blue-500/20 p-5">
+        <div className="text-xs text-slate-300 uppercase tracking-widest">Your balance</div>
+        <div className="mt-2 text-3xl font-semibold text-white">
+          {myBalanceValue >= 0 ? '+' : '-'}{Math.abs(myBalanceValue).toFixed(2)} {currency}
+        </div>
+        <div className={myBalanceValue >= 0 ? 'text-sm text-green-400 mt-1' : 'text-sm text-red-400 mt-1'}>
+          {myBalanceValue >= 0 ? 'You are owed money' : 'You owe money'}
+        </div>
+        <div className="mt-4 flex items-center justify-between">
+          <div className="text-xs text-slate-400">Updated just now</div>
+          <button
+            type="button"
+            onClick={onSettle}
+            className="px-4 py-2 rounded-full bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold"
+          >
+            Settle Up
+          </button>
+        </div>
+      </div>
+
+      <div className="rounded-2xl bg-slate-900/70 border border-slate-800/70 p-4">
+        <div className="text-sm font-semibold text-white mb-3">Spending Summary</div>
+        <div className="flex gap-4 items-center">
+          <div className="relative w-28 h-28">
+            <Doughnut
+              data={doughnutData}
+              options={{
+                cutout: '70%',
+                plugins: { legend: { display: false } },
+                maintainAspectRatio: false,
+              }}
+            />
+            <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
+              <div className="text-[11px] text-slate-400">Total</div>
+              <div className="text-sm font-semibold text-white">{totalSpent.toFixed(2)}</div>
+            </div>
+          </div>
+          <div className="flex-1 space-y-2">
+            {topCategories.length === 0 && (
+              <div className="text-sm text-slate-400">No spending yet.</div>
+            )}
+            {topCategories.map(([cat, amt]) => {
+              const percent = totalSpent > 0 ? Math.round((amt / totalSpent) * 100) : 0;
+              const color = getCategoryColor(cat);
+              return (
+                <button
+                  key={cat}
+                  type="button"
+                  onClick={() => {
+                    setSelectedCategory({
+                      name: cat,
+                      amount: amt,
+                      percent,
+                      color,
+                      emoji: cat.slice(0, 1),
+                    });
+                    setModalOpen(true);
+                  }}
+                  className="w-full flex items-center gap-2 text-left"
+                >
+                  <span className="h-2 w-2 rounded-full" style={{ background: color }}></span>
+                  <span className="text-xs text-slate-300">{cat}</span>
+                  <span className="ml-auto text-xs text-white">{amt.toFixed(2)} {currency}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      <div className="rounded-2xl bg-slate-900/70 border border-slate-800/70 p-4">
+        <div className="flex items-center justify-between mb-3">
+          <div className="text-sm font-semibold text-white">Recent Activity</div>
+          <button type="button" className="text-blue-400 text-xs font-semibold">See All</button>
+        </div>
+        <div className="space-y-2">
+          {recentExpenses.length === 0 && (
+            <div className="text-sm text-slate-400">No activity yet.</div>
+          )}
+          {recentExpenses.map(exp => {
+            const payerName = getNameByUid(group, exp.paidBy);
+            const isPayer = myUid && exp.paidBy === myUid;
+            const isParticipant = myUid && exp.splits && Object.keys(exp.splits).includes(myUid);
+            const statusLabel = isPayer ? 'You lent' : (isParticipant ? 'You owe' : '');
+            const statusClass = isPayer ? 'text-green-400' : (isParticipant ? 'text-red-400' : 'text-slate-400');
+            return (
+              <div key={exp.id} className="flex items-center gap-3 rounded-xl bg-slate-950/60 border border-slate-800 px-3 py-3">
+                <div className="h-10 w-10 rounded-full bg-slate-800 flex items-center justify-center text-sm font-semibold text-slate-200">
+                  {(exp.tag || 'O').slice(0, 1)}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-semibold text-white truncate">{exp.label}</div>
+                  <div className="text-xs text-slate-400 truncate">Paid by {payerName} - {formatDateFriendly(exp.date)}</div>
+                </div>
+                <div className="text-right">
+                  <div className="text-sm font-semibold text-white">{parseFloat(exp.amount || 0).toFixed(2)} {currency}</div>
+                  <div className={`text-xs ${statusClass}`}>{statusLabel}</div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <div className="rounded-2xl bg-slate-900/70 border border-slate-800/70 p-4">
+          <div className="text-xs text-slate-400 uppercase">Owes you</div>
+          <div className="mt-2 text-xl font-semibold text-green-400">{owesYou.toFixed(2)} {currency}</div>
+        </div>
+        <div className="rounded-2xl bg-slate-900/70 border border-slate-800/70 p-4">
+          <div className="text-xs text-slate-400 uppercase">You owe</div>
+          <div className="mt-2 text-xl font-semibold text-red-400">{youOwe.toFixed(2)} {currency}</div>
+        </div>
+      </div>
+
+      <Dialog open={modalOpen} onOpenChange={setModalOpen}>
+        <DialogContent className="max-w-md w-[95vw] bg-slate-900/95 text-white rounded-2xl shadow-2xl p-0 flex flex-col">
+          {selectedCategory && (
+            <>
+              <DialogHeader className="p-5 border-b border-white/10">
+                <DialogTitle className="text-lg font-semibold text-white">{selectedCategory.name}</DialogTitle>
+                <DialogDescription className="text-slate-400">Category details and recent expenses.</DialogDescription>
+              </DialogHeader>
+              <div className="p-5 space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-2xl font-semibold text-white">{selectedCategory.amount?.toFixed(2)} {currency}</div>
+                    <div className="text-xs text-slate-400">{selectedCategory.percent}% of total</div>
+                  </div>
+                  <div className="h-12 w-12 rounded-full flex items-center justify-center text-lg font-semibold" style={{ background: selectedCategory.color || '#334155' }}>
+                    {selectedCategory.emoji}
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  {getRecentExpenses(expenses, selectedCategory.name).map(exp => (
+                    <div key={exp.id} className="flex items-center justify-between rounded-xl bg-slate-950/60 border border-slate-800 px-3 py-2">
+                      <div>
+                        <div className="text-sm text-white">{exp.label}</div>
+                        <div className="text-xs text-slate-400">{formatDateFriendly(exp.date)}</div>
+                      </div>
+                      <div className="text-sm font-semibold text-white">{parseFloat(exp.amount || 0).toFixed(2)} {currency}</div>
+                    </div>
+                  ))}
+                  {getRecentExpenses(expenses, selectedCategory.name).length === 0 && (
+                    <div className="text-sm text-slate-400">No expenses in this category yet.</div>
+                  )}
+                </div>
+              </div>
+              <DialogFooter className="px-5 pb-5">
+                <button className="w-full bg-blue-600 hover:bg-blue-500 text-white font-semibold py-2 rounded-full" onClick={() => setModalOpen(false)}>Close</button>
+              </DialogFooter>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+const getCategoryColor = (cat) => {
+  const colorMap = {
+    'Groceries': '#3b82f6',
+    'Dining': '#f472b6',
+    'Transportation': '#a78bfa',
+    'Shopping': '#818cf8',
+    'Bills': '#60a5fa',
+    'Entertainment': '#fbbf24',
+    'Health': '#10b981',
+    'Other': '#f59e42',
+    'Uncategorized': '#9ca3af'
+  };
+  return colorMap[cat] || colorMap['Uncategorized'];
+};
+
+function getExpenseDayLabel(dateStr) {
+  if (!dateStr) return 'Unknown';
+  const date = new Date(dateStr);
+  if (isNaN(date)) return dateStr;
+  const today = new Date();
+  const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const startOfDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const diffDays = Math.round((startOfToday - startOfDate) / 86400000);
+  if (diffDays === 0) return 'Today';
+  if (diffDays === 1) return 'Yesterday';
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function groupExpensesByDay(expenses) {
+  const grouped = [];
+  let currentLabel = null;
+  let currentItems = [];
+  expenses.forEach(exp => {
+    const label = getExpenseDayLabel(exp.date);
+    if (label !== currentLabel) {
+      if (currentItems.length > 0) {
+        grouped.push({ label: currentLabel, expenses: currentItems });
+      }
+      currentLabel = label;
+      currentItems = [exp];
+    } else {
+      currentItems.push(exp);
+    }
+  });
+  if (currentItems.length > 0) {
+    grouped.push({ label: currentLabel, expenses: currentItems });
+  }
+  return grouped;
+}
+
+// Helper to format date nicely
+function formatDateFriendly(dateStr) {
+  if (!dateStr) return '';
+  const d = new Date(dateStr);
+  if (isNaN(d)) return dateStr;
+  return d.toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+function GroupInsightsGraph({ expenses, group }) {
+  const [period, setPeriod] = React.useState('week');
+  const [currentOffset, setCurrentOffset] = React.useState(0);
+  const [categoryFilter, setCategoryFilter] = React.useState('All');
+  const [memberFilter, setMemberFilter] = React.useState('All');
+  const [showComparison, setShowComparison] = React.useState(false);
+  //const [showCumulative, setShowCumulative] = React.useState(false);
+  //const [showAverage, setShowAverage] = React.useState(true);
+  const chartRef = React.useRef(null);
+  // --- Comparison state ---
+  const [comparisonType, setComparisonType] = React.useState('member');
+  const [comparisonMemberA, setComparisonMemberA] = React.useState('');
+  const [comparisonMemberB, setComparisonMemberB] = React.useState('');
+  const [comparisonCategoryA, setComparisonCategoryA] = React.useState('');
+  const [comparisonCategoryB, setComparisonCategoryB] = React.useState('');
+  const [comparisonPeriodA, setComparisonPeriodA] = React.useState('');
+  const [comparisonPeriodB, setComparisonPeriodB] = React.useState('');
+  // Helper to robustly normalize a date string/object to local midnight
+  function normalizeToLocalMidnight(d) {
+    if (!d) return null;
+    if (typeof d.toDate === 'function') { d = d.toDate(); }
+    if (typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d)) {
+      const [year, month, day] = d.split('-').map(Number);
+      return new Date(year, month - 1, day);
+    }
+    const date = new Date(d);
+    if (isNaN(date)) return null;
+    return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  }
+  // --- Date helpers ---
+  const today = new Date();
+  let periodStart, periodEnd, periodLabel;
+  const weekStartsOn = 'monday';
+  if (period === 'week') {
+    const targetDate = new Date(today);
+    targetDate.setDate(today.getDate() + (currentOffset * 7));
+    periodStart = new Date(targetDate);
+    periodStart.setHours(0, 0, 0, 0);
+    let dayOfWeek = targetDate.getDay();
+    let offset = weekStartsOn === 'monday' ? (dayOfWeek === 0 ? -6 : 1 - dayOfWeek) : -dayOfWeek;
+    periodStart.setDate(targetDate.getDate() + offset);
+    periodEnd = new Date(periodStart);
+    periodEnd.setDate(periodStart.getDate() + 6);
+    periodEnd.setHours(23, 59, 59, 999);
+    const formatShort = d => d.toLocaleDateString(undefined, { day: '2-digit', month: 'short' });
+    periodLabel = `${formatShort(periodStart)} - ${formatShort(periodEnd)}`.replace(/\b[a-z]/g, letter => letter.toUpperCase());
+  } else if (period === 'month') {
+    const targetDate = new Date(today.getFullYear(), today.getMonth() + currentOffset, 1);
+    periodStart = new Date(targetDate.getFullYear(), targetDate.getMonth(), 1, 0, 0, 0, 0);
+    periodEnd = new Date(targetDate.getFullYear(), targetDate.getMonth() + 1, 0, 23, 59, 59, 999);
+    const formatShort = d => d.toLocaleDateString(undefined, { day: '2-digit', month: 'short' });
+    periodLabel = `${formatShort(periodStart)} - ${formatShort(periodEnd)}`.replace(/\b[a-z]/g, letter => letter.toUpperCase());
+  } else {
+    const targetYear = today.getFullYear() + currentOffset;
+    periodStart = new Date(targetYear, 0, 1, 0, 0, 0, 0);
+    periodEnd = new Date(targetYear, 11, 31, 23, 59, 59, 999);
+    periodLabel = targetYear.toString();
+  }
+  // Get all categories and members
+  const allCategories = Array.from(new Set(expenses.map(e => e.tag || 'Other')));
+  const allMembers = group && group.claimedBy ? Object.keys(group.claimedBy) : [];
+  // Filter expenses for the period, category, and member
+  const periodExpenses = React.useMemo(() => {
+    return expenses.filter(e => {
+      const d = normalizeToLocalMidnight(e.date);
+      if (!(d && d >= periodStart && d <= periodEnd)) return false;
+      if (categoryFilter !== 'All' && (e.tag || 'Other') !== categoryFilter) return false;
+      if (memberFilter !== 'All' && getNameByUid(group, e.paidBy) !== memberFilter) return false;
+      return true;
+    });
+  }, [expenses, periodStart, periodEnd, categoryFilter, memberFilter, group]);
+  // Build daily/weekly/monthly data
+  let labelsWithDates = [], dailyData = [];
+  if (period === 'week') {
+    let weekDays = [1,2,3,4,5,6,0];
+    const weekDates = weekDays.map((weekday, i) => {
+      const d = new Date(periodStart);
+      d.setDate(periodStart.getDate() + i);
+      return d;
+    });
+    labelsWithDates = weekDates.map(d => ({ short: d.toLocaleDateString(undefined, { weekday: 'short' })[0], full: d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric' }) }));
+    dailyData = weekDays.map(() => ({ categories: {}, total: 0 }));
+    periodExpenses.forEach(e => {
+      const date = normalizeToLocalMidnight(e.date);
+      if (date) {
+        const dayIndex = weekDates.findIndex(d => d.getTime() === date.getTime());
+        if (dayIndex !== -1) {
+          const category = e.tag || 'Other';
+          const amount = parseFloat(e.amount) || 0;
+          dailyData[dayIndex].categories[category] = (dailyData[dayIndex].categories[category] || 0) + amount;
+          dailyData[dayIndex].total += amount;
+        }
+      }
+    });
+  } else if (period === 'month') {
+    const daysInMonth = periodEnd.getDate();
+    labelsWithDates = Array.from({ length: daysInMonth }, (_, i) => {
+      const d = new Date(periodStart.getFullYear(), periodStart.getMonth(), i + 1);
+      return { short: (i + 1).toString(), full: d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric' }) };
+    });
+    dailyData = Array.from({ length: daysInMonth }, () => ({ categories: {}, total: 0 }));
+    periodExpenses.forEach(e => {
+      const date = normalizeToLocalMidnight(e.date);
+      if (date) {
+        const dayIndex = date.getDate() - 1;
+        if (dayIndex >= 0 && dayIndex < daysInMonth) {
+          const category = e.tag || 'Other';
+          const amount = parseFloat(e.amount) || 0;
+          dailyData[dayIndex].categories[category] = (dailyData[dayIndex].categories[category] || 0) + amount;
+          dailyData[dayIndex].total += amount;
+        }
+      }
+    });
+  } else {
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const targetYear = today.getFullYear() + currentOffset;
+    labelsWithDates = months.map((month, i) => ({ short: month, full: `${month} ${targetYear}` }));
+    dailyData = Array.from({ length: 12 }, () => ({ categories: {}, total: 0 }));
+    periodExpenses.forEach(e => {
+      const date = normalizeToLocalMidnight(e.date);
+      if (date) {
+        const monthIndex = date.getMonth();
+        if (monthIndex >= 0 && monthIndex < 12) {
+          const category = e.tag || 'Other';
+          const amount = parseFloat(e.amount) || 0;
+          dailyData[monthIndex].categories[category] = (dailyData[monthIndex].categories[category] || 0) + amount;
+          dailyData[monthIndex].total += amount;
+        }
+      }
+    });
+  }
+  const chartTotals = dailyData.map(d => d.total);
+  const expensesTotal = chartTotals.reduce((a, b) => a + b, 0);
+  const spentPerDay = period === 'week' ? expensesTotal / 7 : period === 'month' ? (chartTotals.length > 0 ? expensesTotal / chartTotals.length : 0) : period === 'year' ? expensesTotal / 365 : 0;
+  // Calculate previous period for trend
+  let prevPeriodStart, prevPeriodEnd;
+  if (period === 'week') {
+    prevPeriodStart = new Date(periodStart); prevPeriodStart.setDate(periodStart.getDate() - 7);
+    prevPeriodEnd = new Date(periodEnd); prevPeriodEnd.setDate(periodEnd.getDate() - 7);
+  } else if (period === 'month') {
+    prevPeriodStart = new Date(periodStart.getFullYear(), periodStart.getMonth() - 1, 1);
+    prevPeriodEnd = new Date(periodStart.getFullYear(), periodStart.getMonth(), 0, 23, 59, 59, 999);
+  } else {
+    prevPeriodStart = new Date(periodStart.getFullYear() - 1, 0, 1);
+    prevPeriodEnd = new Date(periodStart.getFullYear() - 1, 11, 31, 23, 59, 59, 999);
+  }
+  const prevPeriodExpenses = expenses.filter(e => {
+    const d = normalizeToLocalMidnight(e.date);
+    if (!(d && d >= prevPeriodStart && d <= prevPeriodEnd)) return false;
+    if (categoryFilter !== 'All' && (e.tag || 'Other') !== categoryFilter) return false;
+    if (memberFilter !== 'All' && getNameByUid(group, e.paidBy) !== memberFilter) return false;
+    return true;
+  });
+  let prevTotal = prevPeriodExpenses.reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0);
+  let prevSpentPerDay = (period === 'week') ? prevTotal / 7 : (period === 'month' ? (prevPeriodExpenses.length > 0 ? prevTotal / chartTotals.length : 0) : (period === 'year' ? prevTotal / 365 : 0));
+  // Trend calculation
+  const trend = prevTotal > 0 ? ((expensesTotal - prevTotal) / prevTotal) * 100 : 0;
+  const trendDay = prevSpentPerDay > 0 ? ((spentPerDay - prevSpentPerDay) / prevSpentPerDay) * 100 : 0;
+  // Top spender and largest expense
+  let memberTotals = {};
+  periodExpenses.forEach(e => {
+    const name = getNameByUid(group, e.paidBy);
+    memberTotals[name] = (memberTotals[name] || 0) + (parseFloat(e.amount) || 0);
+  });
+  const topSpender = Object.entries(memberTotals).sort((a, b) => b[1] - a[1])[0];
+  const largestExpense = periodExpenses.sort((a, b) => (parseFloat(b.amount) || 0) - (parseFloat(a.amount) || 0))[0];
+  // Category legend
+  const periodCategoryTotals = periodExpenses.reduce((acc, e) => {
+    const cat = e.tag || 'Other';
+    const amt = parseFloat(e.amount) || 0;
+    acc[cat] = (acc[cat] || 0) + amt;
+    return acc;
+  }, {});
+  const legendCategories = [...new Set(Object.keys(periodCategoryTotals))];
+  // Legend
+  const legend = legendCategories.map(cat => {
+    const percent = expensesTotal ? ((periodCategoryTotals[cat] / expensesTotal) * 100).toFixed(1) : 0;
+    return { name: cat, color: getCategoryColor(cat), percent, amount: periodCategoryTotals[cat] };
+  });
+  // Build comparison overlay dataset
+  let comparisonDataset = null;
+  if (showComparison && prevPeriodExpenses.length > 0) {
+    let prevDailyData = [];
+    if (period === 'week') {
+      prevDailyData = Array(7).fill(0);
+      prevPeriodExpenses.forEach(e => {
+        const date = normalizeToLocalMidnight(e.date);
+        if (date) {
+          const dayIndex = (date.getDay() + 6) % 7; // Monday=0
+          prevDailyData[dayIndex] += parseFloat(e.amount) || 0;
+        }
+      });
+    } else if (period === 'month') {
+      const daysInMonth = prevPeriodEnd.getDate();
+      prevDailyData = Array(daysInMonth).fill(0);
+      prevPeriodExpenses.forEach(e => {
+        const date = normalizeToLocalMidnight(e.date);
+        if (date) {
+          const dayIndex = date.getDate() - 1;
+          if (dayIndex >= 0 && dayIndex < daysInMonth) {
+            prevDailyData[dayIndex] += parseFloat(e.amount) || 0;
+          }
+        }
+      });
+    } else {
+      prevDailyData = Array(12).fill(0);
+      prevPeriodExpenses.forEach(e => {
+        const date = normalizeToLocalMidnight(e.date);
+        if (date) {
+          const monthIndex = date.getMonth();
+          if (monthIndex >= 0 && monthIndex < 12) {
+            prevDailyData[monthIndex] += parseFloat(e.amount) || 0;
+          }
+        }
+      });
+    }
+    comparisonDataset = {
+      label: 'Previous Period',
+      data: prevDailyData,
+      backgroundColor: 'rgba(99,102,241,0.18)',
+      borderRadius: 12,
+      barPercentage: 0.6,
+      categoryPercentage: 0.7,
+      borderSkipped: false,
+      stack: 'stack0',
+    };
+  }
+  // Build cumulative line dataset
+  /*
+  let cumulativeDataset = null;
+  if (showCumulative) {
+    let cum = 0;
+    const cumData = chartTotals.map(val => (cum += val));
+    cumulativeDataset = {
+      type: 'line',
+      label: 'Cumulative',
+      data: cumData,
+      borderColor: '#38bdf8',
+      backgroundColor: 'rgba(56,189,248,0.2)',
+      borderWidth: 2,
+      pointRadius: 0,
+      fill: false,
+      tension: 0.3,
+      yAxisID: 'y',
+    };
+  }
+  */
+  // --- Smart Comparison Datasets ---
+  let comparisonBarDatasets = null;
+  if (showComparison) {
+    if (comparisonType === 'member' && comparisonMemberA && comparisonMemberB) {
+      // Member comparison: two datasets, one for each member
+      const memberData = [comparisonMemberA, comparisonMemberB].map((member, idx) => {
+        // Build daily/period data for this member
+        let data = labelsWithDates.map((_, i) => 0);
+        periodExpenses.forEach(e => {
+          if (getNameByUid(group, e.paidBy) === member) {
+            const date = normalizeToLocalMidnight(e.date);
+            let idxDate = -1;
+            if (period === 'week') {
+              const weekDays = [1,2,3,4,5,6,0];
+              const weekDates = weekDays.map((weekday, i) => { const d = new Date(periodStart); d.setDate(periodStart.getDate() + i); return d; });
+              idxDate = weekDates.findIndex(d => d.getTime() === date.getTime());
+            } else if (period === 'month') {
+              idxDate = date.getDate() - 1;
+            } else {
+              idxDate = date.getMonth();
+            }
+            if (idxDate >= 0 && idxDate < data.length) {
+              data[idxDate] += parseFloat(e.amount) || 0;
+            }
+          }
+        });
+        return {
+          label: member,
+          data,
+          backgroundColor: idx === 0 ? '#6366F1' : '#F59E42',
+          borderRadius: 12,
+          barPercentage: 0.6,
+          categoryPercentage: 0.7,
+          borderSkipped: false,
+          stack: undefined,
+        };
+      });
+      comparisonBarDatasets = memberData;
+    } else if (comparisonType === 'category' && comparisonCategoryA && comparisonCategoryB) {
+      // Category comparison: two datasets, one for each category
+      const catData = [comparisonCategoryA, comparisonCategoryB].map((cat, idx) => {
+        let data = labelsWithDates.map((_, i) => 0);
+        periodExpenses.forEach(e => {
+          if ((e.tag || 'Other') === cat) {
+            const date = normalizeToLocalMidnight(e.date);
+            let idxDate = -1;
+            if (period === 'week') {
+              const weekDays = [1,2,3,4,5,6,0];
+              const weekDates = weekDays.map((weekday, i) => { const d = new Date(periodStart); d.setDate(periodStart.getDate() + i); return d; });
+              idxDate = weekDates.findIndex(d => d.getTime() === date.getTime());
+            } else if (period === 'month') {
+              idxDate = date.getDate() - 1;
+            } else {
+              idxDate = date.getMonth();
+            }
+            if (idxDate >= 0 && idxDate < data.length) {
+              data[idxDate] += parseFloat(e.amount) || 0;
+            }
+          }
+        });
+        return {
+          label: cat,
+          data,
+          backgroundColor: idx === 0 ? '#6366F1' : '#F59E42',
+          borderRadius: 12,
+          barPercentage: 0.6,
+          categoryPercentage: 0.7,
+          borderSkipped: false,
+          stack: undefined,
+        };
+      });
+      comparisonBarDatasets = catData;
+    } else if (comparisonType === 'period' && comparisonPeriodA && comparisonPeriodB) {
+      // Period comparison: two datasets, one for each period
+      const periods = [comparisonPeriodA, comparisonPeriodB].map((start, idx) => {
+        // For simplicity, compare 7 days from each start date (week)
+        const startDate = new Date(start);
+        let periodDates = [];
+        if (period === 'week' || period === 'month') {
+          for (let i = 0; i < labelsWithDates.length; i++) {
+            const d = new Date(startDate);
+            if (period === 'week') d.setDate(startDate.getDate() + i);
+            else d.setDate(startDate.getDate() + i);
+            periodDates.push(d);
+          }
+        } else {
+          for (let i = 0; i < labelsWithDates.length; i++) {
+            const d = new Date(startDate.getFullYear(), i, 1);
+            periodDates.push(d);
+          }
+        }
+        let data = labelsWithDates.map((_, i) => 0);
+        expenses.forEach(e => {
+          const date = normalizeToLocalMidnight(e.date);
+          for (let i = 0; i < periodDates.length; i++) {
+            if (date && date.getFullYear() === periodDates[i].getFullYear() && date.getMonth() === periodDates[i].getMonth() && date.getDate() === periodDates[i].getDate()) {
+              data[i] += parseFloat(e.amount) || 0;
+            }
+          }
+        });
+        return {
+          label: `Period ${idx + 1}`,
+          data,
+          backgroundColor: idx === 0 ? '#6366F1' : '#F59E42',
+          borderRadius: 12,
+          barPercentage: 0.6,
+          categoryPercentage: 0.7,
+          borderSkipped: false,
+          stack: undefined,
+        };
+      });
+      comparisonBarDatasets = periods;
+    }
+  }
+  // Bar chart datasets
+  const barDatasets = comparisonBarDatasets || [
+    ...legendCategories.map(category => {
+      const categoryData = dailyData.map(dayData => dayData.categories[category] || 0);
+      return {
+        label: category,
+        data: categoryData,
+        backgroundColor: getCategoryColor(category),
+        borderRadius: 12,
+        barPercentage: 0.6,
+        categoryPercentage: 0.7,
+        borderSkipped: false,
+        stack: 'stack0',
+      };
+    }),
+    //...(cumulativeDataset ? [cumulativeDataset] : []),
+  ];
+  const barData = {
+    labels: labelsWithDates.map(l => l.short),
+    datasets: barDatasets,
+  };
+  const barOptions = {
+    plugins: {
+      legend: { display: false },
+      tooltip: {
+        enabled: true,
+        mode: 'index',
+        intersect: false,
+        backgroundColor: '#1e293b',
+        titleColor: '#f1f5f9',
+        titleFont: { size: 14, weight: 'bold' },
+        bodyColor: '#cbd5e1',
+        bodyFont: { size: 12 },
+        borderColor: 'rgba(99,102,241,0.5)',
+        borderWidth: 1,
+        displayColors: false,
+        padding: 12,
+        cornerRadius: 8,
+        animation: { duration: 400 },
+        callbacks: {
+          title: function(context) {
+            if (!context[0]) return '';
+            return labelsWithDates[context[0].dataIndex].full;
+          },
+          label: () => null,
+          beforeBody: function(context) {
+            const dataIndex = context[0].dataIndex;
+            const dayData = dailyData[dataIndex];
+            const sortedCategories = Object.entries(dayData.categories).sort((a, b) => b[1] - a[1]);
+            if (sortedCategories.length === 0) return ['No expenses this day.'];
+            return sortedCategories.map(([name, amount]) => `${name}: ${amount.toFixed(2)} ${group.currency || '€'}`);
+          },
+          footer: function(context) {
+            const totalAmount = context[0].raw;
+            if (totalAmount > 0) {
+              return `\nTotal: ${totalAmount.toFixed(2)} ${group.currency || '€'}`;
+            }
+            return '';
+          },
+        },
+      },
+    },
+    elements: {
+      bar: { borderRadius: 12 },
+    },
+    responsive: true,
+    maintainAspectRatio: false,
+    scales: {
+      x: { grid: { display: false } },
+      y: { grid: { color: '#334155', borderDash: [4, 4] }, beginAtZero: true },
+    },
+  };
+  // Export as image
+  const handleExport = async () => {
+    if (!chartRef.current) return;
+    const node = chartRef.current;
+    const canvas = await html2canvas(node, { backgroundColor: null, useCORS: true });
+    const link = document.createElement('a');
+    link.download = 'group-expense-insights.png';
+    link.href = canvas.toDataURL('image/png');
+    link.click();
+  };
+  // Share summary
+  const handleShare = async () => {
+    const summary = `Group: ${group.name}
+    \nPeriod: ${periodLabel}
+    \nTotal: ${expensesTotal.toFixed(2)} ${group.currency || '€'}
+    \nSpent/Day: ${spentPerDay.toFixed(2)} ${group.currency || '€'}
+    \nTop Spender: ${topSpender ? `${topSpender[0]} (${topSpender[1].toFixed(2)} ${group.currency || '€'})` : '-'}`;
+    if (navigator.share) {
+      try {
+        await navigator.share({ title: 'Group Expense Insights', text: summary });
+      } catch {}
+    } else {
+      await navigator.clipboard.writeText(summary);
+      alert('Summary copied to clipboard!');
+    }
+  };
+  // --- Dynamic Legend for Comparison ---
+  let dynamicLegend = [];
+  if (showComparison && comparisonBarDatasets && comparisonBarDatasets.length === 2) {
+    // Show only the two compared items
+    dynamicLegend = comparisonBarDatasets.map((ds, idx) => {
+      const total = ds.data.reduce((a, b) => a + b, 0);
+      return {
+        name: ds.label,
+        color: ds.backgroundColor,
+        amount: total,
+      };
+    });
+  } else {
+    // Default legend
+    dynamicLegend = legend.map(l => ({
+      name: l.name,
+      color: l.color,
+      amount: l.amount,
+      percent: l.percent,
+    }));
+  }
+  // Calculate group health (simple: % of members who added expenses this period)
+  const memberSet = new Set(periodExpenses.map(e => getNameByUid(group, e.paidBy)));
+  const participation = allMembers.length > 0 ? Math.round((memberSet.size / allMembers.length) * 100) : 0;
+  let healthLabel = 'Dormant', healthColor = 'bg-gray-500', healthIcon = <HeartPulse className="h-4 w-4" />;
+  if (participation >= 80) { healthLabel = 'Active'; healthColor = 'bg-green-600'; }
+  else if (participation >= 40) { healthLabel = 'Moderate'; healthColor = 'bg-yellow-500'; }
+  else if (participation > 0) { healthLabel = 'Low'; healthColor = 'bg-orange-500'; }
+  return (
+    <div className="w-full max-w-2xl mx-auto mt-1 mb-4 px-2">
+      <div className="bg-slate-900/95 text-white shadow-2xl rounded-3xl border border-blue-400/20 p-3 md:p-6 flex flex-col items-center glass-card" style={{overflow: 'hidden', background: 'rgba(30,41,59,0.85)', boxShadow: '0 8px 32px 0 rgba(31, 38, 135, 0.18)', border: '1.5px solid rgba(99,102,241,0.12)', backdropFilter: 'blur(18px)'}}>
+        {/* --- Header: Title & Period Controls --- */}
+        <div className="w-full flex flex-row items-center justify-between mb-4 mt-1">
+          <div className="text-lg font-bold tracking-tight">Group Insights</div>
+          <div className="flex items-center gap-2">
+            <button onClick={() => setCurrentOffset(o => o - 1)} className="w-8 h-8 flex items-center justify-center rounded-full bg-slate-800 hover:bg-slate-700 transition-colors duration-200 border border-blue-700/40 focus:outline-none" title="Previous period" aria-label="Previous period">
+              <svg className="w-4 h-4 text-blue-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
+            </button>
+            <select className="bg-slate-900 text-white rounded-full px-3 py-1 text-sm font-semibold border border-blue-700/40 focus:outline-none" style={{ colorScheme: 'dark' }} value={period} onChange={e => setPeriod(e.target.value)} aria-label="Select period">
+              <option className="bg-slate-900 text-white" value="week">week</option>
+              <option className="bg-slate-900 text-white" value="month">month</option>
+              <option className="bg-slate-900 text-white" value="year">year</option>
+            </select>
+            {currentOffset < 0 && (
+              <button onClick={() => setCurrentOffset(o => o + 1)} className="w-8 h-8 flex items-center justify-center rounded-full bg-slate-800 hover:bg-slate-700 transition-colors duration-200 border border-blue-700/40 focus:outline-none" title="Next period" aria-label="Next period">
+                <svg className="w-4 h-4 text-blue-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+              </button>
+            )}
+            {currentOffset !== 0 && (
+              <button onClick={() => setCurrentOffset(0)} className="px-2 py-1 text-xs font-medium text-blue-400 hover:text-blue-200 hover:bg-blue-700/20 rounded-full transition-colors duration-200" title="Go to current period" aria-label="Go to current period">Today</button>
+            )}
+          </div>
+        </div>
+        {/* --- Category Filter: Horizontal Scrollable Chips --- */}
+        <div className="w-full flex flex-row gap-2 overflow-x-auto pb-2 scrollbar-hide mb-2">
+          <button className={`px-3 py-1 rounded-full text-xs font-semibold border ${categoryFilter === 'All' ? 'bg-blue-600 text-white border-blue-600' : 'bg-slate-800 text-blue-200 border-slate-700 hover:bg-blue-700 hover:text-white'}`} onClick={() => setCategoryFilter('All')} aria-label="Show all categories">All</button>
+          {allCategories.map(cat => (
+            <button key={cat} className={`px-3 py-1 rounded-full text-xs font-semibold border flex items-center gap-2 ${categoryFilter === cat ? 'bg-blue-600 text-white border-blue-600' : 'bg-slate-800 text-blue-200 border-slate-700 hover:bg-blue-700 hover:text-white'}`} onClick={() => setCategoryFilter(cat)} aria-label={`Filter by ${cat}`}>
+              <span className="inline-block w-3 h-3 rounded-full" style={{background: getCategoryColor(cat)}}></span>
+              {cat}
+            </button>
+          ))}
+        </div>
+        {/* --- Member Filter: Horizontal Scrollable Avatars/Initials --- */}
+        <div className="w-full flex flex-row gap-2 overflow-x-auto pb-2 scrollbar-hide mb-2">
+          <button className={`px-3 py-1 rounded-full text-xs font-semibold border ${memberFilter === 'All' ? 'bg-blue-600 text-white border-blue-600' : 'bg-slate-800 text-blue-200 border-slate-700 hover:bg-blue-700 hover:text-white'}`} onClick={() => setMemberFilter('All')} aria-label="Show all members">All</button>
+          {allMembers.map(name => (
+            <button key={name} className={`px-3 py-1 rounded-full text-xs font-semibold border flex items-center gap-2 ${memberFilter === name ? 'bg-blue-600 text-white border-blue-600' : 'bg-slate-800 text-blue-200 border-slate-700 hover:bg-blue-700 hover:text-white'}`} onClick={() => setMemberFilter(name)} aria-label={`Filter by ${name}`}>
+              <span className="inline-block w-6 h-6 rounded-full bg-blue-700 text-white flex items-center justify-center font-bold text-xs">{name[0]}</span>
+              {name}
+            </button>
+          ))}
+        </div>
+        {/* --- Toggles: Visually Separated --- */}
+        <div className="w-full flex flex-wrap gap-2 mb-4 justify-center items-center border-b border-blue-700/20 pb-2">
+          <label className={`flex items-center gap-1 text-xs px-3 py-1 rounded-full cursor-pointer ${showComparison ? 'bg-blue-700/30 text-blue-200' : 'bg-slate-800/80 text-blue-200'}`}> <input type="checkbox" checked={showComparison} onChange={e => setShowComparison(e.target.checked)} className="accent-blue-600" />Comparison</label>
+          {/* <label className={`flex items-center gap-1 text-xs px-3 py-1 rounded-full cursor-pointer ${showCumulative ? 'bg-blue-700/30 text-blue-200' : 'bg-slate-800/80 text-blue-200'}`}> <input type="checkbox" checked={showCumulative} onChange={e => setShowCumulative(e.target.checked)} className="accent-blue-600" />Cumulative</label> */} 
+          {/* <label className={`flex items-center gap-1 text-xs px-3 py-1 rounded-full cursor-pointer ${showAverage ? 'bg-blue-700/30 text-blue-200' : 'bg-slate-800/80 text-blue-200'}`}> <input type="checkbox" checked={showAverage} onChange={e => setShowAverage(e.target.checked)} className="accent-blue-600" />Average</label> */}
+        </div>
+        {/* --- Stats Row: Period, Total, Spent/Day --- */}
+        <div className="w-full flex flex-row items-center justify-between mb-2 text-xs font-semibold text-blue-200/80 bg-slate-800/60 rounded-xl px-4 py-2">
+          <span>{periodLabel}</span>
+          <span className="text-blue-400 font-bold text-lg">{expensesTotal.toFixed(2)} {group.currency || '€'}</span>
+          <span className="text-white font-bold text-lg"> Average: {spentPerDay.toFixed(2)} {group.currency || '€'} </span>
+        </div>
+        {/* --- Info Bar: Top Spender & Largest Expense --- */}
+        {/* <div className="w-full flex flex-row gap-2 overflow-x-auto scrollbar-hide mb-2">
+          <span className="bg-blue-800/40 rounded-full px-3 py-1 flex items-center gap-2 min-w-max"><span className="font-bold">Top spender:</span> {topSpender ? <><span className="bg-blue-700/80 rounded-full px-2 py-0.5 text-white font-semibold text-xs">{topSpender[0]}</span> <span>({topSpender[1].toFixed(2)} {group.currency || '€'})</span></> : '-'}</span>
+          <span className="bg-blue-800/40 rounded-full px-3 py-1 flex items-center gap-2 min-w-max"><span className="font-bold">Largest expense:</span> {largestExpense ? <><span className="bg-blue-700/80 rounded-full px-2 py-0.5 text-white font-semibold text-xs">{largestExpense.label || 'Expense'}</span> <span>({parseFloat(largestExpense.amount).toFixed(2)} {group.currency || '€'})</span></> : '-'}</span>
+        </div> */}
+        {/* --- Comparison Mode: World-Class Interactive Selector --- */}
+        {showComparison && (
+          <div className="w-full flex flex-col gap-2 mb-2">
+            <div className="flex flex-row gap-2 items-center justify-center">
+              <span className="text-xs font-semibold text-blue-200">Compare:</span>
+              <select
+                className="bg-slate-900 text-white rounded-full px-3 py-1 text-xs font-semibold border border-blue-700/40 focus:outline-none"
+                style={{ colorScheme: 'dark' }}
+                value={comparisonType}
+                onChange={e => setComparisonType(e.target.value)}
+                aria-label="Select comparison type"
+              >
+                <option className="bg-slate-900 text-white" value="member">Members</option>
+                <option className="bg-slate-900 text-white" value="category">Categories</option>
+                <option className="bg-slate-900 text-white" value="period">Periods</option>
+              </select>
+            </div>
+            {/* Comparison selectors */}
+            {comparisonType === 'member' && (
+              <div className="flex flex-row gap-2 items-center justify-center">
+                <select
+                  className="bg-slate-900 text-white rounded-full px-3 py-1 text-xs font-semibold border border-blue-700/40 focus:outline-none"
+                  style={{ colorScheme: 'dark' }}
+                  value={comparisonMemberA}
+                  onChange={e => setComparisonMemberA(e.target.value)}
+                  aria-label="Select first member"
+                >
+                  <option className="bg-slate-900 text-white" value="">Select member</option>
+                  {allMembers.map(name => <option key={name} className="bg-slate-900 text-white" value={name}>{name}</option>)}
+                </select>
+                <span className="text-blue-300 font-bold">vs</span>
+                <select
+                  className="bg-slate-900 text-white rounded-full px-3 py-1 text-xs font-semibold border border-blue-700/40 focus:outline-none"
+                  style={{ colorScheme: 'dark' }}
+                  value={comparisonMemberB}
+                  onChange={e => setComparisonMemberB(e.target.value)}
+                  aria-label="Select second member"
+                >
+                  <option className="bg-slate-900 text-white" value="">Select member</option>
+                  {allMembers.map(name => <option key={name} className="bg-slate-900 text-white" value={name}>{name}</option>)}
+                </select>
+              </div>
+            )}
+            {comparisonType === 'category' && (
+              <div className="flex flex-row gap-2 items-center justify-center">
+                <select
+                  className="bg-slate-900 text-white rounded-full px-3 py-1 text-xs font-semibold border border-blue-700/40 focus:outline-none"
+                  style={{ colorScheme: 'dark' }}
+                  value={comparisonCategoryA}
+                  onChange={e => setComparisonCategoryA(e.target.value)}
+                  aria-label="Select first category"
+                >
+                  <option className="bg-slate-900 text-white" value="">Select category</option>
+                  {allCategories.map(cat => <option key={cat} className="bg-slate-900 text-white" value={cat}>{cat}</option>)}
+                </select>
+                <span className="text-blue-300 font-bold">vs</span>
+                <select
+                  className="bg-slate-900 text-white rounded-full px-3 py-1 text-xs font-semibold border border-blue-700/40 focus:outline-none"
+                  style={{ colorScheme: 'dark' }}
+                  value={comparisonCategoryB}
+                  onChange={e => setComparisonCategoryB(e.target.value)}
+                  aria-label="Select second category"
+                >
+                  <option className="bg-slate-900 text-white" value="">Select category</option>
+                  {allCategories.map(cat => <option key={cat} className="bg-slate-900 text-white" value={cat}>{cat}</option>)}
+                </select>
+              </div>
+            )}
+            {comparisonType === 'period' && (
+              <div className="flex flex-row gap-2 items-center justify-center">
+                <input
+                  type="date"
+                  className="bg-slate-900 text-white rounded-full px-3 py-1 text-xs font-semibold border border-blue-700/40 focus:outline-none"
+                  style={{ colorScheme: 'dark' }}
+                  value={comparisonPeriodA}
+                  onChange={e => setComparisonPeriodA(e.target.value)}
+                  aria-label="Select first period start"
+                />
+                <span className="text-blue-300 font-bold">vs</span>
+                <input
+                  type="date"
+                  className="bg-slate-900 text-white rounded-full px-3 py-1 text-xs font-semibold border border-blue-700/40 focus:outline-none"
+                  style={{ colorScheme: 'dark' }}
+                  value={comparisonPeriodB}
+                  onChange={e => setComparisonPeriodB(e.target.value)}
+                  aria-label="Select second period start"
+                />
+              </div>
+            )}
+          </div>
+        )}
+        {/* --- Graph Area: More Whitespace, Clear Border/Background --- */}
+        <div className="w-full h-48 md:h-56 mb-4 rounded-2xl bg-slate-800/90 p-4 border border-blue-700/30 shadow-inner" ref={chartRef}>
+          <Bar data={barData} options={barOptions} />
+        </div>
+        {/* --- Category Legend: Horizontal Scrollable, World-Class --- */}
+        <div className="flex flex-row flex-nowrap items-center justify-start gap-3 mt-2 w-full overflow-x-auto scrollbar-hide pb-2">
+          {dynamicLegend.map((l, idx) => (
+            <div key={l.name} className="flex items-center gap-2 bg-slate-800/60 rounded-full px-3 py-1 min-w-max border border-blue-700/20">
+              <span className="inline-block w-4 h-2 rounded-full" style={{background: l.color}}></span>
+              <span className="text-xs font-semibold text-blue-100 truncate max-w-[80px]">{l.name}</span>
+              {l.percent !== undefined && <span className="text-xs text-blue-300">{l.percent}%</span>}
+              <span className="text-xs text-blue-200 font-medium">{l.amount.toFixed(2)} {group.currency || '€'}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Add this after the other helper functions, before any component definitions:
+function groupExpensesByMonth(expenses) {
+  const grouped = [];
+  let currentMonth = null;
+  let currentMonthLabel = null;
+  let currentMonthExpenses = [];
+  expenses.forEach((exp, idx) => {
+    const dateObj = exp.date ? new Date(exp.date) : null;
+    if (!dateObj || isNaN(dateObj)) return;
+    const year = dateObj.getFullYear();
+    const month = dateObj.getMonth();
+    const monthKey = `${year}-${month}`;
+    const monthLabel = dateObj.toLocaleDateString(undefined, { month: 'long', year: 'numeric' }).replace(/^[a-z]/, l => l.toUpperCase());
+    if (monthKey !== currentMonth) {
+      if (currentMonthExpenses.length > 0 && currentMonthLabel) {
+        grouped.push({ type: 'month', label: currentMonthLabel, expenses: currentMonthExpenses });
+      }
+      currentMonth = monthKey;
+      currentMonthLabel = monthLabel;
+      currentMonthExpenses = [exp];
+    } else {
+      currentMonthExpenses.push(exp);
+    }
+  });
+  if (currentMonthExpenses.length > 0 && currentMonthLabel) {
+    grouped.push({ type: 'month', label: currentMonthLabel, expenses: currentMonthExpenses });
+  }
+  return grouped;
+}
+
+export default GroupExpensesPage;

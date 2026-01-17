@@ -1,0 +1,366 @@
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { getDonutSegments } from '@/utils/analyticsUi';
+
+export default function useReceiptAnalytics({
+  receipts,
+  settings,
+  analyticsRange,
+  weekStart,
+  weekEnd,
+  normalizeToLocalMidnight,
+  convertToBaseCurrency,
+  categoryColors,
+  enabled = true,
+}) {
+  const analyticsRangeConfig = useMemo(() => {
+    const now = new Date();
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+    const yearStart = new Date(now.getFullYear(), 0, 1);
+    const yearEnd = new Date(now.getFullYear(), 11, 31, 23, 59, 59, 999);
+    const lastWeekStart = new Date(weekStart.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const lastWeekEnd = new Date(weekEnd.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
+    const lastYearStart = new Date(now.getFullYear() - 1, 0, 1);
+    const lastYearEnd = new Date(now.getFullYear() - 1, 11, 31, 23, 59, 59, 999);
+
+    return {
+      week: {
+        start: weekStart,
+        end: weekEnd,
+        prevStart: lastWeekStart,
+        prevEnd: lastWeekEnd,
+        compareLabel: "last week",
+      },
+      month: {
+        start: monthStart,
+        end: monthEnd,
+        prevStart: lastMonthStart,
+        prevEnd: lastMonthEnd,
+        compareLabel: "last month",
+      },
+      year: {
+        start: yearStart,
+        end: yearEnd,
+        prevStart: lastYearStart,
+        prevEnd: lastYearEnd,
+        compareLabel: "last year",
+      },
+    };
+  }, [weekStart, weekEnd]);
+
+  const analyticsReceipts = useMemo(() => {
+    if (!enabled) return [];
+    const range = analyticsRangeConfig[analyticsRange] || analyticsRangeConfig.month;
+    return receipts.filter((receipt) => {
+      const date = normalizeToLocalMidnight(receipt.transactionDate || receipt.date);
+      return date && date >= range.start && date <= range.end;
+    });
+  }, [analyticsRange, analyticsRangeConfig, receipts, normalizeToLocalMidnight, enabled]);
+
+  const getReceiptKey = (receipt) => {
+    return (
+      receipt?.id ||
+      receipt?.transactionDate?.toDate?.()?.toISOString?.() ||
+      receipt?.date ||
+      receipt?.createdAt?.toDate?.()?.toISOString?.() ||
+      `${receipt?.merchant || 'receipt'}-${receipt?.total || ''}`
+    );
+  };
+
+  const [baseAmountByReceipt, setBaseAmountByReceipt] = useState({});
+  const lastBaseAmountRef = useRef(null);
+
+  const areMapsEqual = (next, prev) => {
+    if (next === prev) return true;
+    if (!next || !prev) return false;
+    const nextKeys = Object.keys(next);
+    const prevKeys = Object.keys(prev);
+    if (nextKeys.length !== prevKeys.length) return false;
+    for (let i = 0; i < nextKeys.length; i += 1) {
+      const key = nextKeys[i];
+      if (next[key] !== prev[key]) return false;
+    }
+    return true;
+  };
+
+  useEffect(() => {
+    let isMounted = true;
+    const loadBaseAmounts = async () => {
+      if (!enabled) {
+        if (isMounted) setBaseAmountByReceipt({});
+        return;
+      }
+      const now = new Date();
+      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+      const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+      const yearStart = new Date(now.getFullYear(), 0, 1);
+      const yearEnd = new Date(now.getFullYear(), 11, 31, 23, 59, 59, 999);
+      const lastWeekStart = new Date(weekStart.getTime() - 7 * 24 * 60 * 60 * 1000);
+      const lastWeekEnd = new Date(weekEnd.getTime() - 7 * 24 * 60 * 60 * 1000);
+      const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
+      const lastYearStart = new Date(now.getFullYear() - 1, 0, 1);
+      const lastYearEnd = new Date(now.getFullYear() - 1, 11, 31, 23, 59, 59, 999);
+      const ranges = {
+        week: { start: weekStart, end: weekEnd, prevStart: lastWeekStart, prevEnd: lastWeekEnd },
+        month: { start: monthStart, end: monthEnd, prevStart: lastMonthStart, prevEnd: lastMonthEnd },
+        year: { start: yearStart, end: yearEnd, prevStart: lastYearStart, prevEnd: lastYearEnd },
+      };
+      const range = ranges[analyticsRange] || ranges.month;
+      const receiptsToConvert = receipts.filter((receipt) => {
+        const date = normalizeToLocalMidnight(receipt.transactionDate || receipt.date);
+        if (!date) return false;
+        return (date >= range.start && date <= range.end) || (date >= range.prevStart && date <= range.prevEnd);
+      });
+      if (!receiptsToConvert.length) {
+        if (isMounted) setBaseAmountByReceipt({});
+        return;
+      }
+      const entries = await Promise.all(
+        receiptsToConvert.map(async (receipt) => {
+          const key = getReceiptKey(receipt);
+          const amount = await convertToBaseCurrency(
+            receipt.total,
+            receipt.currency || settings?.baseCurrency || 'EUR',
+            receipt.transactionDate || receipt.date
+          );
+          return [key, Math.abs(amount)];
+        })
+      );
+      if (!isMounted) return;
+      const next = {};
+      entries.forEach(([key, value]) => {
+        if (key) next[key] = value;
+      });
+      if (!areMapsEqual(next, lastBaseAmountRef.current)) {
+        lastBaseAmountRef.current = next;
+        setBaseAmountByReceipt(next);
+      }
+    };
+    loadBaseAmounts();
+    return () => {
+      isMounted = false;
+    };
+  }, [convertToBaseCurrency, receipts, settings?.baseCurrency, enabled, analyticsRange, normalizeToLocalMidnight, weekStart, weekEnd]);
+
+  const getBaseAmount = (receipt) => {
+    const key = getReceiptKey(receipt);
+    if (key && baseAmountByReceipt[key] !== undefined) {
+      return baseAmountByReceipt[key];
+    }
+    return Math.abs(parseFloat(receipt.total) || 0);
+  };
+
+  const analyticsSummary = useMemo(() => {
+    if (!enabled) {
+      return { total: 0, delta: 0, deltaPct: 0, compareLabel: "" };
+    }
+    const range = analyticsRangeConfig[analyticsRange] || analyticsRangeConfig.month;
+    const sumForRange = (start, end) =>
+      receipts.reduce((total, receipt) => {
+        const date = normalizeToLocalMidnight(receipt.transactionDate || receipt.date);
+        if (!date || date < start || date > end) return total;
+        return total + getBaseAmount(receipt);
+      }, 0);
+
+    const total = sumForRange(range.start, range.end);
+    const prevTotal = sumForRange(range.prevStart, range.prevEnd);
+    const delta = total - prevTotal;
+    const deltaPct = prevTotal ? (delta / prevTotal) * 100 : 0;
+
+    return { total, delta, deltaPct, compareLabel: range.compareLabel };
+  }, [analyticsRange, analyticsRangeConfig, getBaseAmount, receipts, normalizeToLocalMidnight, enabled]);
+
+  const analyticsCategoryTotals = useMemo(() => {
+    if (!enabled) return {};
+    return analyticsReceipts.reduce((acc, receipt) => {
+      const amount = getBaseAmount(receipt);
+      if (!Number.isFinite(amount)) return acc;
+      const cat = receipt.category || "Uncategorized";
+      acc[cat] = (acc[cat] || 0) + amount;
+      return acc;
+    }, {});
+  }, [analyticsReceipts, getBaseAmount, enabled]);
+
+  const sortedCategories = Object.entries(analyticsCategoryTotals || {}).sort((a, b) => b[1] - a[1]);
+  const topCategory = sortedCategories[0]?.[0] || "Food";
+
+  const topExpenses = useMemo(() => {
+    if (!enabled) return [];
+    return [...analyticsReceipts]
+      .filter((receipt) => receipt && receipt.total)
+      .sort((a, b) => getBaseAmount(b) - getBaseAmount(a))
+      .slice(0, 3);
+  }, [analyticsReceipts, getBaseAmount, enabled]);
+
+  const donutSegments = useMemo(
+    () => (enabled ? getDonutSegments(analyticsCategoryTotals, categoryColors) : []),
+    [analyticsCategoryTotals, categoryColors, enabled]
+  );
+  const donutTotal = donutSegments.reduce((sum, seg) => sum + seg.value, 0) || 1;
+  let donutOffset = 0;
+  const donutStops = donutSegments.map((seg) => {
+    const start = (donutOffset / donutTotal) * 100;
+    donutOffset += seg.value;
+    const end = (donutOffset / donutTotal) * 100;
+    return `${seg.color} ${start.toFixed(2)}% ${end.toFixed(2)}%`;
+  });
+
+  const activitySeries = useMemo(() => {
+    if (!enabled) return { labels: [], data: [] };
+    const range = analyticsRangeConfig[analyticsRange] || analyticsRangeConfig.month;
+    const addAmount = (data, idx, receipt) => {
+      const amount = getBaseAmount(receipt);
+      if (!Number.isFinite(amount)) return;
+      data[idx] += Math.abs(amount);
+    };
+
+    if (analyticsRange === "week") {
+      const labels = [];
+      const data = Array(7).fill(0);
+      for (let i = 0; i < 7; i += 1) {
+        const date = new Date(range.start);
+        date.setDate(range.start.getDate() + i);
+        labels.push(date.toLocaleDateString(undefined, { weekday: "short" }));
+      }
+      analyticsReceipts.forEach((receipt) => {
+        const date = normalizeToLocalMidnight(receipt.transactionDate || receipt.date);
+        if (!date) return;
+        const idx = Math.floor((date.getTime() - range.start.getTime()) / 86400000);
+        if (idx >= 0 && idx < 7) addAmount(data, idx, receipt);
+      });
+      return { labels, data };
+    }
+
+    if (analyticsRange === "year") {
+      const monthMarkers = [0, 2, 4, 6, 8, 10, 11];
+      const labels = monthMarkers.map((monthIndex) =>
+        new Date(range.start.getFullYear(), monthIndex, 1).toLocaleDateString(undefined, {
+          month: "short",
+        })
+      );
+      const data = Array(monthMarkers.length).fill(0);
+      analyticsReceipts.forEach((receipt) => {
+        const date = normalizeToLocalMidnight(receipt.transactionDate || receipt.date);
+        if (!date) return;
+        let idx = 0;
+        for (let i = 1; i < monthMarkers.length; i += 1) {
+          if (date.getMonth() >= monthMarkers[i]) idx = i;
+          else break;
+        }
+        addAmount(data, idx, receipt);
+      });
+      return { labels, data };
+    }
+
+    const lastDay = range.end.getDate();
+    const dayMarkers = [1, 5, 10, 15, 20, 25, lastDay];
+    const labels = dayMarkers.map((day) => String(day).padStart(2, "0"));
+    const data = Array(dayMarkers.length).fill(0);
+    analyticsReceipts.forEach((receipt) => {
+      const date = normalizeToLocalMidnight(receipt.transactionDate || receipt.date);
+      if (!date) return;
+      let idx = 0;
+      for (let i = 1; i < dayMarkers.length; i += 1) {
+        if (date.getDate() >= dayMarkers[i]) idx = i;
+        else break;
+      }
+      addAmount(data, idx, receipt);
+    });
+    return { labels, data };
+  }, [
+    analyticsRange,
+    analyticsRangeConfig,
+    analyticsReceipts,
+    normalizeToLocalMidnight,
+    enabled,
+    getBaseAmount,
+  ]);
+
+  const analyticsReport = useMemo(() => {
+    if (!enabled) {
+      return {
+        range: analyticsRangeConfig[analyticsRange] || analyticsRangeConfig.month,
+        daysInRange: 0,
+        avgPerDay: 0,
+        topCategories: [],
+        topMerchants: [],
+        activityMax: 0,
+        activityMin: 0,
+        activityAvg: 0,
+        transactionCount: 0,
+        averageTicket: 0,
+        topCategoryShare: 0,
+      };
+    }
+    const range = analyticsRangeConfig[analyticsRange] || analyticsRangeConfig.month;
+    const receiptsInRange = analyticsReceipts;
+    const total = analyticsSummary.total || 0;
+    const daysInRange = Math.max(
+      1,
+      Math.round((range.end.getTime() - range.start.getTime()) / 86400000) + 1
+    );
+    const avgPerDay = total / daysInRange;
+    const categoryEntries = Object.entries(analyticsCategoryTotals || {}).sort((a, b) => b[1] - a[1]);
+    const topCategories = categoryEntries.slice(0, 5).map(([name, value]) => ({
+      name,
+      value,
+      pct: total ? (value / total) * 100 : 0,
+    }));
+    const topMerchants = [...receiptsInRange]
+      .filter((receipt) => receipt && receipt.merchant && receipt.total)
+      .map((receipt) => ({
+        ...receipt,
+        baseAmount: getBaseAmount(receipt),
+      }))
+      .sort((a, b) => (b.baseAmount || 0) - (a.baseAmount || 0))
+      .slice(0, 5);
+    const activityMax = Math.max(...activitySeries.data, 0);
+    const activityMin = Math.min(...activitySeries.data, 0);
+    const activityAvg = activitySeries.data.length
+      ? activitySeries.data.reduce((sum, value) => sum + value, 0) / activitySeries.data.length
+      : 0;
+    const transactionCount = receiptsInRange.length;
+    const averageTicket = transactionCount ? total / transactionCount : 0;
+    const topCategoryShare = topCategories
+      .slice(0, 3)
+      .reduce((sum, entry) => sum + entry.pct, 0);
+
+    return {
+      range,
+      daysInRange,
+      avgPerDay,
+      topCategories,
+      topMerchants,
+      activityMax,
+      activityMin,
+      activityAvg,
+      transactionCount,
+      averageTicket,
+      topCategoryShare,
+    };
+  }, [
+    analyticsCategoryTotals,
+    analyticsRange,
+    analyticsRangeConfig,
+    analyticsReceipts,
+    analyticsSummary.total,
+    activitySeries.data,
+    enabled,
+  ]);
+
+  return {
+    analyticsReceipts,
+    analyticsSummary,
+    analyticsCategoryTotals,
+    topCategory,
+    topExpenses,
+    donutSegments,
+    donutStops,
+    activitySeries,
+    analyticsReport,
+    getBaseAmount,
+  };
+}

@@ -1,19 +1,6 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Upload, Plus, Trash2, DollarSign, Calendar, Store, Tag, CreditCard, List, X, Camera, CheckCircle, XCircle, PlusCircle, Save, Edit, Mail, LineChart, Lock, Loader2, MinusCircle, ChevronDown, ChevronUp, RotateCcw, Wand2, AlertCircle, Users } from 'lucide-react';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { useToast } from "@/components/ui/use-toast";
-import { db } from '@/firebase'; // Import your Firebase db instance
-import { collection, addDoc, getDocs, deleteDoc, doc, serverTimestamp, updateDoc, Timestamp } from "firebase/firestore"; // Import Firestore functions
 import {
   fetchExchangeRates,
   convertToBaseCurrency as convertToBaseCurrencyUtil,
@@ -26,45 +13,46 @@ import {
 import { loadSettings, formatDate } from '@/utils/settingsUtils'; // Corrected import for formatDate
 import { useAuth } from '@/contexts/AuthContext';
 import { useLoading } from '@/contexts/LoadingContext';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-} from "./ui/dialog";
-import {
-  ScrollArea,
-} from "./ui/scroll-area";
-import { Doughnut, Line, Pie, Bar } from 'react-chartjs-2';
 import { Chart, ArcElement, Tooltip, Legend, CategoryScale, LinearScale, PointElement, LineElement, TimeScale, Filler, BarElement } from 'chart.js';
 import annotationPlugin from 'chartjs-plugin-annotation';
-import { CircularProgressbarWithChildren, buildStyles } from 'react-circular-progressbar';
-import 'react-circular-progressbar/dist/styles.css';
-import { useSwipeable } from 'react-swipeable';
-import { queueReceipt } from '@/data/storage';
-import { metrics, startTimer, endTimerMs } from '@/lib/analytics';
-import { Switch } from './ui/switch';
-import { 
-  extractAddressFromText, 
-  parseAddress, 
-  rateLimitedGeocode 
-} from '@/utils/geocodingUtils';
-import MapWidget from './MapWidget';
+import useReceiptOcr from '@/hooks/useReceiptOcr';
+import { buildDaySections } from '@/utils/receiptGrouping';
+import ReceiptFormModal from './ReceiptFormModal';
+import ReceiptFullScreenPreview from './ReceiptFullScreenPreview';
+import ReceiptCameraDialog from './ReceiptCameraDialog';
+import ReceiptDeleteDialog from './ReceiptDeleteDialog';
+import CategoryDetailsModal from './CategoryDetailsModal';
+import ExpensesDashboard from './ExpensesDashboard';
+import InsightsSection from './InsightsSection';
+import ReceiptCard from './ReceiptCard';
+import SwipeHintTooltip from './SwipeHintTooltip';
+import AsyncCurrencyConversionComponent from './AsyncCurrencyConversion';
+import ReceiptSuccessOverlay from './ReceiptSuccessOverlay';
+import ReceiptLoadingOverlay from './ReceiptLoadingOverlay';
+import UploadMethodCard from './UploadMethodCard';
+import ReceiptsListLayout from './ReceiptsListLayout';
+import UploadCameraView from './UploadCameraView';
+import useReceiptFormHandlers from '@/hooks/useReceiptFormHandlers';
+import ReceiptsTabView from './ReceiptsTabView';
+import ExpensesTabView from './ExpensesTabView';
+import useReceiptAnalytics from '@/hooks/useReceiptAnalytics';
+import useReceiptCamera from '@/hooks/useReceiptCamera';
+import useReceiptData from '@/hooks/useReceiptData';
+import useReceiptPreview from '@/hooks/useReceiptPreview';
+import useReceiptGroups from '@/hooks/useReceiptGroups';
 Chart.register(ArcElement, Tooltip, Legend, CategoryScale, LinearScale, PointElement, LineElement, TimeScale, Filler, BarElement, annotationPlugin);
 
 // Define supported currencies
 const SUPPORTED_CURRENCIES = [
-  { code: 'EUR', symbol: '€', name: 'Euro' },
-  { code: 'USD', symbol: '$', name: 'US Dollar' },
-  { code: 'GBP', symbol: '£', name: 'British Pound' },
-  { code: 'JPY', symbol: '¥', name: 'Japanese Yen' },
-  { code: 'CAD', symbol: 'C$', name: 'Canadian Dollar' },
-  { code: 'AUD', symbol: 'A$', name: 'Australian Dollar' },
-  { code: 'CHF', symbol: 'Fr', name: 'Swiss Franc' },
-  { code: 'CNY', symbol: '¥', name: 'Chinese Yuan' },
-  { code: 'PLN', symbol: 'zł', name: 'Polish Złoty' }
+  { code: 'EUR', symbol: 'EUR', name: 'Euro' },
+  { code: 'USD', symbol: 'USD', name: 'US Dollar' },
+  { code: 'GBP', symbol: 'GBP', name: 'British Pound' },
+  { code: 'JPY', symbol: 'JPY', name: 'Japanese Yen' },
+  { code: 'CAD', symbol: 'CAD', name: 'Canadian Dollar' },
+  { code: 'AUD', symbol: 'AUD', name: 'Australian Dollar' },
+  { code: 'CHF', symbol: 'CHF', name: 'Swiss Franc' },
+  { code: 'CNY', symbol: 'CNY', name: 'Chinese Yuan' },
+  { code: 'PLN', symbol: 'PLN', name: 'Polish Zloty' }
 ];
 
 // Add currency conversion rates (you would typically fetch these from an API)
@@ -79,6 +67,9 @@ const CURRENCY_RATES = {
   CNY: 7.83,
   PLN: 4.32
 };
+
+const SCANNER_BG =
+  "https://lh3.googleusercontent.com/aida-public/AB6AXuBCrcbdCsKHr7Ja_Y_S-nJ0N9xNzs-OsamoRLR8XZ6eOjfPfMALYyWR8XbuTFfi3fnXhtvQ2RZNndU4q_nH9oImydLbUAh5Bi71dYcx_dhVl6qI43rZFY0w5i2FpiMe_m56CcoJBjisWFqgEiOBXcAqNW71gENd6KNmBjeltokUljh7GpKXg_NbN8LBmbY3XdsUOKnOWKYz3JuI27Xlg5DYOO-x2IeRs4TSDD5B8vtnqld-XIEwv6PGWi_p-uURicx8-cGNOecEs_B3";
 
 // Helper function to normalize date format
 const normalizeDate = (input) => {
@@ -107,24 +98,24 @@ const normalizeDate = (input) => {
 // Add at the top-level of the file (outside the component):
 const missingMessages = {
   merchant: [
-    "Whoops! We need to know where you spent your hard-earned cash. Please enter the merchant name! 🏪",
-    "The merchant is a mystery... for now. Fill it in! 🕵️‍♂️",
-    "No merchant? No memory! Please tell us where you shopped. 🛒"
+    "Whoops! We need to know where you spent your hard-earned cash. Please enter the merchant name.",
+    "The merchant is a mystery... for now. Fill it in.",
+    "No merchant? No memory! Please tell us where you shopped."
   ],
   total: [
-    "How much did you spend? The universe (and your budget) needs to know! 💸",
-    "Total amount missing! Your wallet is confused. 🤔",
-    "No total, no tally! Please enter the amount. 🧮"
+    "How much did you spend? The universe (and your budget) needs to know.",
+    "Total amount missing! Your wallet is confused.",
+    "No total, no tally! Please enter the amount."
   ],
   date: [
-    "When did this happen? Time travel is hard without a date! ⏳",
-    "Date missing! Was it yesterday, today, or in a galaxy far, far away?   ",
-    "No date, no story! Please pick a day. 📅"
+    "When did this happen? Time travel is hard without a date.",
+    "Date missing! Was it yesterday, today, or in a galaxy far, far away?",
+    "No date, no story! Please pick a day."
   ],
   items: [
-    "What did you buy? At least one item, please! 🛍️",
-    "No items? No fun! Add something to your receipt. 🎁",
-    "Your receipt is hungry for items. Feed it! 🍔"
+    "What did you buy? At least one item, please.",
+    "No items? No fun! Add something to your receipt.",
+    "Your receipt is hungry for items. Feed it."
   ]
 };
 
@@ -177,6 +168,7 @@ const getCategoryBorderClass = (cat) => {
   return colorMap[cat] || colorMap['Uncategorized'];
 };
 
+
 export default function ReceiptUploader({ className, showOnly, onTabChange, onNeedsFixCountChange, onRequestExport, captureTrigger }) {
   const { toast } = useToast();
   const authContext = useAuth();
@@ -223,24 +215,31 @@ export default function ReceiptUploader({ className, showOnly, onTabChange, onNe
   });
   const [newItem, setNewItem] = useState({ name: '', price: '' });
   const [editingItemIndex, setEditingItemIndex] = useState(null);
-  const [isCameraOpen, setIsCameraOpen] = useState(false);
-  const [isCameraReady, setIsCameraReady] = useState(false);
+  const [scanMode, setScanMode] = useState('single');
+  const [captureSource, setCaptureSource] = useState(null);
   const [rotation, setRotation] = useState(0);
-  let _videoElement = null; // Mutable variable to hold the video DOM element
-  const videoRef = (node) => {
-    if (node) {
-      _videoElement = node;
-      // Only start camera if modal is open and camera isn't already running
-      if (isCameraOpen && !isCameraReady) {
-        startCamera();
-      }
-    } else {
-      _videoElement = null;
-    }
-  };
-  const canvasRef = useRef(null);
   const [showFullScreenPreview, setShowFullScreenPreview] = useState(false);
   const [previewImageSrc, setPreviewImageSrc] = useState(null);
+  const [selectedCategory, setSelectedCategory] = useState(null);
+  const [modalOpen, setModalOpen] = useState(false);
+  const {
+    canvasRef,
+    videoRef,
+    isCameraOpen,
+    setIsCameraOpen,
+    isCameraReady,
+    isFlashOn,
+    handleOpenCamera,
+    handleToggleFlash,
+    capturePhoto,
+    stopCamera,
+  } = useReceiptCamera({
+    toast,
+    setCaptureSource,
+    setFile,
+    setPreviewImageSrc,
+    setShowFullScreenPreview,
+  });
   const [isEditing, setIsEditing] = useState(false);
   const [currentStep, setCurrentStep] = useState('upload_options'); // Changed initial state
   const [processingStage, setProcessingStage] = useState(null); // 'detecting_edges' | 'enhancing' | 'reading_text' | 'parsed'
@@ -252,38 +251,18 @@ export default function ReceiptUploader({ className, showOnly, onTabChange, onNe
   const [expandedReceiptId, setExpandedReceiptId] = useState(null); // New state to manage expanded receipt
   const [expandedInCategoryModalId, setExpandedInCategoryModalId] = useState(null);
   const [returnToCategory, setReturnToCategory] = useState(null);
-  const [recentGroups, setRecentGroups] = useState([]); // [{id,name,emoji,uses}]
-  const [selectedGroupId, setSelectedGroupId] = useState(null);
-  const [groups, setGroups] = useState([]);
-  const [groupFilter, setGroupFilter] = useState(null);
-  const [groupSwitcherOpen, setGroupSwitcherOpen] = useState(false);
-
-  // Load groups from Firestore (active for this user) and enrich with usage counts
-  useEffect(() => {
-    const load = async () => {
-      try {
-        if (!user) return;
-        const snap = await getDocs(collection(db, 'groups'));
-        const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-        // Active for this user: user is in claimedBy values and NOT archived for this user
-        const active = list.filter(g => {
-          const claimedByVals = g?.claimedBy ? Object.values(g.claimedBy) : [];
-          const isMember = Array.isArray(claimedByVals) && claimedByVals.includes(user.uid);
-          const archivedBy = Array.isArray(g?.archivedBy) ? g.archivedBy : [];
-          const isArchivedForUser = archivedBy.includes(user.uid);
-          return isMember && !isArchivedForUser;
-        });
-        const counts = {};
-        receipts.forEach(r => { if (r.groupId) counts[r.groupId] = (counts[r.groupId] || 0) + 1; });
-        const enriched = active.map(g => ({ id: g.id, name: g.name || `Group ${g.id.slice(0,4)}`, emoji: g.emoji || '👥', uses: counts[g.id] || 0, archivedBy: Array.isArray(g.archivedBy) ? g.archivedBy : [] }));
-        setGroups(enriched);
-        setRecentGroups(enriched);
-      } catch (e) {
-        console.warn('Failed to load groups', e);
-      }
-    };
-    load();
-  }, [receipts, user]);
+  const {
+    recentGroups,
+    setRecentGroups,
+    selectedGroupId,
+    setSelectedGroupId,
+    groups,
+    setGroups,
+    groupFilter,
+    setGroupFilter,
+    groupSwitcherOpen,
+    setGroupSwitcherOpen,
+  } = useReceiptGroups({ user, receipts });
   const [selectMode, setSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState(new Set());
 
@@ -301,38 +280,93 @@ export default function ReceiptUploader({ className, showOnly, onTabChange, onNe
     isBusiness: true,
     note: ''
   });
+  const merchantInputRef = useRef(null);
 
   // State for UI
   const [isBusy, setIsBusy] = useState(false);
   const [message, setMessage] = useState(null);
   const [currentFunnyMessage, setCurrentFunnyMessage] = useState('');
   const [showSuccessState, setShowSuccessState] = useState(false);
+  const [analyticsRange, setAnalyticsRange] = useState('month');
+  const [showAnalyticsReport, setShowAnalyticsReport] = useState(false);
 
   // Combine isLoading and isFirestoreLoading for a global busy state
   const isBusyGlobal = isFirestoreLoading;
 
+  const {
+    fetchReceipts,
+    createReceipt,
+    updateReceipt,
+    deleteReceipt,
+  } = useReceiptData({
+    user,
+    toast,
+    receipts,
+    setReceipts,
+    setIsFirestoreLoading,
+    setFirestoreError,
+  });
+
+  const {
+    handleManualEntry,
+    handleFormInputChange,
+    handleItemInputChange,
+    handleAddItemField,
+    handleRemoveItemField,
+    handleSaveReceiptSubmit,
+    handleCloseReceiptForm,
+  } = useReceiptFormHandlers({
+    user,
+    toast,
+    editingReceipt,
+    editForm,
+    formData,
+    setEditForm,
+    setFormData,
+    setCurrentReceipt,
+    setFormErrors,
+    setIsBusy,
+    setEditingReceipt,
+    setIsEditing,
+    setNewItem,
+    setFile,
+    setPreviewImageSrc,
+    setCurrentStep,
+    createReceipt,
+    updateReceipt,
+    fetchReceipts,
+    onTabChange,
+    normalizeDate,
+    getFunnyMissingMessage,
+    setSelectedCategory,
+    setModalOpen,
+    returnToCategory,
+    setReturnToCategory,
+    merchantInputRef,
+  });
+
   // Array of funny loading messages
   const funnyMessages = [
-    "Teaching receipts to read... 📚",
-    "Counting pixels and dollars... 💰",
-    "Wrangling numbers into submission... 🤠",
-    "Decoding receipt hieroglyphics... 🔍",
-    "Making receipts talk... 🗣️",
-    "Converting paper to pixels... 📄➡️💻",
-    "Teaching AI to read receipts... 🤖",
-    "Calculating the meaning of life, the universe, and your receipt... 🌌",
-    "Hold tight, magic is happening! ✨",
-    "Scanning for hidden discounts... 🔎",
-    "Teaching receipts to dance... 💃",
-    "Brewing coffee for the receipt scanner... ☕",
-    "Polishing the pixels... ✨",
-    "Feeding the receipt scanner... 🍕",
-    "Teaching receipts to do yoga... 🧘‍♂️",
-    "Counting all the zeros... 0️⃣",
-    "Making the receipt scanner happy... 😊",
-    "Teaching receipts to sing... 🎵",
-    "Polishing the digital lens... 🔍",
-    "Feeding the AI some numbers... 🤖"
+    "Teaching receipts to read...",
+    "Counting pixels and dollars...",
+    "Wrangling numbers into submission...",
+    "Decoding receipt hieroglyphics...",
+    "Making receipts talk...",
+    "Converting paper to pixels...",
+    "Teaching AI to read receipts...",
+    "Calculating the meaning of life, the universe, and your receipt...",
+    "Hold tight, magic is happening.",
+    "Scanning for hidden discounts...",
+    "Teaching receipts to dance...",
+    "Brewing coffee for the receipt scanner...",
+    "Polishing the pixels...",
+    "Feeding the receipt scanner...",
+    "Teaching receipts to do yoga...",
+    "Counting all the zeros...",
+    "Making the receipt scanner happy...",
+    "Teaching receipts to sing...",
+    "Polishing the digital lens...",
+    "Feeding the AI some numbers..."
   ];
 
   const getRandomFunnyMessage = () => {
@@ -350,38 +384,49 @@ export default function ReceiptUploader({ className, showOnly, onTabChange, onNe
     "Other"
   ];
 
-  const receiptsCollectionRef = user ? collection(db, "users", user.uid, "receipts") : null;
+  const { processOCR } = useReceiptOcr({
+    user,
+    toast,
+    setIsBusy,
+    setIsLoading,
+    setIsOcrProcessing,
+    setOcrError,
+    setShowSuccessState,
+    setFile,
+    setPreviewImageSrc,
+    setCurrentStep,
+    createReceipt,
+    fetchReceipts,
+    onTabChange,
+    previewImageSrc,
+    selectedGroupId,
+    setRecentGroups,
+    normalizeDate,
+  });
 
-  const fetchReceipts = async () => {
-    if (!user) {
-      return;
-    }
-    // User authenticated, fetching receipts
-    setIsFirestoreLoading(true);
-    setFirestoreError(null);
-    try {
-      // Use the per-user receipts subcollection
-      const data = await getDocs(collection(db, "users", user.uid, "receipts"));
-      const receiptsList = data.docs.map((doc) => ({ ...doc.data(), id: doc.id }));
-      // All receipts fetched from Firestore
-      // No need to filter by userId anymore, all are for this user
-      const sortedReceipts = receiptsList.sort((a, b) => {
-        const dateA = (a.updated_at?.toDate?.() || a.createdAt?.toDate?.() || new Date(0));
-        const dateB = (b.updated_at?.toDate?.() || b.createdAt?.toDate?.() || new Date(0));
-        return dateB - dateA; // Sort in descending order (newest first)
-      });
-      setReceipts(sortedReceipts);
-    } catch (error) {
-      console.error("Error fetching receipts:", error);
-      setFirestoreError("Failed to load receipts. Please try again.");
-    } finally {
-      setIsFirestoreLoading(false);
-    }
-  };
+  const {
+    handleImageChange,
+    handleConfirmPreview,
+    handleRetakePreview,
+  } = useReceiptPreview({
+    file,
+    setFile,
+    previewImageSrc,
+    setPreviewImageSrc,
+    setShowFullScreenPreview,
+    setProcessingStage,
+    captureSource,
+    setCaptureSource,
+    setIsCameraOpen,
+    setCurrentStep,
+    handleOpenCamera,
+    processOCR,
+    toast,
+  });
 
   useEffect(() => {
     fetchReceipts();
-  }, []);
+  }, [fetchReceipts]);
 
   // Recompute needs-fix count when receipts change
   useEffect(() => {
@@ -394,9 +439,20 @@ export default function ReceiptUploader({ className, showOnly, onTabChange, onNe
   // Allow external trigger to open camera (for future routing/event use)
   useEffect(() => {
     if (captureTrigger) {
-      setIsCameraOpen(true);
+      handleOpenCamera();
     }
   }, [captureTrigger]);
+
+  useEffect(() => {
+    if (showOnly !== 'upload') {
+      if (isCameraOpen) {
+        stopCamera();
+      }
+      return;
+    }
+    handleOpenCamera();
+    return () => stopCamera();
+  }, [showOnly]);
 
   useEffect(() => {
     // Calculate total expenses for current month only
@@ -760,470 +816,6 @@ export default function ReceiptUploader({ className, showOnly, onTabChange, onNe
     return formattedAmount;
   };
 
-  const handleDeleteReceipt = async (id) => {
-    if (!user) {
-      toast({
-        title: "Authentication Required",
-        description: "Please sign in to delete receipts.",
-        variant: "destructive",
-      });
-      return;
-    }
-    try {
-      // Find the receipt to check if it's a group expense
-      const receiptToDelete = receipts.find(r => r.id === id);
-      
-      if (receiptToDelete?.isGroupExpense && receiptToDelete?.groupExpenseId) {
-        // This is a group expense, delete from group first
-        try {
-          await deleteDoc(doc(db, "groups", receiptToDelete.groupId, "expenses", receiptToDelete.groupExpenseId));
-          toast({
-            title: "Group Expense Deleted! 🗑️",
-            description: "The group expense has been removed from the group.",
-          });
-        } catch (groupError) {
-          console.error("Error deleting group expense:", groupError);
-          toast({
-            title: "Error Deleting Group Expense 😥",
-            description: "The group expense could not be deleted. You may not have permission.",
-            variant: "destructive",
-          });
-          return;
-        }
-      }
-      
-      // Delete the personal receipt
-      await deleteDoc(doc(db, "users", user.uid, "receipts", id));
-      setReceipts(receipts.filter((receipt) => receipt.id !== id));
-      
-      if (!receiptToDelete?.isGroupExpense) {
-      toast({
-        title: "Receipt Deleted! 🗑️",
-        description: "The receipt has been successfully removed.",
-      });
-      }
-      
-      await fetchReceipts();
-    } catch (error) {
-      console.error("Error deleting receipt:", error);
-      toast({
-        title: "Error Deleting Receipt 😥",
-        description: `There was an issue deleting the receipt: ${error.message}`,
-        variant: "destructive",
-      });
-    }
-  };
-
-  const handleImageChange = (e) => {
-    const selectedFile = e.target.files[0];
-    if (selectedFile) {
-      setFile(selectedFile);
-      // Create a preview URL for the selected file
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        setPreviewImageSrc(event.target.result);
-        setShowFullScreenPreview(true);
-      };
-      reader.readAsDataURL(selectedFile);
-      // Clear the input value to allow re-uploading the same file
-      e.target.value = null; 
-    }
-  };
-
-  // Refactor: Use a single handler for all top-level form input changes
-  const handleFormInputChange = (e) => {
-    const { name, value } = e.target;
-    const targetStateSetter = editingReceipt ? setEditForm : setFormData;
-
-    targetStateSetter(prev => {
-      let updatedData = { ...prev };
-      if (name === "total" || name === "subtotal" || name === "tax") {
-        // Allow empty string or numbers with up to 2 decimal places
-        if (value === '' || /^-?[0-9]*\.?[0-9]{0,2}$/.test(value.replace(',', '.'))) {
-          updatedData[name] = value.replace(',', '.');
-        }
-      } else if (name === "date") {
-        updatedData[name] = normalizeDate(value);
-      } else {
-        updatedData[name] = value;
-      }
-      return updatedData;
-    });
-
-    // If editing, also update currentReceipt to reflect changes live in the modal for item management
-    if (editingReceipt) {
-      setCurrentReceipt(prev => {
-        let updatedReceipt = { ...prev };
-        // Special handling for numerical fields to ensure they are parsed correctly for currentReceipt
-        updatedReceipt[name] = (name === "total" || name === "subtotal" || name === "tax") ? (value === '' ? '' : parseFloat(value.replace(',', '.'))) : value;
-        return updatedReceipt;
-      });
-    }
-  };
-
-  // Refactor: Use a single handler for all item input changes within the form
-  const handleItemInputChange = (e, index, field) => {
-    const { value } = e.target;
-    const targetStateSetter = editingReceipt ? setEditForm : setFormData;
-
-    targetStateSetter(prev => {
-      const updatedItems = [...(prev.items || [])];
-      updatedItems[index] = {
-        ...updatedItems[index],
-        [field]: (field === 'price') ? (value === '' ? '' : parseFloat(value.replace(',', '.')).toFixed(2)) : value
-      };
-      return { ...prev, items: updatedItems };
-    });
-
-    // If editing, also update currentReceipt items to reflect changes live in the modal
-    if (editingReceipt) {
-      setCurrentReceipt(prev => {
-        const updatedItems = [...(prev.items || [])];
-        updatedItems[index] = {
-          ...updatedItems[index],
-          [field]: (field === 'price') ? (value === '' ? '' : parseFloat(value.replace(',', '.')).toFixed(2)) : value
-        };
-        return { ...prev, items: updatedItems };
-      });
-    }
-  };
-
-
-
-  // Update the `handleSaveReceipt` for new receipts
-  const handleSaveReceiptSubmit = async () => {
-    if (!user) {
-      toast({
-        title: "Authentication Required",
-        description: "Please sign in to save receipts.",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    setIsBusy(true);
-    setFormErrors({}); // Clear previous errors
-
-    // Use the correct form state for validation and saving
-    const activeFormData = editingReceipt ? editForm : formData;
-
-    // Basic validation for required fields
-    const missingFields = [];
-    if (!activeFormData.merchant) missingFields.push('merchant');
-    if (!activeFormData.total) missingFields.push('total');
-    if (!activeFormData.date) missingFields.push('date');
-    if (!activeFormData.items || activeFormData.items.length === 0) missingFields.push('items');
-
-    if (missingFields.length > 0) {
-      setFormErrors({
-        merchant: !activeFormData.merchant ? 'Merchant is required.' : '',
-        date: !activeFormData.date ? 'Date is required.' : '',
-        total: !activeFormData.total ? 'Total amount is required.' : '',
-        items: !activeFormData.items || activeFormData.items.length === 0 ? 'At least one item is required.' : ''
-      });
-      toast({
-        title: "Missing Information",
-        description: getFunnyMissingMessage(missingFields),
-        variant: "destructive",
-      });
-      setIsBusy(false);
-      return;
-    }
-
-    // Ensure all items have a name and a valid price
-    const cleanedItems = (activeFormData.items || []).filter(item => item.name && !isNaN(parseFloat(item.price)) && item.price !== '').map(item => ({
-      name: item.name,
-      price: parseFloat(item.price)
-    }));
-
-    if (cleanedItems.length === 0) {
-      setFormErrors({
-        items: 'Please ensure all items have a name and a valid price.'
-      });
-      toast({
-        title: "Invalid Items",
-        description: "Please ensure all items have a name and a valid price.",
-        variant: "destructive",
-      });
-      setIsBusy(false);
-      return;
-    }
-
-    // Calculate tax if not manually entered (total - subtotal)
-    let calculatedTax = parseFloat(activeFormData.tax) || 0;
-    
-    // If tax is not provided or is 0, calculate it from total and subtotal
-    if ((!activeFormData.tax || calculatedTax === 0) && activeFormData.total && activeFormData.subtotal) {
-      const total = parseFloat(activeFormData.total);
-      const subtotal = parseFloat(activeFormData.subtotal);
-      if (!isNaN(total) && !isNaN(subtotal) && total > subtotal) {
-        calculatedTax = total - subtotal;
-      }
-    }
-    
-    // Ensure tax is never negative
-    if (calculatedTax < 0) calculatedTax = 0;
-
-    // Convert transactionDate to Firestore Timestamp if it's a string
-    let transactionDateValue;
-    if (activeFormData.date) {
-      // If already a Date object, use as is; otherwise, parse
-      const dateObj = (activeFormData.date instanceof Date)
-        ? activeFormData.date
-        : new Date(activeFormData.date);
-      transactionDateValue = Timestamp.fromDate(dateObj);
-    } else {
-      transactionDateValue = serverTimestamp();
-    }
-
-    const receiptData = {
-      userId: user.uid,
-      merchant: activeFormData.merchant,
-      date: serverTimestamp(), // Use server timestamp for consistency
-      transactionDate: transactionDateValue, // Now always a Firestore Timestamp
-      total: parseFloat(activeFormData.total),
-      subtotal: parseFloat(activeFormData.subtotal),
-      tax: calculatedTax,
-      paymentMethod: activeFormData.paymentMethod || 'Other',
-      currency: activeFormData.currency,
-      items: cleanedItems,
-      imageUrl: activeFormData.imageUrl || '',
-      category: activeFormData.category || 'Uncategorized', // Ensure category is never undefined
-      createdAt: serverTimestamp()
-    };
-
-    // Receipt data prepared for Firestore
-
-    try {
-      if (editingReceipt) {
-        // Update existing receipt in the user's subcollection
-        await updateDoc(doc(db, "users", user.uid, "receipts", editingReceipt.id), receiptData);
-        toast({
-          title: "Receipt Updated! 🚀",
-          description: "Your receipt has been successfully updated.",
-        });
-      } else {
-        // Create new receipt in the user's subcollection
-        await addDoc(collection(db, "users", user.uid, "receipts"), receiptData);
-      toast({
-          title: "Saved",
-          description: "Saved. Ready for export.",
-      });
-      }
-      // Reset form and close modal
-      setFormData({ // Ensure formData is reset for next new entry
-        date: new Date().toISOString().split('T')[0],
-        merchant: '',
-        total: '',
-        tax: '',
-        subtotal: '',
-        paymentMethod: '',
-        currency: 'EUR',
-        items: [],
-        category: ''
-      });
-      setNewItem({ name: '', price: '' });
-      setEditingReceipt(null);
-      setIsEditing(false);
-      setFile(null);
-      setPreviewImageSrc(null);
-      setCurrentStep('upload_options');
-      await fetchReceipts();
-      
-      // Navigate: if saved to a group, go to Group tab
-      if (onTabChange) {
-        if (editingReceipt?.groupId) onTabChange('group'); else onTabChange('expenses');
-      }
-    } catch (error) {
-      console.error("Error saving receipt:", error);
-      toast({
-        title: editingReceipt ? "Error Updating Receipt 😥" : "Error Saving Receipt 😥",
-        description: `There was an issue saving your receipt: ${error.message}`,
-        variant: "destructive",
-      });
-    } finally {
-      setIsBusy(false);
-    }
-  };
-
-  const handleCloseReceiptForm = () => {
-    if (returnToCategory) {
-      // If we came from a category modal, return to it
-      setSelectedCategory(returnToCategory);
-      setModalOpen(true);
-      setReturnToCategory(null);
-      } else {
-      // Otherwise, go back to the main view
-      setCurrentStep('upload_options');
-    }
-    // Reset all form states
-    setEditingReceipt(null);
-    setIsEditing(false);
-    resetFormData();
-    setFile(null);
-    setPreviewImageSrc(null);
-  };
-
-  // Update the `handleEditSave` for existing receipts
-  const handleEditSaveSubmit = async (event) => {
-    event.preventDefault(); // Prevent default form submission
-
-    if (!user) {
-      toast({
-        title: "Authentication Required",
-        description: "Please sign in to save changes.",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    if (!editingReceipt) {
-      toast({
-        title: "Error",
-        description: "No receipt selected for editing.",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    // Validate essential fields for edit form
-    if (!editForm.merchant || !editForm.date || !editForm.total) { // Use editForm.total here
-      toast({
-        title: "Missing Information",
-        description: "Please fill in all required fields: Merchant, Total, and Date.",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    // Validate items in edit form
-    const hasIncompleteItem = editForm.items.some(item => (item.name && !item.price) || (!item.name && item.price));
-    if (hasIncompleteItem) {
-      toast({
-        title: "Incomplete Item",
-        description: "Please ensure all items have both a name and a price, or remove incomplete items.",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    setIsBusy(true);
-
-    try {
-      const parsedTotal = parseFloat(editForm.total); // Use editForm.total
-      const parsedSubtotal = parseFloat(editForm.subtotal);
-
-      if (isNaN(parsedTotal) || parsedTotal <= 0) {
-        toast({
-          title: "Invalid Total Amount",
-          description: "Please enter a valid positive number for the total amount.",
-          variant: "destructive",
-        });
-        return;
-      }
-      if (editForm.subtotal && (isNaN(parsedSubtotal) || parsedSubtotal < 0)) {
-        toast({
-          title: "Invalid Subtotal",
-          description: "Please enter a valid non-negative number for the subtotal.",
-          variant: "destructive",
-        });
-        return;
-      }
-
-      // Calculate tax if not provided
-      let taxAmount = parseFloat(editForm.tax); // Use editForm.tax
-      if (isNaN(taxAmount) || editForm.tax === '' || taxAmount === 0) {
-        if (parsedSubtotal && parsedSubtotal < parsedTotal) {
-          taxAmount = (parsedTotal - parsedSubtotal).toFixed(2);
-        } else {
-          taxAmount = '0.00';
-        }
-      } else {
-        taxAmount = taxAmount.toFixed(2);
-      }
-
-      const updatedReceiptData = {
-        userId: user.uid, // Use userId for consistency
-        merchant: editForm.merchant,
-        total: parsedTotal, // Store as number
-        subtotal: parsedSubtotal ? parsedSubtotal : undefined, // Store as number
-        tax: parseFloat(taxAmount), // Store as number
-        transactionDate: editForm.date
-          ? Timestamp.fromDate(new Date(editForm.date))
-          : serverTimestamp(), // Use Firestore Timestamp
-        category: editForm.category,
-        paymentMethod: editForm.payment_method,
-        currency: editForm.currency || editingReceipt.currency || settings.baseCurrency,
-        items: editForm.items.map(item => ({
-          name: item.name,
-          price: parseFloat(item.price) // Store as number
-        })),
-        updated_at: serverTimestamp()
-      };
-
-      // Check if this is a group expense
-      if (editingReceipt.isGroupExpense && editingReceipt.groupExpenseId) {
-        // Update the group expense first
-        try {
-          const groupExpenseUpdateData = {
-            label: editForm.merchant,
-            amount: parsedTotal,
-            date: editForm.date,
-            tag: editForm.category,
-            note: editForm.note || '',
-            items: editForm.items.map(item => ({
-              name: item.name,
-              price: parseFloat(item.price)
-            })),
-          };
-          
-          await updateDoc(doc(db, "groups", editingReceipt.groupId, "expenses", editingReceipt.groupExpenseId), groupExpenseUpdateData);
-          
-          toast({
-            title: "Group Expense Updated! 🚀",
-            description: "The group expense has been updated.",
-          });
-        } catch (groupError) {
-          console.error("Error updating group expense:", groupError);
-          toast({
-            title: "Error Updating Group Expense 😥",
-            description: "The group expense could not be updated. You may not have permission.",
-            variant: "destructive",
-          });
-          return;
-        }
-      }
-
-      await updateDoc(doc(db, "users", user.uid, "receipts", editingReceipt.id), updatedReceiptData);
-      
-      if (!editingReceipt.isGroupExpense) {
-      toast({
-        title: "Receipt Updated! 🚀",
-        description: "Your receipt has been successfully updated.",
-      });
-      }
-
-      // Reset editing state and close modal
-      setEditingReceipt(null);
-      setIsEditing(false);
-      setCurrentStep('upload_options');
-      await fetchReceipts();
-      
-        // Navigate to list; group receipts should appear under group views, not personal expenses
-      if (onTabChange) {
-          if (ocrData.groupId) onTabChange('receipts'); else onTabChange('expenses');
-      }
-    } catch (error) {
-      console.error("Error updating receipt:", error);
-      toast({
-        title: "Error Updating Receipt 😥",
-        description: `There was an issue updating your receipt: ${error.message}`,
-        variant: "destructive",
-      });
-    } finally {
-      setIsBusy(false);
-    }
-  };
 
   const handleEditCancel = () => {
     setEditingReceipt(null);
@@ -1305,653 +897,42 @@ export default function ReceiptUploader({ className, showOnly, onTabChange, onNe
     setCurrentNewItem({ name: '', price: '' });
   };
 
-  // Helper for adding new item fields dynamically
-  const handleAddItemField = (insertIndex) => {
-    const targetStateSetter = editingReceipt ? setEditForm : setFormData;
-    targetStateSetter(prevData => {
-      const newItems = [...(prevData.items || [])];
-      newItems.splice(insertIndex, 0, { name: '', price: '' });
-      return { ...prevData, items: newItems };
-    });
-    if (editingReceipt) {
-    setCurrentReceipt(prev => {
-      const newItems = [...(prev.items || [])];
-      newItems.splice(insertIndex, 0, { name: '', price: '' });
-      return { ...prev, items: newItems };
-    });
-    }
-  };
-
-  // Helper for removing item fields dynamically
-  const handleRemoveItemField = (removeIndex) => {
-    const targetStateSetter = editingReceipt ? setEditForm : setFormData;
-    targetStateSetter(prevData => {
-      if ((prevData.items || []).length === 1 && (!prevData.items[0].name && !prevData.items[0].price)) {
-        return prevData; // Prevent removing the last empty item if it's the only one
-      }
-      if ((prevData.items || []).length > 0) {
-        const newItems = (prevData.items || []).filter((_, i) => i !== removeIndex);
-        return { ...prevData, items: newItems };
-      }
-      return prevData; // Do nothing if trying to remove from empty list
-    });
-    if (editingReceipt) {
-    setCurrentReceipt(prev => {
-        if ((prev.items || []).length === 1 && (!prev.items[0].name && !prev.items[0].price)) {
-        return prev;
-      }
-        if ((prev.items || []).length > 0) {
-          const newItems = (prev.items || []).filter((_, i) => i !== removeIndex);
-        return { ...prev, items: newItems };
-      }
-      return prev;
-    });
-    }
-  };
-
   // Determine which form state to use based on editingReceipt
   const activeFormData = editingReceipt ? editForm : formData;
+  const isEditMode = !!editingReceipt;
 
   // Async receipt card component with historical currency conversion
-  const ReceiptCard = ({ receipt }) => {
-    const [baseCurrencyEquivalent, setBaseCurrencyEquivalent] = useState(null);
-    const [isLoadingConversion, setIsLoadingConversion] = useState(false);
-    const isExpanded = expandedReceiptId === receipt.id;
-    const amount = parseFloat(receipt.total);
-    const isNegative = isNaN(amount) || amount < 0;
-    const catColor = getCategoryBorderClass(receipt.category);
-
-    // --- Swipe animation state ---
-    const [swipeOffset, setSwipeOffset] = useState(0);
-    const [swipeDir, setSwipeDir] = useState(null); // 'left' or 'right'
-    const swipeThreshold = 80; // px, minimum to trigger action
-    const animating = useRef(false);
-
-    // Enhanced swipe handling with better UX
-    const [touchStart, setTouchStart] = useState({ x: 0, y: 0 });
-    const [touchStartTime, setTouchStartTime] = useState(0);
-    const [isSwiping, setIsSwiping] = useState(false);
-    const [swipeVelocity, setSwipeVelocity] = useState(0);
-    
-    // Improved thresholds for better UX
-    const SWIPE_THRESHOLD = 120; // Increased from 80px
-    const VELOCITY_THRESHOLD = 0.3; // pixels per millisecond
-    const MIN_SWIPE_DISTANCE = 50; // Minimum distance to start swipe
-    const MAX_VERTICAL_DRIFT = 100; // Maximum vertical movement allowed
-    
-    const handleTouchStart = (e) => {
-      const touch = e.touches[0];
-      setTouchStart({ x: touch.clientX, y: touch.clientY });
-      setTouchStartTime(Date.now());
-      setIsSwiping(false);
-      setSwipeVelocity(0);
-    };
-    
-    const handleTouchMove = (e) => {
-      const touch = e.touches[0];
-      const deltaX = touch.clientX - touchStart.x;
-      const deltaY = touch.clientY - touchStart.y;
-      const deltaTime = Date.now() - touchStartTime;
-      
-      // Calculate velocity
-      const velocity = deltaTime > 0 ? Math.abs(deltaX) / deltaTime : 0;
-      setSwipeVelocity(velocity);
-      
-      // Only start swiping if:
-      // 1. Horizontal movement is greater than vertical
-      // 2. We've moved enough distance
-      // 3. Vertical drift is within acceptable range
-      if (Math.abs(deltaX) > Math.abs(deltaY) && 
-          Math.abs(deltaX) > MIN_SWIPE_DISTANCE && 
-          Math.abs(deltaY) < MAX_VERTICAL_DRIFT) {
-        
-        if (!isSwiping) {
-          setIsSwiping(true);
-          // Add haptic feedback when swipe starts
-          try { navigator.vibrate && navigator.vibrate(10); } catch {}
-        }
-        
-        // Apply resistance to make swiping feel more natural
-        const resistance = 0.8;
-        const resistedDeltaX = deltaX * resistance;
-        
-        setSwipeOffset(resistedDeltaX);
-        setSwipeDir(deltaX > 0 ? 'right' : 'left');
-        
-        // Prevent default only when we're actively swiping
-        e.preventDefault();
-        }
-    };
-    
-    const handleTouchEnd = (e) => {
-      const deltaX = swipeOffset;
-      const deltaTime = Date.now() - touchStartTime;
-      const velocity = deltaTime > 0 ? Math.abs(deltaX) / deltaTime : 0;
-      
-      // Determine if swipe should trigger action based on:
-      // 1. Distance threshold
-      // 2. Velocity threshold
-      // 3. Whether we were actively swiping
-      const shouldTrigger = isSwiping && (
-        Math.abs(deltaX) > SWIPE_THRESHOLD || 
-        velocity > VELOCITY_THRESHOLD
-      );
-      
-      if (shouldTrigger) {
-        animating.current = true;
-        // Stronger haptic feedback for successful swipe
-        try { navigator.vibrate && navigator.vibrate([20, 20, 20]); } catch {}
-        
-        // Animate out with direction
-        const animateOut = deltaX > 0 ? 300 : -300;
-        setSwipeOffset(animateOut);
-        
-          setTimeout(() => {
-            setSwipeOffset(0);
-          setSwipeDir(null);
-          setIsSwiping(false);
-            animating.current = false;
-          
-          // Trigger action
-          if (deltaX > 0) {
-              handleEditClick(receipt);
-            } else {
-              setPendingDeleteId(receipt.id);
-              setShowDeleteModal(true);
-            }
-        }, 250);
-        } else {
-        // Snap back smoothly
-          setSwipeOffset(0);
-          setSwipeDir(null);
-        setIsSwiping(false);
-      }
-      
-      // Reset touch state
-      setTouchStart({ x: 0, y: 0 });
-      setTouchStartTime(0);
-      setSwipeVelocity(0);
-    };
-    
-    // Enhanced visual feedback based on swipe progress
-    const swipeProgress = Math.min(Math.abs(swipeOffset) / SWIPE_THRESHOLD, 1);
-    const shouldShowAction = swipeProgress > 0.3; // Show action hints at 30% progress
-
-    // Enhanced visual feedback with better animations
-    let bgColor = 'transparent';
-    let icon = null;
-    let actionText = '';
-    
-    if (swipeOffset < 0 && shouldShowAction) {
-      bgColor = `rgba(220,38,38,${swipeProgress * 0.9})`; // red for delete
-      icon = <Trash2 className="h-8 w-8 text-white" style={{ 
-        opacity: swipeProgress, 
-        transform: `scale(${0.7 + 0.3 * swipeProgress})`,
-        transition: 'all 0.1s ease-out'
-      }} />;
-      actionText = 'Delete';
-    } else if (swipeOffset > 0 && shouldShowAction) {
-      bgColor = `rgba(37,99,235,${swipeProgress * 0.9})`; // blue for edit
-      icon = <Edit className="h-8 w-8 text-white" style={{ 
-        opacity: swipeProgress, 
-        transform: `scale(${0.7 + 0.3 * swipeProgress})`,
-        transition: 'all 0.1s ease-out'
-      }} />;
-      actionText = 'Edit';
-    }
-
-    return (
-      <div
-        key={receipt.id}
-        className="relative w-full overflow-x-hidden"
-        style={{ touchAction: 'pan-y' }}
-        onTouchStart={handleTouchStart}
-        onTouchMove={handleTouchMove}
-        onTouchEnd={handleTouchEnd}
-      >
-        {/* Enhanced animated swipe background */}
-        <div
-          className={`absolute inset-0 z-0 flex items-center justify-center transition-all duration-150 ease-out`}
-          style={{
-            background: bgColor,
-            borderRadius: '1rem',
-            pointerEvents: 'none',
-            opacity: shouldShowAction ? 1 : 0,
-          }}
-        >
-          <div className="flex flex-col items-center gap-2">
-          {icon}
-            {actionText && (
-              <span className="text-white font-semibold text-sm opacity-80">
-                {actionText}
-              </span>
-            )}
-          </div>
-        </div>
-        <Card
-          id={`receipt-card-${receipt.id}`}
-          style={{
-            minHeight: 96,
-            transform: `translateX(${swipeOffset}px)`,
-            transition: animating.current ? 'transform 0.25s cubic-bezier(0.22,1,0.36,1)' : 'transform 0.1s ease-out',
-            // Add subtle rotation for more natural feel
-            rotate: isSwiping ? `${swipeOffset * 0.02}deg` : '0deg',
-          }}
-          className={`relative bg-slate-800/90 p-5 pl-4 rounded-2xl shadow-xl text-white border border-blue-900/30 border-l-4 ${catColor} transition-all duration-300 ease-in-out animate-fade-in-up ${isExpanded ? 'ring-2 ring-blue-500/50 scale-[1.01] shadow-2xl' : 'hover:shadow-2xl hover:-translate-y-1 active:scale-90'} ${isSwiping ? 'shadow-2xl' : ''}`}
-          onClick={() => setExpandedReceiptId(isExpanded ? null : receipt.id)}
-          aria-label={`Receipt for ${receipt.merchant}`}
-        >
-          {/* Swipe hint indicator - subtle visual cue */}
-          {!isSwiping && swipeOffset === 0 && (
-            <div className="absolute top-2 right-2 opacity-20 hover:opacity-40 transition-opacity">
-              <div className="flex gap-1">
-                <div className="w-1 h-1 bg-blue-300 rounded-full animate-pulse"></div>
-                <div className="w-1 h-1 bg-blue-300 rounded-full animate-pulse" style={{ animationDelay: '0.2s' }}></div>
-                <div className="w-1 h-1 bg-blue-300 rounded-full animate-pulse" style={{ animationDelay: '0.4s' }}></div>
-              </div>
-            </div>
-          )}
-          
-          {/* Swipe progress indicator */}
-          {isSwiping && (
-            <div className="absolute top-2 right-2">
-              <div className="w-8 h-1 bg-slate-600 rounded-full overflow-hidden">
-                <div 
-                  className="h-full bg-blue-400 rounded-full transition-all duration-100"
-                  style={{ width: `${swipeProgress * 100}%` }}
-                ></div>
-              </div>
-            </div>
-          )}
-          
-          <div className="flex items-center gap-2 min-w-0">
-            <div className="flex items-center gap-2 flex-1 min-w-0">
-            <span className="text-lg font-extrabold text-blue-200 truncate max-w-[120px] md:max-w-[200px] tracking-tight" title={receipt.merchant}>{receipt.merchant}</span>
-              {receipt.isGroupExpense && (
-                <div className="flex items-center gap-1">
-                  <span className="text-xs bg-blue-900/50 text-blue-200 px-2 py-1 rounded-full font-medium">
-                    {receipt.isReimbursement ? '💰' : '👥'}
-                  </span>
-                  {receipt.note && receipt.note.includes('Group: ') && (
-                    <span className="text-xs bg-slate-700/50 text-slate-300 px-2 py-1 rounded-full font-medium">
-                      {receipt.note.split('Group: ')[1].split(' -')[0]}
-                    </span>
-                  )}
-                </div>
-              )}
-            </div>
-            <span className="text-xs text-blue-200/80 font-medium whitespace-nowrap">
-              {receipt.transactionDate && receipt.transactionDate.toDate ? receipt.transactionDate.toDate().toLocaleDateString() : ''}
-            </span>
-          </div>
-          <div className="flex items-baseline gap-1 mt-1">
-            <span className={`text-2xl font-extrabold ${
-              receipt.isReimbursement ? 'text-green-400' : 'text-white'
-            }`}>
-              {receipt.isReimbursement ? `+${amount.toFixed(2)}` : 
-               isNegative ? `-${Math.abs(amount).toFixed(2)}` : amount.toFixed(2)}
-            </span>
-            <span className="text-sm text-blue-200/80 ml-1">{receipt.currency}</span>
-            {isLoadingConversion && (
-              <span className="text-xs text-blue-300/80 ml-2">Converting...</span>
-            )}
-            {!isLoadingConversion && baseCurrencyEquivalent && (
-              <span className="text-xs text-blue-300/80 ml-2">≈ {formatCurrency(baseCurrencyEquivalent, settings?.baseCurrency || 'EUR')}</span>
-            )}
-          </div>
-          <div className="flex flex-col gap-2 items-end ml-2">
-            <Button
-              onClick={e => { e.stopPropagation(); handleEditClick(receipt); }}
-              variant="ghost"
-              size="icon"
-              className="text-blue-400 hover:bg-blue-900/40 hover:text-blue-300 transition-transform duration-150 ease-in-out active:scale-90"
-              aria-label="Edit receipt"
-            >
-              <Edit className="h-5 w-5" />
-            </Button>
-            <Button
-              onClick={e => handleBinIconClick(e, receipt.id)}
-              variant="ghost"
-              size="icon"
-              className="text-red-400 hover:bg-blue-900/40 hover:text-red-300 transition-transform duration-150 ease-in-out active:scale-90"
-              aria-label="Delete receipt"
-            >
-              <Trash2 className="h-5 w-5" />
-            </Button>
-          </div>
-          {isExpanded && (
-            <CardContent className="pt-4">
-              <div className="grid grid-cols-2 gap-4 mb-4">
-          <div>
-                  <p className="text-xs text-blue-200/70">Subtotal</p>
-                  <p className="text-base">
-                    {receipt.subtotal && !isNaN(parseFloat(receipt.subtotal)) ? parseFloat(receipt.subtotal).toFixed(2) : '-'}
-                    {receipt.subtotal && !isNaN(parseFloat(receipt.subtotal)) && receipt.currency !== (settings?.baseCurrency || 'EUR') && (
-                      <AsyncCurrencyConversion 
-                        amount={receipt.subtotal} 
-                        currency={receipt.currency} 
-                        date={receipt.transactionDate || receipt.date}
-                      />
-                    )}
-                  </p>
-          </div>
-          <div>
-                  <p className="text-xs text-blue-200/70">Tax</p>
-                  <p className="text-base">
-                    {receipt.tax && parseFloat(receipt.tax) > 0 ? parseFloat(receipt.tax).toFixed(2) : '0.00'}
-                    {receipt.tax && parseFloat(receipt.tax) > 0 && receipt.currency !== (settings?.baseCurrency || 'EUR') && (
-                      <AsyncCurrencyConversion 
-                        amount={receipt.tax} 
-                        currency={receipt.currency} 
-                        date={receipt.transactionDate || receipt.date}
-                      />
-                    )}
-                  </p>
-        </div>
-          <div>
-                  <p className="text-xs text-blue-200/70">Payment</p>
-                  <p className="text-base">{receipt.paymentMethod || 'Not specified'}</p>
-          </div>
-          <div>
-                  <p className="text-xs text-blue-200/70">Category</p>
-                  <p className="text-base flex items-center gap-1">{receipt.category || 'Uncategorized'}
-                    <span className={`inline-block w-2 h-2 rounded-full ml-1 ${catColor.replace('border-l-4', 'bg-')}`}></span>
-                  </p>
-                </div>
-                <div>
-                  <p className="text-xs text-blue-200/70">Date</p>
-                  <p className="text-base">{receipt.transactionDate && receipt.transactionDate.toDate ? receipt.transactionDate.toDate().toLocaleDateString() : ''}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-blue-200/70">Currency</p>
-                  <p className="text-base">
-                    {receipt.currency}
-                    {receipt.currency !== (settings?.baseCurrency || 'EUR') && (
-                      <span className="text-xs text-blue-300/80 ml-1">
-                        (converted to {settings?.baseCurrency || 'EUR'})
-                      </span>
-                    )}
-                  </p>
-          </div>
-        </div>
-        {receipt.isGroupExpense && (
-          <div className="mt-2 p-3 bg-blue-900/20 rounded-xl border border-blue-800/30">
-            <p className="text-xs text-blue-200/70 mb-1">Group Information</p>
-            <div className="text-sm text-blue-200">
-              {receipt.isReimbursement ? (
-                <span>💰 Reimbursement from group expense</span>
-              ) : (
-                <span>👥 You paid for group expense</span>
-              )}
-              {receipt.note && (
-                <p className="text-xs text-blue-300/80 mt-1">{receipt.note}</p>
-              )}
-            </div>
-          </div>
-        )}
-        {/* Location Information */}
-        {(receipt.addressFromOCR || receipt.addressRaw || receipt.place?.display_name) && (
-          <div className="mt-2 p-3 bg-green-900/20 rounded-xl border border-green-800/30">
-            <p className="text-xs text-green-200/70 mb-1 flex items-center gap-1">
-              📍 Location
-              {receipt.geocodeStatus === 'ok' && (
-                <span className="text-xs bg-green-500/20 text-green-300 px-1 rounded">Precise</span>
-              )}
-              {receipt.geocodeStatus === 'approx' && (
-                <span className="text-xs bg-yellow-500/20 text-yellow-300 px-1 rounded">Approximate</span>
-              )}
-            </p>
-            <div className="text-sm text-green-200">
-              {receipt.place?.display_name ? (
-                <span>{receipt.place.display_name}</span>
-              ) : receipt.addressFromOCR ? (
-                <span>{receipt.addressFromOCR}</span>
-              ) : receipt.addressRaw ? (
-                <span>{receipt.addressRaw}</span>
-              ) : null}
-              {receipt.addressConfidence && (
-                <p className="text-xs text-green-300/80 mt-1">
-                  Confidence: {Math.round(receipt.addressConfidence * 100)}%
-                </p>
-              )}
-            </div>
-          </div>
-        )}
-        {receipt.items && receipt.items.length > 0 && (
-                <div className="mt-2">
-                  <p className="text-xs text-blue-200/70 mb-1">Items</p>
-                  <ul className="space-y-1 list-disc list-inside">
-              {receipt.items.map((item, index) => (
-                <li key={index} className="flex justify-between text-sm">
-                        <span className="truncate max-w-[100px]">{item.name}</span>
-                        <span>
-                          {!isNaN(parseFloat(item.price)) ? parseFloat(item.price).toFixed(2) : '0.00'} {receipt.currency}
-                          {!isNaN(parseFloat(item.price)) && receipt.currency !== (settings?.baseCurrency || 'EUR') && (
-                            <AsyncCurrencyConversion 
-                              amount={item.price} 
-                              currency={receipt.currency} 
-                              date={receipt.transactionDate || receipt.date}
-                            />
-                          )}
-                        </span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-      </CardContent>
-          )}
-        </Card>
-      </div>
-    );
-  };
-
-  // Swipe hint tooltip component
-  const SwipeHintTooltip = () => {
-    if (!showSwipeHint) return null;
-    
-    return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
-        <div className="bg-slate-900 border border-blue-500/30 rounded-2xl p-6 max-w-sm mx-4 text-center shadow-2xl">
-          <div className="flex justify-center mb-4">
-            <div className="w-16 h-16 bg-blue-600/20 rounded-2xl flex items-center justify-center">
-              <div className="flex gap-1">
-                <div className="w-2 h-2 bg-blue-400 rounded-full animate-pulse"></div>
-                <div className="w-2 h-2 bg-blue-400 rounded-full animate-pulse" style={{ animationDelay: '0.2s' }}></div>
-                <div className="w-2 h-2 bg-blue-400 rounded-full animate-pulse" style={{ animationDelay: '0.4s' }}></div>
-              </div>
-            </div>
-          </div>
-          <h3 className="text-lg font-bold text-white mb-2">Swipe to Quick Actions</h3>
-          <p className="text-blue-200 text-sm mb-4">
-            Swipe right to edit or left to delete receipts. 
-            <br />
-            <span className="text-blue-300/80 text-xs">Vertical scrolling still works normally!</span>
-          </p>
-          <div className="flex gap-2 justify-center">
-            <div className="flex items-center gap-2 text-xs text-blue-300">
-              <div className="w-3 h-3 bg-blue-500 rounded-full"></div>
-              <span>Swipe Right → Edit</span>
-            </div>
-            <div className="flex items-center gap-2 text-xs text-red-300">
-              <div className="w-3 h-3 bg-red-500 rounded-full"></div>
-              <span>Swipe Left → Delete</span>
-            </div>
-          </div>
-          <button
-            onClick={() => setShowSwipeHint(false)}
-            className="mt-4 w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 rounded-xl transition-colors"
-          >
-            Got it!
-          </button>
-        </div>
-      </div>
-    );
-  };
-
-
-
   // Async currency conversion component
-  const AsyncCurrencyConversion = ({ amount, currency, date }) => {
-    const [baseCurrencyEquivalent, setBaseCurrencyEquivalent] = useState(null);
-    const [isLoading, setIsLoading] = useState(false);
+  const AsyncCurrencyConversion = (props) => (
+    <AsyncCurrencyConversionComponent
+      baseCurrency={settings?.baseCurrency || 'EUR'}
+      convertToBaseCurrency={convertToBaseCurrency}
+      normalizeToLocalMidnight={normalizeToLocalMidnight}
+      formatCurrency={formatCurrency}
+      {...props}
+    />
+  );
 
-    useEffect(() => {
-      const loadConversion = async () => {
-        const baseCurrency = settings?.baseCurrency || 'EUR';
-        if (currency === baseCurrency) return;
-        
-        setIsLoading(true);
-        try {
-          const dateObj = normalizeToLocalMidnight(date);
-          const equivalent = await convertToBaseCurrency(amount, currency, dateObj);
-          setBaseCurrencyEquivalent(equivalent);
-        } catch (error) {
-          // Silently handle currency conversion errors
-        } finally {
-          setIsLoading(false);
-        }
-      };
-      
-      loadConversion();
-    }, [amount, currency, date]); // Removed settings?.baseCurrency dependency to prevent infinite loops
-
-    if (isLoading) {
-      return <span className="text-xs text-blue-300/80 ml-1">Converting...</span>;
-    }
-
-    if (baseCurrencyEquivalent) {
-      return (
-        <span className="text-xs text-blue-300/80 ml-1">
-          ≈ {formatCurrency(baseCurrencyEquivalent, settings?.baseCurrency || 'EUR')}
-        </span>
-      );
-    }
-
-    return null;
-  };
-
-  // Wrapper function for backward compatibility
+// Wrapper function for backward compatibility
   const renderReceiptCard = (receipt) => {
-    return <ReceiptCard receipt={receipt} />;
+    return (
+      <ReceiptCard
+        receipt={receipt}
+        expandedReceiptId={expandedReceiptId}
+        setExpandedReceiptId={setExpandedReceiptId}
+        handleEditClick={handleEditClick}
+        handleBinIconClick={handleBinIconClick}
+        setPendingDeleteId={setPendingDeleteId}
+        setShowDeleteModal={setShowDeleteModal}
+        settings={settings}
+        getBaseAmount={getBaseAmount}
+        getCategoryBorderClass={getCategoryBorderClass}
+        formatCurrency={formatCurrency}
+        AsyncCurrencyConversion={AsyncCurrencyConversion}
+      />
+    );
   };
 
-  const startCamera = async () => {
-    if (!_videoElement) {
-      console.error('Attempted to start camera but _videoElement is null.');
-      toast({
-        title: "Camera Error",
-        description: "Video element not available. Please try again.",
-        variant: "destructive",
-      });
-      setIsCameraReady(false);
-      return;
-    }
-
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ 
-        video: { 
-          facingMode: 'environment', // Use back camera for better receipt photos
-          width: { ideal: 1920 },
-          height: { ideal: 1080 }
-        } 
-      });
-      _videoElement.srcObject = stream;
-      _videoElement.onloadedmetadata = () => {
-        _videoElement.play()
-          .then(() => {
-            setIsCameraReady(true);
-          })
-          .catch(error => {
-            console.error('Error playing video:', error);
-            setIsCameraReady(false);
-          });
-      };
-    } catch (error) {
-      console.error("Error accessing camera:", error);
-      toast({
-        title: "Camera Access Denied",
-        description: "Please grant camera access to use this feature.",
-        variant: "destructive",
-      });
-      setIsCameraReady(false);
-    }
-  };
-
-  const stopCamera = () => {
-    if (_videoElement && _videoElement.srcObject) {
-      const tracks = _videoElement.srcObject.getTracks();
-      tracks.forEach(track => {
-        track.stop();
-        track.enabled = false;
-      });
-      _videoElement.srcObject = null;
-      _videoElement = null;
-      // Camera stream stopped
-    }
-    setIsCameraOpen(false);
-    setIsCameraReady(false);
-  };
-
-  const capturePhoto = () => {
-    if (_videoElement && canvasRef.current) {
-      const context = canvasRef.current.getContext('2d');
-      canvasRef.current.width = _videoElement.videoWidth;
-      canvasRef.current.height = _videoElement.videoHeight;
-      context.drawImage(_videoElement, 0, 0, canvasRef.current.width, canvasRef.current.height);
-      
-
-      finalize();
-
-      function finalize() {
-      canvasRef.current.toBlob((blob) => {
-        const capturedFile = new File([blob], 'captured-receipt.jpg', { type: 'image/jpeg' });
-          setFile(capturedFile);
-      setPreviewImageSrc(canvasRef.current.toDataURL('image/jpeg'));
-      setShowFullScreenPreview(true);
-          setIsCameraOpen(false);
-          stopCamera();
-      }, 'image/jpeg', 0.9);
-      }
-    }
-  };
-
-  const handleConfirmPreview = () => {
-    setShowFullScreenPreview(false);
-    if (file) {
-      setProcessingStage('detecting_edges');
-      setTimeout(() => setProcessingStage('enhancing'), 400);
-      setTimeout(() => setProcessingStage('reading_text'), 800);
-      processOCR(file).finally(() => setProcessingStage('parsed'));
-    } else {
-      // Fallback: if no file object, create one from the preview image
-      fetch(previewImageSrc)
-        .then(res => res.blob())
-        .then(blob => {
-          const imageFile = new File([blob], 'receipt.jpg', { type: 'image/jpeg' });
-          setProcessingStage('detecting_edges');
-          setTimeout(() => setProcessingStage('enhancing'), 400);
-          setTimeout(() => setProcessingStage('reading_text'), 800);
-          processOCR(imageFile).finally(() => setProcessingStage('parsed'));
-        })
-        .catch(error => {
-          console.error('Error creating file from preview:', error);
-          toast({
-            title: "Error Processing Image",
-            description: "Failed to process the captured image. Please try again.",
-            variant: "destructive",
-          });
-        });
-    }
-  };
-
-  const handleRetakePreview = () => {
-    setShowFullScreenPreview(false);
-    setPreviewImageSrc(null);
-    setFile(null);
-    setIsCameraOpen(false); // Ensure camera is closed
-    setCurrentStep('upload_options'); // Go back to the upload options/method selection card
-  };
 
   const handleEditClick = (receipt) => {
     setEditingReceipt(receipt);
@@ -2005,545 +986,6 @@ export default function ReceiptUploader({ className, showOnly, onTabChange, onNe
     setIsEditing(true);
     setCurrentStep('receipt_form'); // Open the receipt form modal for editing
     setReturnToCategory(selectedCategory); // Save the category context
-  };
-
-  // Add auto-save function for streamlined UX
-  const autoSaveReceipt = async (ocrData) => {
-    if (!user) {
-      toast({
-        title: "Authentication Required",
-        description: "Please sign in to save receipts.",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    setIsBusy(true);
-
-    try {
-      // Prepare receipt data from OCR results
-      const receiptData = {
-        userId: user.uid,
-        merchant: ocrData.merchant || '',
-        date: serverTimestamp(),
-        transactionDate: ocrData.date ? Timestamp.fromDate(new Date(ocrData.date)) : serverTimestamp(),
-        total: parseFloat(ocrData.total) || 0,
-        subtotal: parseFloat(ocrData.subtotal) || 0,
-        tax: parseFloat(ocrData.tax) || 0,
-        paymentMethod: ocrData.paymentMethod || 'Other',
-        currency: ocrData.currency || 'EUR',
-        items: (ocrData.items || []).filter(item => item.name && !isNaN(parseFloat(item.price))).map(item => ({
-          name: item.name,
-          price: parseFloat(item.price)
-        })),
-        imageUrl: '', // No image URL for auto-saved receipts
-        category: ocrData.category || 'Uncategorized',
-        createdAt: serverTimestamp(),
-        groupId: ocrData.groupId || null,
-        // Location data
-        addressRaw: ocrData.addressRaw,
-        addressParsed: ocrData.addressParsed,
-        addressHash: ocrData.addressHash,
-        geocodeStatus: ocrData.geocodeStatus,
-        location: ocrData.location,
-        place: ocrData.place,
-        // Enhanced address information from OCR
-        addressFromOCR: ocrData.addressFromOCR,
-        addressConfidence: ocrData.addressConfidence,
-        addressSource: ocrData.addressSource,
-        addressComponents: ocrData.addressComponents,
-        addressNotes: ocrData.addressNotes
-      };
-
-      // Save to Firestore
-      await addDoc(collection(db, "users", user.uid, "receipts"), receiptData);
-      
-      // Show success feedback with enhanced message
-      toast({
-        title: "Saved",
-        description: "Saved. Ready for export.",
-      });
-
-      // Brief success state before navigation
-      setIsLoading(false);
-      setIsOcrProcessing(false);
-      
-      // Show success overlay for 1.5 seconds
-      setShowSuccessState(true);
-      setTimeout(() => {
-        setShowSuccessState(false);
-        
-        // Reset states and navigate to dashboard
-        setFile(null);
-        setPreviewImageSrc(null);
-        setCurrentStep('upload_options');
-        fetchReceipts();
-        
-        // Navigate: if saved to a group, go to Group tab and pass prefill for GroupExpensesPage; otherwise expenses
-        if (onTabChange) {
-          if (ocrData.groupId) {
-            try {
-              window.__GROUP_PREFILL__ = {
-                groupId: ocrData.groupId,
-                label: ocrData.merchant || 'Receipt',
-                amount: (parseFloat(ocrData.total) || 0).toFixed(2),
-                date: ocrData.date,
-                currency: ocrData.currency || 'EUR',
-                photo: previewImageSrc || null,
-                splitEnabled: true,
-              };
-            } catch {}
-            onTabChange('group');
-          } else {
-          onTabChange('expenses');
-          }
-        }
-      }, 1500);
-
-    } catch (error) {
-      console.error("Error auto-saving receipt:", error);
-      toast({
-        title: "Error Saving Receipt 😥",
-        description: `There was an issue saving your receipt: ${error.message}`,
-        variant: "destructive",
-      });
-      setIsLoading(false);
-      setIsOcrProcessing(false);
-    } finally {
-      setIsBusy(false);
-    }
-  };
-
-  const processOCR = async (file) => {
-    const t = startTimer();
-    setIsLoading(true); // <-- Show loading overlay
-    try {
-      setIsOcrProcessing(true);
-      setOcrError(null);
-      const base64 = await toBase64(file);
-
-      const response = await fetch("https://api.openai.com/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${import.meta.env.VITE_OPENAI_API_KEY}`
-        },
-        body: JSON.stringify({
-          model: "gpt-4o",
-          messages: [
-            {
-              role: "user",
-              content: [
-                {
-                  type: "text",
-                  text: `You are an expert receipt analysis system with specialized expertise in date detection, address extraction, and parsing. Analyze this receipt image and extract the following information in JSON format with particular attention to DATE DETECTION and ADDRESS EXTRACTION.
-
-## EXPERT DATE DETECTION INSTRUCTIONS:
-
-### 1. DATE LOCATION PRIORITY (in order of preference):
-- **Header/Logo area**: Often contains the most reliable date
-- **Transaction date line**: Usually near the top, labeled "Date:", "Datum:", "Fecha:", "Data:", etc.
-- **Timestamp**: Look for "Time:", "Uhrzeit:", "Hora:", "Ora:", etc. (use date portion)
-- **Footer area**: Sometimes contains date information
-- **Receipt number line**: Often includes date (e.g., "Receipt #12345 - 15/06/2024")
-- **Cashier/terminal info**: May include date stamps
-
-### 2. DATE FORMAT RECOGNITION:
-Recognize and handle these formats intelligently:
-- **European**: DD/MM/YYYY, DD.MM.YYYY, DD-MM-YYYY, DD MM YYYY
-- **American**: MM/DD/YYYY, MM-DD-YYYY, MM.DD.YYYY
-- **ISO**: YYYY-MM-DD, YYYY/MM/DD
-- **Text formats**: "15th June 2024", "June 15, 2024", "15 Jun 2024"
-- **Abbreviated**: "15/06/24", "06/15/24", "15.06.24"
-- **Mixed separators**: "15-06.2024", "15/06-2024"
-
-### 3. AMBIGUOUS DATE RESOLUTION:
-- **DD/MM vs MM/DD**: Use context clues (currency, language, store location)
-- **Year ambiguity**: "24" → assume "2024" for recent receipts
-- **Missing year**: Use current year if not specified
-- **Multiple dates**: Choose the transaction date over print date, issue date, etc.
-
-### 4. RELATIVE DATE HANDLING:
-- "Today", "Heute", "Hoy", "Oggi" → current date
-- "Yesterday", "Gestern", "Ayer", "Ieri" → yesterday's date
-- "Last week", "Letzte Woche", "La semana pasada" → calculate relative date
-
-### 5. LANGUAGE-SPECIFIC DATE PATTERNS:
-- **German**: "Datum:", "Ausgestellt am:", "Druckdatum:"
-- **Spanish**: "Fecha:", "Fecha de emisión:", "Fecha de impresión:"
-- **French**: "Date:", "Date d'émission:", "Date d'impression:"
-- **Italian**: "Data:", "Data di emissione:", "Data di stampa:"
-- **Portuguese**: "Data:", "Data de emissão:", "Data de impressão:"
-- **Dutch**: "Datum:", "Uitgegeven op:", "Drukdatum:"
-
-### 6. EDGE CASES:
-- **Handwritten dates**: Look for clear, legible handwritten dates
-- **Stamped dates**: Often in receipt footer or margins
-- **Thermal print dates**: May be faint or partially printed
-- **Multiple timezones**: Use the local timezone of the receipt
-- **Future dates**: Flag if date appears to be in the future (likely error)
-
-### 7. DATE VALIDATION:
-- Ensure the date is reasonable (not in distant past/future)
-- Check for obvious OCR errors (e.g., "2024" vs "202A")
-- Validate day/month ranges (1-31 for days, 1-12 for months)
-- Handle leap years correctly
-
-## EXPERT ADDRESS EXTRACTION INSTRUCTIONS:
-
-### 1. ADDRESS LOCATION PRIORITY (in order of preference):
-- **Store header/logo area**: Often contains the main business address
-- **Contact information section**: Usually near the top or bottom
-- **Footer area**: May contain address details
-- **Tax information**: Sometimes includes business address
-- **Return policy section**: May include store location
-- **Website/phone area**: Often near address information
-
-### 2. ADDRESS COMPONENTS TO EXTRACT:
-Look for and extract these address elements:
-- **Street number and name**: "123 Main Street", "456 Avenue des Champs-Élysées"
-- **City**: "Paris", "London", "New York", "Berlin"
-- **Postal/ZIP code**: "75001", "SW1A 1AA", "10001", "10115"
-- **State/Province**: "California", "Bavaria", "Île-de-France"
-- **Country**: "France", "Germany", "United States", "United Kingdom"
-- **Phone numbers**: Often near address information
-- **Website/email**: May indicate business location
-
-### 3. MULTILINGUAL ADDRESS PATTERNS:
-Recognize address keywords in multiple languages:
-- **English**: "Address:", "Location:", "Store:", "Branch:"
-- **German**: "Adresse:", "Standort:", "Filiale:", "Geschäft:"
-- **French**: "Adresse:", "Localisation:", "Magasin:", "Succursale:"
-- **Spanish**: "Dirección:", "Ubicación:", "Tienda:", "Sucursal:"
-- **Italian**: "Indirizzo:", "Posizione:", "Negozio:", "Filiale:"
-- **Portuguese**: "Endereço:", "Localização:", "Loja:", "Filial:"
-- **Dutch**: "Adres:", "Locatie:", "Winkel:", "Filiaal:"
-
-### 4. ADDRESS FORMAT RECOGNITION:
-Handle various address formats:
-- **European**: "123 Rue de la Paix, 75001 Paris, France"
-- **American**: "456 Main St, New York, NY 10001"
-- **British**: "789 Oxford Street, London W1D 1BS"
-- **International**: "123 Champs-Élysées, 75008 Paris, France"
-
-### 5. ADDRESS VALIDATION:
-- Look for complete address lines (street + city + postal code)
-- Prefer addresses with postal codes (more precise for geocoding)
-- Avoid partial addresses or just phone numbers
-- Check for business names that might be confused with addresses
-
-### 6. ADDRESS CONFIDENCE SCORING:
-- **High confidence (0.8-1.0)**: Complete address with postal code
-- **Medium confidence (0.5-0.8)**: Address with city and country
-- **Low confidence (0.2-0.5)**: Partial address or just city
-- **No confidence (0.0-0.2)**: No address found or just phone number
-
-## COMPLETE RECEIPT ANALYSIS:
-
-Extract the following information in JSON format:
-
-1. **Store/Merchant name** - The business name
-2. **Total amount** - The final total to be paid
-3. **Subtotal** - Amount before tax (if present)
-4. **Date** - Use expert date detection above (return in YYYY-MM-DD format)
-5. **Category** - Choose from: Groceries, Dining, Transportation, Shopping, Bills, Entertainment, Health, Other
-6. **Payment Method** - Most likely payment method with confidence score
-7. **Currency** - 3-letter currency code (EUR, USD, GBP, etc.)
-8. **Items** - List of items with prices (include discounts as negative items)
-9. **Address** - Complete business address if found (for location mapping)
-
-## DATE DETECTION CONFIDENCE:
-
-For the date field, also include:
-- **date_confidence**: 0-1 score indicating confidence in date detection
-- **date_source**: Where the date was found (e.g., "header", "transaction_line", "footer")
-- **date_format_detected**: The original format detected (e.g., "DD/MM/YYYY", "MM/DD/YYYY")
-- **date_notes**: Any relevant notes about date detection (e.g., "ambiguous format resolved using currency context")
-
-## ADDRESS DETECTION CONFIDENCE:
-
-For the address field, also include:
-- **address_confidence**: 0-1 score indicating confidence in address detection
-- **address_source**: Where the address was found (e.g., "header", "footer", "contact_info")
-- **address_components**: Breakdown of address parts found (e.g., {"street": "123 Main St", "city": "Paris", "postcode": "75001"})
-- **address_notes**: Any relevant notes about address detection (e.g., "complete address with postal code found")
-
-## RESPONSE FORMAT:
-
-Reply with a JSON object enclosed in triple backticks:
-
-\`\`\`json
-{
-  "store": "Store Name",
-  "amount": "23.50",
-  "subtotal": "20.00",
-  "date": "2024-06-15",
-  "date_confidence": 0.95,
-  "date_source": "transaction_line",
-  "date_format_detected": "DD/MM/YYYY",
-  "date_notes": "Clear date found in transaction line",
-  "category": "Groceries",
-  "payment_method": "Credit Card",
-  "payment_method_alternatives": ["Cash"],
-  "payment_method_reason": "VISA card number detected",
-  "payment_method_confidence": 0.9,
-  "currency": "EUR",
-  "address": "123 Main Street, 75001 Paris, France",
-  "address_confidence": 0.9,
-  "address_source": "header",
-  "address_components": {
-    "street": "123 Main Street",
-    "city": "Paris",
-    "postcode": "75001",
-    "country": "France"
-  },
-  "address_notes": "Complete address found in store header",
-  "items": [
-    {"name": "Item 1", "price": "10.00"},
-    {"name": "Discount", "price": "-2.00"},
-    {"name": "Item 2", "price": "13.50"}
-  ]
-}
-\`\`\`
-
-**CRITICAL**: Always return the date in YYYY-MM-DD format regardless of how it appears on the receipt. Use your expert date detection skills to handle any format, language, or edge case. For addresses, provide the most complete and accurate address information available for location mapping.`
-                },
-                { type: "image_url", image_url: { url: base64 } }
-              ]
-            }
-          ],
-          max_tokens: 800
-        })
-      });
-
-      const data = await response.json();
-      const replyText = data?.choices?.[0]?.message?.content || '';
-      // OCR response received
-
-      const jsonMatch = replyText.match(/```json\s*({[\s\S]*?})\s*```/i);
-      if (!jsonMatch || !jsonMatch[1]) {
-        console.error("OCR parsing error: No valid JSON block found in the response.", replyText);
-        throw new Error("No valid JSON block found in the OCR response.");
-      }
-
-      const parsedJSON = JSON.parse(jsonMatch[1]);
-
-      // Extract address from OCR response for geocoding
-      let addressRaw = null;
-      let geocodeResult = null;
-      
-      try {
-        // First try to get address from the structured OCR response
-        if (parsedJSON.address && parsedJSON.address_confidence > 0.5) {
-          addressRaw = parsedJSON.address;
-          console.log('Address found in OCR response:', addressRaw, 'Confidence:', parsedJSON.address_confidence);
-        } else {
-          // Fallback to extracting address from the full OCR text
-          addressRaw = extractAddressFromText(replyText);
-          console.log('Address extracted from OCR text:', addressRaw);
-        }
-        
-        if (addressRaw) {
-          // Parse and geocode the address
-          const addressParsed = parseAddress(addressRaw);
-          geocodeResult = await rateLimitedGeocode(addressRaw, addressParsed);
-          
-          if (geocodeResult) {
-            console.log('Geocoding successful:', geocodeResult.geocodeStatus, geocodeResult.location);
-          }
-        }
-      } catch (geocodeError) {
-        console.warn('Geocoding failed:', geocodeError);
-        // Continue without geocoding - this is not critical
-      }
-
-      // Date detection details available
-
-      // Enhanced date validation and normalization
-      let normalizedDate = parsedJSON.date;
-      if (normalizedDate) {
-        try {
-          // First try to normalize using the existing function
-          normalizedDate = normalizeDate(normalizedDate);
-          
-          // Additional validation for the normalized date
-          const dateObj = new Date(normalizedDate);
-          if (isNaN(dateObj.getTime())) {
-            console.warn("Invalid date after normalization:", parsedJSON.date, "→", normalizedDate);
-            normalizedDate = new Date().toISOString().split('T')[0]; // Fallback to today
-          } else {
-            // Check if date is reasonable (not too far in past/future)
-            const now = new Date();
-            const diffYears = Math.abs(now.getFullYear() - dateObj.getFullYear());
-            if (diffYears > 10) {
-              console.warn("Date seems unreasonable (too far in past/future):", normalizedDate);
-              // Keep the date but log the warning
-            }
-          }
-        } catch (error) {
-          console.error("Date normalization error:", error);
-          normalizedDate = new Date().toISOString().split('T')[0]; // Fallback to today
-        }
-      } else {
-        normalizedDate = new Date().toISOString().split('T')[0]; // Default to today
-      }
-
-      // Extra validation: ensure all discount items have negative prices
-      const discountKeywords = [
-        'discount', 'rabatt', 'descuento', 'remise', 'sconto', 'desconto', 'skonto'
-      ];
-      const normalizedItems = (parsedJSON.items || []).map(item => {
-        if (!item.name) return item;
-        const nameLower = item.name.toLowerCase();
-        const isDiscount = discountKeywords.some(keyword => nameLower.includes(keyword));
-        let price = item.price;
-        if (isDiscount && price) {
-          // Remove currency symbols and spaces, convert to number
-          let num = parseFloat(price.toString().replace(/[^\d.-]/g, ''));
-          if (isNaN(num)) return item;
-          if (num > 0) num = -num;
-          price = num.toFixed(2);
-        }
-        return { ...item, price };
-      });
-
-      // Prepare OCR data for auto-save
-      const ocrData = {
-        merchant: parsedJSON.store || '',
-        total: parsedJSON.amount ? parsedJSON.amount.replace(/[^\d.,]/g, '').replace(',', '.') : '',
-        date: normalizedDate,
-        category: parsedJSON.category || '',
-        paymentMethod: parsedJSON.payment_method || '',
-        currency: parsedJSON.currency || 'EUR',
-        items: normalizedItems,
-        subtotal: parsedJSON.subtotal ? parsedJSON.subtotal.replace(/[^\d.,]/g, '').replace(',', '.') : '',
-        tax: 0, // Will be calculated as total - subtotal if needed
-        // Location data from geocoding
-        addressRaw: addressRaw,
-        addressParsed: geocodeResult?.addressParsed,
-        addressHash: geocodeResult?.addressHash,
-        geocodeStatus: geocodeResult?.geocodeStatus || 'pending',
-        // Enhanced address information from OCR
-        addressFromOCR: parsedJSON.address || null,
-        addressConfidence: parsedJSON.address_confidence || 0,
-        addressSource: parsedJSON.address_source || null,
-        addressComponents: parsedJSON.address_components || null,
-        addressNotes: parsedJSON.address_notes || null,
-        location: geocodeResult?.location,
-        place: geocodeResult?.place
-      };
-
-      // Offline-first queueing if offline, and attach group if selected
-      if (!navigator.onLine) {
-        const localId = crypto.randomUUID();
-        await queueReceipt({
-          id: localId,
-          userId: user?.uid || 'anonymous',
-          type: selectedGroupId ? 'group' : 'personal',
-          payload: {
-            merchant: ocrData.merchant,
-            date: ocrData.date,
-            total: parseFloat(ocrData.total) || 0,
-            subtotal: parseFloat(ocrData.subtotal) || 0,
-            vatAmount: undefined,
-            category: ocrData.category,
-            paymentMethod: ocrData.paymentMethod,
-            currency: ocrData.currency,
-            note: '',
-            imagePath: '',
-            source: 'camera',
-            status: 'queued',
-            groupId: selectedGroupId || null,
-          },
-          imageDataUrl: previewImageSrc,
-          status: 'queued'
-        });
-        toast({ title: 'Saved offline', description: 'Saved offline. Will sync when online.' });
-      } else {
-      // Auto-save the receipt instead of showing verification window
-        if (selectedGroupId) {
-          // For group flow: do NOT save as personal; prepare prefill and navigate to group
-          try {
-            window.__GROUP_PREFILL__ = {
-              groupId: selectedGroupId,
-              label: ocrData.merchant || 'Receipt',
-              amount: (parseFloat(ocrData.total) || 0).toFixed(2),
-              date: ocrData.date,
-              currency: ocrData.currency || 'EUR',
-              photo: previewImageSrc || null,
-              splitEnabled: true,
-              ocrJson: ocrData
-            };
-            try { sessionStorage.setItem(`group_prefill_${selectedGroupId}`, JSON.stringify(window.__GROUP_PREFILL__)); } catch {}
-          } catch {}
-          toast({ title: 'Scanned', description: 'Ready to add to group.' });
-          try {
-            const url = `/group/${selectedGroupId}/expenses?add=1`;
-            window.location.assign(url);
-          } catch {
-            if (onTabChange) onTabChange('group');
-          }
-        } else {
-          await autoSaveReceipt({ ...ocrData, groupId: null });
-        }
-        if (selectedGroupId) {
-          try {
-            // Increment group usage in memory list
-            setRecentGroups(prev => prev.map(g => g.id===selectedGroupId ? { ...g, uses: (g.uses||0)+1 } : g));
-          } catch {}
-        }
-      }
-
-    } catch (error) {
-      console.error('OCR error:', error);
-      setOcrError('Failed to process receipt. Please try again or enter manually.');
-      toast({
-        title: "OCR Processing Error",
-        description: "Failed to process the receipt. Please try again or enter the details manually.",
-        variant: "destructive",
-      });
-    } finally {
-      const ms = endTimerMs(t);
-      metrics.recordTimeToParsed(ms);
-      setIsOcrProcessing(false);
-      setIsLoading(false); // <-- Hide loading overlay
-    }
-  };
-
-  const toBase64 = (file) =>
-    new Promise((resolve, reject) => {
-          const reader = new FileReader();
-      reader.readAsDataURL(file);
-      reader.onload = () => resolve(reader.result);
-      reader.onerror = reject;
-        });
-
-  // Add a function to reset form data with today's date
-  const resetFormData = () => {
-    setFormData({
-      date: new Date().toISOString().split('T')[0],
-      merchant: '',
-      total: '',
-      tax: '',
-      subtotal: '',
-      paymentMethod: '',
-      currency: 'EUR',
-      items: [],
-      category: ''
-    });
-  };
-
-  // Add a ref for the merchant input
-  const merchantInputRef = useRef(null);
-
-  // Update the handleManualEntry function to focus on merchant field
-  const handleManualEntry = () => {
-    resetFormData();
-    setCurrentStep('manual_entry');
-    // Use setTimeout to ensure the modal is open before focusing
-    setTimeout(() => {
-      merchantInputRef.current?.focus();
-    }, 100);
   };
 
   // Add this useEffect near the top of the component, after the state declarations
@@ -2727,8 +1169,6 @@ Reply with a JSON object enclosed in triple backticks:
   });
 
   // In ReceiptUploader (parent):
-  const [selectedCategory, setSelectedCategory] = useState(null);
-  const [modalOpen, setModalOpen] = useState(false);
 
   // Add a function to handle bin icon clicks with confirmation
   const handleBinIconClick = (e, receiptId) => {
@@ -2977,83 +1417,134 @@ Reply with a JSON object enclosed in triple backticks:
   });
 
 
+  const receiptsNeedingFixCount = receipts.filter(
+    (receipt) => !(receipt.merchant && receipt.total && (receipt.transactionDate || receipt.date))
+  ).length;
+
+  const getTimeLabel = (receipt) => {
+    const date = receipt.transactionDate?.toDate?.() || (receipt.date ? new Date(receipt.date) : null);
+    if (!date || Number.isNaN(date.getTime())) return '';
+    return date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  };
+  const daySections = buildDaySections(receipts, normalizeToLocalMidnight);
+
+  const now = new Date();
+  const currentMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const lastMonthKey = `${lastMonth.getFullYear()}-${String(lastMonth.getMonth() + 1).padStart(2, '0')}`;
+  const currentMonthTotal = Math.abs(calculatedTotals.monthlyTotals?.[currentMonthKey]?.total || 0);
+  const lastMonthTotal = Math.abs(calculatedTotals.monthlyTotals?.[lastMonthKey]?.total || 0);
+  const monthDelta = lastMonthTotal > 0 ? ((currentMonthTotal - lastMonthTotal) / lastMonthTotal) * 100 : 0;
+  const monthLabel = now.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+
+  const {
+    analyticsSummary,
+    topCategory,
+    topExpenses,
+    donutSegments,
+    donutStops,
+    analyticsReport,
+    getBaseAmount,
+  } = useReceiptAnalytics({
+    receipts,
+    settings,
+    analyticsRange,
+    weekStart,
+    weekEnd,
+    normalizeToLocalMidnight,
+    convertToBaseCurrency,
+    categoryColors,
+  });
+
+
+  if (showOnly === 'receipts') {
+    return (
+      <ReceiptsTabView
+        user={user}
+        receiptsNeedingFixCount={receiptsNeedingFixCount}
+        monthLabel={monthLabel}
+        currentMonthTotal={currentMonthTotal}
+        monthDelta={monthDelta}
+        daySections={daySections}
+        expandedReceiptId={expandedReceiptId}
+        setExpandedReceiptId={setExpandedReceiptId}
+        getTimeLabel={getTimeLabel}
+        getBaseAmount={getBaseAmount}
+        formatCurrency={formatCurrency}
+        settings={settings}
+        isOcrProcessing={isOcrProcessing}
+      />
+    );
+  }
+
+  if (showOnly === 'upload') {
+    return (
+      <UploadCameraView
+        groups={groups}
+        selectedGroupId={selectedGroupId}
+        setSelectedGroupId={setSelectedGroupId}
+        groupSwitcherOpen={groupSwitcherOpen}
+        setGroupSwitcherOpen={setGroupSwitcherOpen}
+        isCameraOpen={isCameraOpen}
+        isCameraReady={isCameraReady}
+        isFlashOn={isFlashOn}
+        scanMode={scanMode}
+        setScanMode={setScanMode}
+        videoRef={videoRef}
+        fileInputRef={fileInputRef}
+        canvasRef={canvasRef}
+        handleImageChange={handleImageChange}
+        handleManualEntry={handleManualEntry}
+        handleOpenCamera={handleOpenCamera}
+        handleToggleFlash={handleToggleFlash}
+        capturePhoto={capturePhoto}
+        stopCamera={stopCamera}
+        onTabChange={onTabChange}
+        scannerBackground={SCANNER_BG}
+      />
+    );
+  }
+
+
+  if (showOnly === 'expenses') {
+    return (
+      <ExpensesTabView
+        analyticsRange={analyticsRange}
+        setAnalyticsRange={setAnalyticsRange}
+        analyticsSummary={analyticsSummary}
+        analyticsReport={analyticsReport}
+        formatCurrency={formatCurrency}
+        settings={settings}
+        receipts={receipts}
+        categoryTotals={categoryTotals}
+        calculatedTotals={calculatedTotals}
+        getBaseAmount={getBaseAmount}
+        categoryColors={categoryColors}
+        showAnalyticsReport={showAnalyticsReport}
+        setShowAnalyticsReport={setShowAnalyticsReport}
+        donutStops={donutStops}
+        donutSegments={donutSegments}
+        topCategory={topCategory}
+        topExpenses={topExpenses}
+        onTabChange={onTabChange}
+      />
+    );
+  }
+
+
 
   return (
     <div className={`relative flex flex-col items-center w-full ${className}`} style={{ touchAction: 'manipulation', overflowX: 'hidden' }}>
       {/* Success State Overlay */}
-      {showSuccessState && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center">
-          <div className="bg-slate-800/90 backdrop-blur-md rounded-2xl p-8 md:p-12 max-w-md mx-4 text-center border border-green-400/20 shadow-2xl animate-in fade-in duration-300">
-            {/* Success Icon */}
-            <div className="mb-6 flex justify-center">
-              <div className="relative">
-                <div className="w-16 h-16 bg-green-500 rounded-full flex items-center justify-center animate-pulse">
-                  <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"></path>
-                  </svg>
-                </div>
-                {/* Ripple effect */}
-                <div className="absolute inset-0 w-16 h-16 bg-green-400 rounded-full animate-ping opacity-20"></div>
-              </div>
-            </div>
-            
-            {/* Success Message */}
-            <div className="space-y-2">
-              <p className="text-2xl font-bold text-green-400">Receipt Saved!</p>
-              <p className="text-lg text-white">Your expense has been successfully recorded.</p>
-              <p className="text-sm text-gray-400">Redirecting to dashboard...</p>
-            </div>
-          </div>
-        </div>
-      )}
+      {showSuccessState && <ReceiptSuccessOverlay />}
 
       {/* Loading Overlay */}
       {isLoading && !showSuccessState && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center">
-          <div className="bg-slate-800/90 backdrop-blur-md rounded-2xl p-8 md:p-12 max-w-md mx-4 text-center border border-blue-400/20 shadow-2xl">
-            {/* Animated Loading Icon */}
-            <div className="mb-6 flex justify-center">
-              <svg width="60" height="60" viewBox="0 0 60 60" className="animate-pulse">
-                {/* Receipt Icon */}
-                <rect x="10" y="5" width="40" height="50" rx="3" fill="none" stroke="#3b82f6" strokeWidth="2"/>
-                <line x1="15" y1="15" x2="45" y2="15" stroke="#3b82f6" strokeWidth="1"/>
-                <line x1="15" y1="20" x2="45" y2="20" stroke="#3b82f6" strokeWidth="1"/>
-                <line x1="15" y1="25" x2="35" y2="25" stroke="#3b82f6" strokeWidth="1"/>
-                <line x1="15" y1="30" x2="40" y2="30" stroke="#3b82f6" strokeWidth="1"/>
-                <line x1="15" y1="35" x2="30" y2="35" stroke="#3b82f6" strokeWidth="1"/>
-                
-                {/* Processing Animation */}
-                <circle cx="30" cy="30" r="25" fill="none" stroke="#1e40af" strokeWidth="2" strokeDasharray="157" strokeDashoffset="157">
-                  <animate attributeName="stroke-dashoffset" values="157;0;157" dur="2s" repeatCount="indefinite"/>
-                </circle>
-                
-                {/* Smiling Face on Receipt */}
-                <ellipse cx="20" cy="45" rx="2" ry="2" fill="#64748b">
-                  <animate attributeName="ry" values="2;0.5;2" keyTimes="0;0.5;1" dur="2s" repeatCount="indefinite"/>
-                  </ellipse>
-                <ellipse cx="40" cy="45" rx="2" ry="2" fill="#64748b">
-                  <animate attributeName="ry" values="2;2;0.5;2" keyTimes="0;0.3;0.5;1" dur="2s" repeatCount="indefinite"/>
-                  </ellipse>
-                {/* Happy Smile */}
-                <path d="M18 48 Q30 54 42 48" stroke="#64748b" strokeWidth="2" fill="none" strokeLinecap="round"/>
-                </svg>
-                </div>
-            
-            {/* Dynamic Loading Messages with Funny Content */}
-            <div className="space-y-2">
-              <p className="text-xl font-medium text-white" style={{textShadow: '0 2px 8px rgba(0,0,0,0.5)'}}>
-                {isOcrProcessing ? "Processing your receipt..." : "Saving receipt..."}
-              </p>
-              <p className="text-lg text-blue-300 animate-pulse" style={{textShadow: '0 2px 8px rgba(0,0,0,0.5)'}}>
-                {isOcrProcessing ? currentFunnyMessage : "Almost done..."} <span role="img" aria-label="fun">🎉</span>
-              </p>
-              <p className="text-sm text-gray-400 mt-2">
-                {isOcrProcessing ? "AI is analyzing your receipt..." : "Updating your expense dashboard..."}
-              </p>
-            </div>
-          </div>
-          </div>
-        )}
+        <ReceiptLoadingOverlay
+          isOcrProcessing={isOcrProcessing}
+          currentFunnyMessage={currentFunnyMessage}
+        />
+      )}
 
       {/* Main Content Area */}
       <div
@@ -3078,96 +1569,20 @@ Reply with a JSON object enclosed in triple backticks:
         {/* Responsive row layout for laptop/desktop, column for mobile */}
         <div className="flex flex-col md:flex-row gap-8 w-full max-w-full items-start justify-center mb-8" style={{ overflowX: 'hidden' }}>
           {/* Upload Method Card */}
-          <div className={`w-full md:w-1/3 flex-col items-center mb-8 md:mb-0 ${showOnly === 'upload' ? 'flex' : !showOnly ? 'flex' : 'hidden'} md:flex`}>
-            <Card className="w-full p-4 md:p-6 flex flex-col items-center justify-start gap-4 bg-slate-800/80 text-white shadow-2xl rounded-xl border border-blue-400/20">
-            <CardHeader className="w-full text-center p-0 mb-4">
-                <CardTitle className="text-xl md:text-2xl font-bold text-blue-100">Add Receipt</CardTitle>
-            </CardHeader>
-            <CardContent className="w-full flex flex-col items-center justify-center gap-4 p-0">
-                  <input
-                    type="file"
-                id="fileInput"
-                    ref={fileInputRef}
-                onChange={handleImageChange}
-                accept="image/*"
-                className="hidden"
-                  />
-                <Button
-                onClick={() => document.getElementById('fileInput').click()}
-                  className="w-full bg-blue-700 text-white font-semibold py-3 rounded-xl hover:bg-blue-800 transition-all duration-300 ease-in-out transform hover:scale-105 flex items-center justify-center gap-2 shadow-lg overflow-hidden"
-                >
-                <Upload className="h-5 w-5" />
-                Upload & Process
-                </Button>
-              <Button
-                  onClick={() => setIsCameraOpen(true)}
-                  className="w-full bg-blue-700 text-white font-semibold py-3 rounded-xl hover:bg-blue-800 transition-all duration-300 ease-in-out transform hover:scale-105 flex items-center justify-center gap-2 shadow-lg overflow-hidden"
-              >
-                <Camera className="h-5 w-5" />
-                Take Photo
-              </Button>
-              <Button
-                  onClick={handleManualEntry}
-                  className="w-full bg-blue-700 text-white font-semibold py-3 rounded-xl hover:bg-blue-800 transition-all duration-300 ease-in-out transform hover:scale-105 flex items-center justify-center gap-2 shadow-lg overflow-hidden"
-              >
-                <List className="h-5 w-5" />
-                Enter Manually
-              </Button>
-              {/* Smart Group Targets */}
-              {recentGroups && recentGroups.length > 0 && (
-                <div className="w-full mt-2">
-                  <div className="text-xs uppercase tracking-wider text-blue-300/80 mb-2 flex items-center gap-2"><Users className="h-3.5 w-3.5"/> Quick to Group</div>
-                  <div className="flex w-full gap-2 overflow-x-auto no-scrollbar py-1">
-                    {groups
-                      .filter(g => !g.archived && !g.deleted)
-                      .sort((a,b)=> (b.uses||0)-(a.uses||0))
-                      .slice(0,6)
-                      .map(g => (
-                        <button key={g.id} onClick={() => { setSelectedGroupId(g.id); setTimeout(()=>{ try { document.getElementById('fileInput')?.click(); } catch {} }, 50); }} onContextMenu={(e)=>{e.preventDefault(); setGroupSwitcherOpen(true);}} className="flex items-center gap-2 px-3 py-2 rounded-xl border border-blue-700/40 bg-slate-900/40 text-blue-100 hover:border-blue-400 hover:bg-blue-900/30 transition-all whitespace-nowrap"> 
-                          <span className="text-base">{g.emoji || '👥'}</span>
-                          <span className="text-sm font-medium max-w-[140px] truncate">{g.name}</span>
-                        </button>
-                      ))}
-                  </div>
-                  {groupSwitcherOpen && (
-                    <div className="mt-2 p-3 rounded-xl bg-slate-900/80 border border-blue-700/40">
-                      <div className="text-xs text-blue-300/80 mb-2">Manage Groups</div>
-                      <div className="grid grid-cols-1 gap-2 max-h-56 overflow-y-auto">
-                        {groups.map(g => (
-                          <div key={g.id} className="flex items-center gap-2">
-                            <button className="px-2 py-1 rounded-lg bg-slate-800/60 border border-blue-700/40 text-blue-100 hover:border-blue-400" onClick={()=>{setSelectedGroupId(g.id); setGroupSwitcherOpen(false);}}>
-                              {g.emoji || '👥'} {g.name}
-                            </button>
-                            <button className="text-xs underline text-blue-300/90 hover:text-blue-200" onClick={async ()=>{
-                              const name = prompt('Rename group', g.name);
-                              if (name && user) {
-                                try {
-                                  await updateDoc(doc(db, 'groups', g.id), { name });
-                                  setGroups(prev => prev.map(x => x.id===g.id ? { ...x, name } : x));
-                                } catch (e) { console.warn('Rename failed', e); }
-                              }
-                            }}>Rename</button>
-                            <button className="text-xs underline text-blue-300/90 hover:text-blue-200" onClick={async ()=>{
-                              const emoji = prompt('Set emoji (e.g., 🧰)', g.emoji || '👥');
-                              if (emoji && user) {
-                                try {
-                                  await updateDoc(doc(db, 'groups', g.id), { emoji });
-                                  setGroups(prev => prev.map(x => x.id===g.id ? { ...x, emoji } : x));
-                                } catch (e) { console.warn('Icon update failed', e); }
-                              }
-                            }}>Icon</button>
-                          </div>
-                        ))}
-                      </div>
-                      <div className="mt-2 text-right"><button className="text-xs underline text-blue-300/90 hover:text-blue-200" onClick={()=>setGroupSwitcherOpen(false)}>Close</button></div>
-                    </div>
-                  )}
-
-                </div>
-              )}
-            </CardContent>
-          </Card>
-          </div>
+          <UploadMethodCard
+            showOnly={showOnly}
+            fileInputRef={fileInputRef}
+            handleImageChange={handleImageChange}
+            handleOpenCamera={handleOpenCamera}
+            handleManualEntry={handleManualEntry}
+            recentGroups={recentGroups}
+            groups={groups}
+            setSelectedGroupId={setSelectedGroupId}
+            groupSwitcherOpen={groupSwitcherOpen}
+            setGroupSwitcherOpen={setGroupSwitcherOpen}
+            setGroups={setGroups}
+            user={user}
+          />
 
           {/* Financial Overview Card */}
           <div className={`w-full md:w-1/3 flex-col items-center mb-8 md:mb-0 ${showOnly === 'expenses' ? 'flex' : !showOnly ? 'flex' : 'hidden'} md:flex`}>
@@ -3182,6 +1597,7 @@ Reply with a JSON object enclosed in triple backticks:
               setSelectedCategory={setSelectedCategory}
               modalOpen={modalOpen}
               setModalOpen={setModalOpen}
+              getCategoryColor={getCategoryColor}
             />
             {/* Insights Section */}
             <InsightsSection
@@ -3190,1981 +1606,114 @@ Reply with a JSON object enclosed in triple backticks:
               calculatedTotals={calculatedTotals}
               formatCurrency={formatCurrency}
               settings={settings}
+              getBaseAmount={getBaseAmount}
+              categoryColors={categoryColors}
             />
           </div>
 
-          {/* Your Receipts Card */}
-          <div className={`w-full md:w-1/3 flex-col items-center ${showOnly === 'receipts' ? 'flex' : !showOnly ? 'flex' : 'hidden'} md:flex`}>
-            <Card className="w-full p-4 md:p-6 flex flex-col items-center justify-start gap-4 bg-slate-800/80 text-white shadow-2xl rounded-2xl border border-blue-400/20">
-            <CardHeader className="w-full p-0 mb-2">
-                <div className="flex items-center justify-between">
-                <CardTitle className="text-xl font-bold text-blue-100">Your Receipts</CardTitle>
-                </div>
-            </CardHeader>
-            <CardContent className="w-full flex flex-col items-center justify-center p-0">
-                {isFirestoreLoading ? (
-                  <div className="flex flex-col items-center justify-center text-gray-400">
-                    <Loader2 className="h-8 w-8 animate-spin mb-2" />
-                    <p>{currentFunnyMessage}</p>
-                  </div>
-                ) : firestoreError ? (
-                  <div className="text-center text-red-400">
-                    <XCircle className="h-8 w-8 mx-auto mb-2" />
-                    <p>{firestoreError}</p>
-                    <Button onClick={fetchReceipts} className="mt-4">Try Again</Button>
-                  </div>
-                ) : receipts.length === 0 ? (
-                  <div className="text-center">
-                    <p className="text-xl text-slate-400 font-semibold mb-2">No receipts yet!</p>
-                    <p className="text-md text-slate-500">
-                      It's a blank canvas for your financial journey. <br />
-                      Start by <span className="text-blue-400 font-medium">uploading your first receipt</span> or <span className="text-blue-400 font-medium">adding one manually</span>.
-                      </p>
-                    </div>
-                ) : (
-                  <div className="grid grid-cols-1 gap-4 w-full md:max-h-[400px] md:overflow-y-auto md:overflow-x-hidden mb-12">
-                    {(() => {
-                      // First, sort all receipts by transaction date (newest first) for consistent ordering
-                      const sortedReceipts = [...receipts].sort((a, b) => {
-                        // Prioritize transactionDate over date over createdAt for sorting
-                        const dateA = normalizeToLocalMidnight(a.transactionDate || a.date);
-                        const dateB = normalizeToLocalMidnight(b.transactionDate || b.date);
-                        
-                        if (!dateA && !dateB) return 0;
-                        if (!dateA) return 1; // Put receipts without dates at the end
-                        if (!dateB) return -1;
-                        return dateB - dateA; // Newest first
-                      });
-
-                      // Group receipts by month with world-class date handling
-                      const groupedReceipts = sortedReceipts.reduce((groups, receipt) => {
-                        // Use transactionDate for grouping, not upload date
-                        const date = normalizeToLocalMidnight(receipt.transactionDate || receipt.date);
-                        if (!date) return groups;
-                        
-                        const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-                        if (!groups[monthKey]) {
-                          groups[monthKey] = {
-                            month: date.getMonth(),
-                            year: date.getFullYear(),
-                            receipts: []
-                          };
-                        }
-                        groups[monthKey].receipts.push(receipt);
-                        return groups;
-                      }, {});
-
-                      // Sort months in descending order (newest first)
-                      const sortedMonths = Object.keys(groupedReceipts).sort((a, b) => b.localeCompare(a));
-
-                      return sortedMonths.map(monthKey => {
-                        const group = groupedReceipts[monthKey];
-                        const currentMonthLabel = new Date(group.year, group.month).toLocaleDateString(undefined, { 
-                          month: 'short', 
-                          year: 'numeric' 
-                        }).replace(/^[a-z]/, letter => letter.toUpperCase());
-
-                        return (
-                          <div key={monthKey} className="space-y-3">
-                            {/* Month Header - World Class Modern Design */}
-                            <div onClick={() => setExpandedMonths(prev => ({ ...prev, [monthKey]: !isMonthExpanded(monthKey, group) }))} role="button" aria-expanded={isMonthExpanded(monthKey, group)} className="sticky top-0 z-10 bg-gradient-to-r from-blue-900/90 via-slate-800/90 to-blue-900/90 backdrop-blur-md border border-blue-400/20 rounded-xl px-4 py-3 shadow-lg cursor-pointer">
-                              <div className="flex items-center justify-between">
-                                <h3 className="text-lg font-bold text-blue-100 tracking-wide">
-                                  {currentMonthLabel}
-                                </h3>
-                                <div className="flex items-center space-x-2" onClick={(e) => e.stopPropagation()}><button onClick={(e)=>{e.stopPropagation(); setExpandedMonths(prev=>({...prev, [monthKey]: !isMonthExpanded(monthKey, group) }));}} className="ml-2 inline-flex items-center justify-center w-7 h-7 rounded-full border border-blue-400/30 bg-blue-900/40 hover:bg-blue-900/60 transition\" aria-label="Toggle month"><ChevronDown className={`h-4 w-4 transition-transform ${isMonthExpanded(monthKey, group) ? '' : '-rotate-90'}`} /></button>
-                                  {/* Total Spending */}
-                                  <span className="text-sm text-blue-200/90 font-medium bg-blue-800/40 rounded px-2 py-1">
-                                    {(() => {
-                                       // Use the calculated monthly totals for accurate base currency amounts
-                                      const monthKey = `${group.year}-${String(group.month + 1).padStart(2, '0')}`;
-                                      const monthlyTotal = calculatedTotals.monthlyTotals[monthKey];
-                                      if (monthlyTotal && monthlyTotal.total > 0) {
-                                        return formatCurrency(monthlyTotal.total, settings?.baseCurrency || 'EUR');
-                                      }
-                                      // Fallback: calculate on-the-fly if monthly totals not available
-                                      return formatCurrency(
-                                        (() => {
-                                          // Apply smart grouping logic for fallback calculation
-                                          const groupNetExpenses = {};
-                                          let totalNetExpenses = 0;
-                                          
-                                          group.receipts.forEach(receipt => {
-                                            const amount = parseFloat(receipt.total) || 0;
-                                            
-                                            // Check if this is a group-related receipt
-                                            const isGroupReceipt = receipt.isGroupExpense || 
-                                                                  receipt.category === 'Group Expense' || 
-                                                                  (receipt.note && receipt.note.includes('Group:'));
-                                            
-                                            if (isGroupReceipt && receipt.groupId) {
-                                              // Group expense or reimbursement
-                                              if (!groupNetExpenses[receipt.groupId]) {
-                                                groupNetExpenses[receipt.groupId] = {
-                                                  expenses: 0,
-                                                  reimbursements: 0,
-                                                  net: 0
-                                                };
-                                              }
-                                              
-                                              const isReimbursement = receipt.isReimbursement;
-                                              
-                                              if (isReimbursement) {
-                                                groupNetExpenses[receipt.groupId].reimbursements += amount;
-                                              } else {
-                                                groupNetExpenses[receipt.groupId].expenses += Math.abs(amount);
-                                              }
-                                            } else {
-                                              // Personal expense (not group-related): outflow (negative)
-                                              totalNetExpenses += -Math.abs(amount);
-                                            }
-                                          });
-                                          
-                                          // Calculate net for each group and add to total
-                                          Object.values(groupNetExpenses).forEach(group => {
-                                            group.net = -group.expenses + group.reimbursements;
-                                            totalNetExpenses += group.net;
-                                          });
-                                          
-                                          return totalNetExpenses;
-                                        })(),
-                                        settings?.baseCurrency || 'EUR'
-                                      );
-                                    })()}
-                                  </span>
-                                  {/* Receipt Count */}
-                                  <div className="flex items-center space-x-1">
-                                    <div className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-pulse"></div>
-                                    <span className="text-xs text-blue-200/80 font-medium">
-                                      {group.receipts.length}
-                                    </span>
-                                  </div>
-                      {/* Group filter inline */}
-                      <div className="ml-2">
-                        <Select value={groupFilter || 'all'} onValueChange={(v)=> setGroupFilter(v==='all'?null:v)}>
-                          <SelectTrigger className="h-7 bg-slate-900/60 border-blue-700/40 text-blue-100 text-xs">
-                            <SelectValue placeholder="All groups" />
-                          </SelectTrigger>
-                          <SelectContent className="bg-slate-900 text-white border-blue-700/40 max-h-56">
-                            <SelectItem value="all">All groups</SelectItem>
-                            <SelectItem value="mine">👤 Mine</SelectItem>
-                            {groups.map(g => (
-                              <SelectItem key={g.id} value={g.id}>{g.emoji || '👥'} {g.name}</SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                                  </div>
-                                </div>
-                              </div>
-                              {/* Subtle gradient line */}
-                              <div className="mt-2 h-px bg-gradient-to-r from-transparent via-blue-400/40 to-transparent"></div>
-                            </div>
-                            
-                            {/* Receipts for this month - sorted by transaction date (newest first) */}
-                            {isMonthExpanded(monthKey, group) && (<div className="space-y-3 pl-2">
-                              {group.receipts
-                                .filter(r => {
-                                  if (!groupFilter) return true;
-                                  if (groupFilter === 'mine') {
-                                    // Show only personal expenses (not group-related)
-                                    return !r.isGroupExpense && 
-                                           r.category !== 'Group Expense' && 
-                                           !(r.note && r.note.includes('Group:'));
-                                  }
-                                  return r.groupId === groupFilter;
-                                })
-                                .sort((a, b) => {
-                                  // Prioritize transactionDate over date over createdAt for sorting
-                                  const dateA = normalizeToLocalMidnight(a.transactionDate || a.date);
-                                  const dateB = normalizeToLocalMidnight(b.transactionDate || b.date);
-                                  if (!dateA && !dateB) return 0;
-                                  if (!dateA) return 1; // Put receipts without dates at the end
-                                  if (!dateB) return -1;
-                                  return dateB - dateA; // Newest first
-                                })
-                                .map((receipt) => (
-                                  <div key={receipt.id} className="relative">
-                                    {selectMode && (
-                                      <input
-                                        type="checkbox"
-                                        className="absolute top-2 left-2 h-4 w-4 accent-blue-500"
-                                        checked={selectedIds.has(receipt.id)}
-                                        onChange={(e) => {
-                                          setSelectedIds(prev => {
-                                            const next = new Set(prev);
-                                            if (e.target.checked) next.add(receipt.id); else next.delete(receipt.id);
-                                            return next;
-                                          });
-                                        }}
-                                      />
-                                    )}
-                                    {renderReceiptCard(receipt)}
-                                  </div>
-                                ))
-                              }
-                            </div>
-                            )}
-                          </div>
-                        );
-                      });
-                    })()}
-                    </div>
-                )}
-            </CardContent>
-          </Card>
-          </div>
+          <ReceiptsListLayout
+            showOnly={showOnly}
+            isFirestoreLoading={isFirestoreLoading}
+            firestoreError={firestoreError}
+            currentFunnyMessage={currentFunnyMessage}
+            fetchReceipts={fetchReceipts}
+            receipts={receipts}
+            normalizeToLocalMidnight={normalizeToLocalMidnight}
+            setExpandedMonths={setExpandedMonths}
+            isMonthExpanded={isMonthExpanded}
+            calculatedTotals={calculatedTotals}
+            formatCurrency={formatCurrency}
+            settings={settings}
+            groupFilter={groupFilter}
+            setGroupFilter={setGroupFilter}
+            groups={groups}
+            selectMode={selectMode}
+            selectedIds={selectedIds}
+            setSelectedIds={setSelectedIds}
+            renderReceiptCard={renderReceiptCard}
+          />
         </div>
-
         {/* Receipt Form Modal (for Manual Entry and OCR-populated forms) */}
-        <Dialog 
-          open={currentStep === 'receipt_form' || currentStep === 'manual_entry'} 
-          onOpenChange={(open) => {
-          if (!open) {
-              handleCloseReceiptForm();
+        <ReceiptFormModal
+          open={currentStep === 'receipt_form' || currentStep === 'manual_entry'}
+          onOpenChange={() => {}}
+          handleSaveReceiptSubmit={handleSaveReceiptSubmit}
+          handleCloseReceiptForm={handleCloseReceiptForm}
+          editingReceipt={editingReceipt}
+          isBusy={isBusy}
+          isEditMode={isEditMode}
+          activeFormData={activeFormData}
+          formErrors={formErrors}
+          settings={settings}
+          categories={categories}
+          supportedCurrencies={SUPPORTED_CURRENCIES}
+          getCurrencySymbol={getCurrencySymbol}
+          merchantInputRef={merchantInputRef}
+          handleFormInputChange={handleFormInputChange}
+          handleItemInputChange={handleItemInputChange}
+          handleAddItemField={handleAddItemField}
+          handleRemoveItemField={handleRemoveItemField}
+          onRequestDelete={() => {
+            if (editingReceipt?.id) {
+              setPendingDeleteId(editingReceipt.id);
+              setShowDeleteModal(true);
             }
           }}
-        >
-          <DialogContent 
-            className="w-[90vw] max-w-lg md:max-w-2xl bg-gradient-to-b from-blue-900 via-slate-900/95 to-slate-900 text-white border-none p-1 md:p-4 rounded-2xl shadow-2xl animate-fade-in-up overflow-visible max-h-[90vh] z-50 flex flex-col"
-            style={{ touchAction: 'manipulation', backdropFilter: 'blur(10px)' }}
-            onPointerDownOutside={e => e.preventDefault()}
-            onInteractOutside={e => e.preventDefault()}
-          >
-            <DialogHeader className="mb-1 animate-fade-in duration-300 ease-in-out">
-              <DialogTitle className="text-xl md:text-2xl font-bold text-blue-200 text-center tracking-tight">Check the details</DialogTitle>
-              <DialogDescription className="text-blue-300/80 text-center text-sm md:text-base">Make sure merchant, date, and totals look right before saving.</DialogDescription>
-            </DialogHeader>
-            <div className="flex-1 overflow-y-auto max-h-[55vh] px-0 md:px-0">
-              <form onSubmit={handleSaveReceiptSubmit} autoComplete="off" className="space-y-2 md:space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-1 md:gap-2 animate-fade-in duration-200 ease-in-out">
-                  {/* Date Field - world class UX/UI */}
-                  <div className="space-y-2">
-                    <Label htmlFor="date">Date</Label>
-                    <Input
-                      id="date"
-                      name="date"
-                      type="date"
-                      value={activeFormData.date}
-                      onChange={handleFormInputChange}
-                      className="w-full bg-slate-800/90 border border-blue-700/40 text-white focus:border-blue-400 focus:ring-2 focus:ring-blue-400 focus:bg-blue-950/80 transition-all duration-200 ease-in-out rounded-xl shadow-inner px-4 py-3 text-base placeholder-blue-200/60 outline-none"
-                    />
-                    {formErrors.date && <p className="text-red-400 text-xs mt-1 animate-fade-in duration-200 ease-in-out">{formErrors.date}</p>}
-                  </div>
-                  {/* Merchant Field */}
-                  <div className="space-y-2">
-                    <Label htmlFor="merchant">Merchant</Label>
-                    <div className="relative">
-                    <Input
-                      id="merchant"
-                      name="merchant"
-                      ref={merchantInputRef}
-                      value={activeFormData.merchant}
-                      onChange={handleFormInputChange}
-                      className="bg-slate-800/90 border border-blue-700/40 text-white focus:border-blue-400 focus:ring-2 focus:ring-blue-400 focus:bg-blue-950/80 transition-all duration-200 ease-in-out rounded-xl shadow-inner px-4 py-3 text-base placeholder-blue-200/60 outline-none"
-                      placeholder="Enter merchant name"
-                      autoCapitalize="words"
-                      autoFocus
-                      inputMode="text"
-                    />
-                      {!activeFormData.merchant && (
-                        <div className="absolute -bottom-6 left-0 flex items-center gap-1 text-xs text-yellow-200">
-                          <AlertCircle className="h-3.5 w-3.5" /> We're not sure about this one.
-                        </div>
-                      )}
-                    </div>
-                    {formErrors.merchant && <p className="text-red-400 text-xs mt-1 animate-fade-in duration-200 ease-in-out">{formErrors.merchant}</p>}
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="total">Total Amount</Label>
-                    <div className="flex items-center relative">
-                    <Input
-                        id="total"
-                        name="total"
-                        type="text"
-                        inputMode="decimal"
-                      placeholder="0.00"
-                        value={activeFormData.total}
-                        onChange={e => {
-                          const value = e.target.value;
-                          // Allow numbers, dot, and comma as decimal separators
-                          if (/^[\d.,]*$/.test(value) || value === '') {
-                            handleFormInputChange(e);
-                          }
-                        }}
-                        onBlur={e => {
-                          const value = e.target.value.replace(',', '.');
-                          const parsed = parseFloat(value);
-                          if (!isNaN(parsed)) {
-                            handleFormInputChange({ target: { name: 'total', value: parsed.toFixed(2) } });
-                          }
-                        }}
-                        className="w-full bg-slate-800/90 border border-blue-700/40 text-white text-right focus:border-blue-400 focus:ring-2 focus:ring-blue-400 focus:bg-blue-950/80 transition-all duration-200 ease-in-out rounded-xl shadow-inner px-4 py-3 text-base placeholder-blue-200/60 outline-none font-mono"
-                      />
-                      <span className="ml-2 text-blue-200 text-sm">{getCurrencySymbol(activeFormData.currency)}</span>
-                      {!activeFormData.total && (
-                        <div className="absolute -bottom-5 left-0 flex items-center gap-1 text-xs text-yellow-200">
-                          <AlertCircle className="h-3.5 w-3.5" /> We're not sure about this one.
-                        </div>
-                      )}
-                    </div>
-                    {formErrors.total && <p className="text-red-400 text-xs mt-1 animate-fade-in duration-200 ease-in-out">{formErrors.total}</p>}
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="tax" className="text-blue-200">Tax</Label>
-                    <div className="flex items-center">
-                      <Input
-                        id="tax"
-                        name="tax"
-                        type="text"
-                        inputMode="decimal"
-                        placeholder="0.00"
-                        value={activeFormData.tax || ''}
-                        onChange={e => {
-                          const value = e.target.value;
-                          if (/^[\d.,]*$/.test(value) || value === '') {
-                            handleFormInputChange(e);
-                          }
-                        }}
-                        onBlur={e => {
-                          const value = e.target.value.replace(',', '.');
-                          const parsed = parseFloat(value);
-                          if (!isNaN(parsed)) {
-                            handleFormInputChange({ target: { name: 'tax', value: parsed.toFixed(2) } });
-                          }
-                        }}
-                        className="w-full bg-slate-800/90 border border-blue-700/40 text-white text-right focus:border-blue-400 focus:ring-2 focus:ring-blue-400 focus:bg-blue-950/80 transition-all duration-200 ease-in-out rounded-xl shadow-inner px-4 py-3 text-base placeholder-blue-200/60 outline-none font-mono"
-                      />
-                      <span className="ml-2 text-blue-200 text-sm">{getCurrencySymbol(activeFormData.currency)}</span>
-                    </div>
-                  </div>
-                   <div className="space-y-2 relative">
-                    <Label htmlFor="subtotal">Subtotal <span className="text-blue-200/60">(Optional)</span></Label>
-                    <div className="flex items-center">
-                    <Input
-                        id="subtotal"
-                        name="subtotal"
-                        type="text"
-                        inputMode="decimal"
-                        placeholder="0.00"
-                        value={activeFormData.subtotal}
-                        onChange={e => {
-                          const value = e.target.value;
-                          // Allow numbers, dot, and comma as decimal separators
-                          if (/^[\d.,]*$/.test(value) || value === '') {
-                            handleFormInputChange(e);
-                          }
-                        }}
-                        onBlur={e => {
-                          const value = e.target.value.replace(',', '.');
-                          const parsed = parseFloat(value);
-                          if (!isNaN(parsed)) {
-                            handleFormInputChange({ target: { name: 'subtotal', value: parsed.toFixed(2) } });
-                          }
-                        }}
-                        className="w-full bg-slate-800/90 border border-blue-700/40 text-white text-right focus:border-blue-400 focus:ring-2 focus:ring-blue-400 focus:bg-blue-950/80 transition-all duration-200 ease-in-out rounded-xl shadow-inner px-4 py-3 text-base placeholder-blue-200/60 outline-none font-mono"
-                      />
-                      <span className="ml-2 text-blue-200 text-sm">{getCurrencySymbol(activeFormData.currency)}</span>
-                    </div>
-                    {(!activeFormData.subtotal && activeFormData.total) && (
-                      <div className="absolute -bottom-4 left-0 flex items-center gap-1 text-xs text-blue-300/80">
-                        <AlertCircle className="h-3.5 w-3.5" /> Optional. We'll compute VAT from totals if needed.
-                      </div>
-                    )}
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="paymentMethod">Payment Method</Label>
-                    <Select
-                      value={activeFormData.paymentMethod}
-                      onValueChange={value => handleFormInputChange({ target: { name: 'paymentMethod', value } })}
-                      onOpenChange={open => {
-                        if (open && document.activeElement && document.activeElement.tagName === 'INPUT') {
-                          document.activeElement.blur();
-                        }
-                      }}
-                    >
-                      <SelectTrigger className="w-full bg-slate-800/90 border border-blue-700/40 text-white focus:border-blue-400 focus:ring-2 focus:ring-blue-400 focus:bg-blue-950/80 transition-all duration-200 ease-in-out rounded-xl shadow-inner px-4 py-3 text-base placeholder-blue-200/60 outline-none">
-                        <SelectValue placeholder="Select payment method" />
-                      </SelectTrigger>
-                      <SelectContent className="bg-blue-950 text-white border-blue-700/40 shadow-xl rounded-xl animate-fade-in-up max-h-60 overflow-y-auto">
-                        {['Cash', 'Credit Card', 'Debit Card', 'Mobile Pay', 'Bank Transfer', 'Other'].map(method => (
-                          <SelectItem
-                            key={method}
-                            value={method}
-                            className="text-white bg-blue-950 hover:bg-blue-800 focus:bg-blue-800 data-[state=checked]:bg-blue-900 data-[state=checked]:text-blue-200 transition-colors duration-150 rounded-lg px-4 py-3 cursor-pointer text-base"
-                          >
-                            {method}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="category">Category</Label>
-                    <Select
-                      value={activeFormData.category}
-                      onValueChange={value => handleFormInputChange({ target: { name: 'category', value } })}
-                      onOpenChange={open => {
-                        if (open && document.activeElement && document.activeElement.tagName === 'INPUT') {
-                          document.activeElement.blur();
-                        }
-                      }}
-                    >
-                      <SelectTrigger className="w-full bg-slate-800/90 border border-blue-700/40 text-white focus:border-blue-400 focus:ring-2 focus:ring-blue-400 focus:bg-blue-950/80 transition-all duration-200 ease-in-out rounded-xl shadow-inner px-4 py-3 text-base placeholder-blue-200/60 outline-none">
-                        <SelectValue placeholder="Select category" />
-                      </SelectTrigger>
-                      <SelectContent className="bg-blue-950 text-white border-blue-700/40 shadow-xl rounded-xl animate-fade-in-up max-h-60 overflow-y-auto">
-                        {categories.map(cat => (
-                          <SelectItem
-                            key={cat}
-                            value={cat}
-                            className="text-white bg-blue-950 hover:bg-blue-800 focus:bg-blue-800 data-[state=checked]:bg-blue-900 data-[state=checked]:text-blue-200 transition-colors duration-150 rounded-lg px-4 py-3 cursor-pointer text-base"
-                          >
-                            {cat}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-                <div className="border-t border-blue-700/30 my-4" />
-                {/* Business toggle and Notes */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                  <div className="flex items-center justify-between bg-slate-800/60 rounded-xl px-3 py-3 border border-blue-700/30">
-                    <div className="flex flex-col">
-                      <span className="text-sm text-blue-200">Mark as business</span>
-                      <span className="text-xs text-blue-300/70">Affects exports and VAT</span>
-                    </div>
-                    <Switch checked={!!activeFormData.isBusiness} onCheckedChange={(val) => handleFormInputChange({ target: { name: 'isBusiness', value: val } })} />
-                  </div>
-                  <div>
-                    <Label htmlFor="note">Notes</Label>
-                    <Input
-                      id="note"
-                      name="note"
-                      type="text"
-                      placeholder="Optional note for this receipt"
-                      value={activeFormData.note || ''}
-                      onChange={handleFormInputChange}
-                      className="w-full bg-slate-800/90 border border-blue-700/40 text-white focus:border-blue-400 focus:ring-2 focus:ring-blue-400 focus:bg-blue-950/80 transition-all duration-200 ease-in-out rounded-xl shadow-inner px-4 py-3 text-base placeholder-blue-200/60 outline-none"
-                    />
-                  </div>
-                </div>
-                <div className="mt-2">
-                  <h3 className="text-base font-semibold text-blue-100 mb-2 animate-fade-in duration-200 ease-in-out">Items</h3>
-                  {(activeFormData.items || []).map((item, index) => (
-                    <div key={index} className="flex items-center gap-2 mb-2 animate-fade-in-up transition-transform duration-200 ease-in-out hover:scale-[1.02]">
-                              <Input
-                        id={`item-name-${index}`}
-                                placeholder="Item Name"
-                        value={item.name || ''}
-                        onChange={e => handleItemInputChange(e, index, 'name')}
-                        className="flex-[2] min-w-0 bg-slate-800/90 border border-blue-700/40 text-white focus:border-blue-400 focus:ring-2 focus:ring-blue-400 focus:bg-blue-950/80 transition-all duration-200 ease-in-out rounded-xl shadow-inner px-4 py-3 text-base placeholder-blue-200/60 outline-none"
-                        autoCapitalize="words"
-                        inputMode="text"
-                              />
-                              <Input
-                                type="text"
-                        inputMode="decimal"
-                        placeholder="0.00"
-                                value={item.price || ''}
-                                onChange={e => {
-                          const value = e.target.value;
-                                  // Allow numbers, dot, and comma as decimal separators
-                                  if (/^[\d.,]*$/.test(value) || value === '') {
-                                    handleItemInputChange(e, index, 'price');
-                                  }
-                                }}
-                                onBlur={e => {
-                                  const value = e.target.value.replace(',', '.');
-                                  const parsed = parseFloat(value);
-                                  if (!isNaN(parsed)) {
-                                    handleItemInputChange({ target: { value: parsed.toFixed(2) } }, index, 'price');
-                                  }
-                        }}
-                                className="flex-[1] min-w-0 bg-slate-800/90 border border-blue-700/40 text-white text-right focus:border-blue-400 focus:ring-2 focus:ring-blue-400 focus:bg-blue-950/80 transition-all duration-200 ease-in-out rounded-xl shadow-inner px-4 py-3 text-base placeholder-blue-200/60 outline-none font-mono"
-                      />
-                              <span className="text-blue-200 text-sm font-medium">{getCurrencySymbol(activeFormData.currency)}</span>
-                        <Button
-                          type="button"
-                        onClick={() => {
-                          const targetStateSetter = editingReceipt ? setEditForm : setFormData;
-                          targetStateSetter(prev => ({
-                            ...prev,
-                            items: (prev.items || []).filter((_, i) => i !== index)
-                          }));
-                          if (editingReceipt) {
-                            setCurrentReceipt(prev => ({
-                              ...prev,
-                              items: (prev.items || []).filter((_, i) => i !== index)
-                            }));
-                          }
-                        }}
-                          variant="ghost"
-                          size="icon"
-                        className="text-red-400 hover:bg-blue-900/40 hover:text-red-300 transition-transform duration-150 ease-in-out active:scale-90"
-                        aria-label="Remove item"
-                        >
-                        <svg className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
-                        </Button>
-                        </div>
-                  ))}
-                  <div className="flex items-end gap-2 mt-2 animate-fade-in-up duration-200 ease-in-out">
-                    <div className="flex-1 min-w-0">
-                      <Label htmlFor="new-item-name">New Item Name</Label>
-                        <Input
-                        id="new-item-name"
-                          type="text"
-                        placeholder="Add new item name"
-                        value={editingReceipt ? currentNewItem.name : newItem.name}
-                        onChange={e => editingReceipt ? setCurrentNewItem({ ...currentNewItem, name: e.target.value }) : setNewItem({ ...newItem, name: e.target.value })}
-                        className="w-full bg-slate-800/90 border border-blue-700/40 text-white focus:border-blue-400 focus:ring-2 focus:ring-blue-400 focus:bg-blue-950/80 transition-all duration-200 ease-in-out rounded-xl shadow-inner px-4 py-3 text-base placeholder-blue-200/60 outline-none"
-                        autoCapitalize="words"
-                        inputMode="text"
-                        />
-                    </div>
-                    <div className="w-20 md:w-28 min-w-0">
-                      <Label htmlFor="new-item-price">Price</Label>
-                        <Input
-                          type="text"
-                        inputMode="decimal"
-                          placeholder="0.00"
-                        value={editingReceipt ? currentNewItem.price : newItem.price}
-                          onChange={e => {
-                            const value = e.target.value;
-                            // Allow numbers, dot, and comma as decimal separators
-                            if (/^[\d.,]*$/.test(value) || value === '') {
-                              if (editingReceipt) {
-                                setCurrentNewItem(prev => ({ ...prev, price: value }));
-                              } else {
-                                setNewItem(prev => ({ ...prev, price: value }));
-                              }
-                            }
-                          }}
-                          onBlur={e => {
-                            const value = e.target.value.replace(',', '.');
-                            const parsed = parseFloat(value);
-                            if (!isNaN(parsed)) {
-                              const formattedPrice = parsed.toFixed(2);
-                              if (editingReceipt) {
-                                setCurrentNewItem(prev => ({ ...prev, price: formattedPrice }));
-                              } else {
-                                setNewItem(prev => ({ ...prev, price: formattedPrice }));
-                              }
-                            }
-                          }}
-                          className="w-full bg-slate-800/90 border border-blue-700/40 text-white text-right focus:border-blue-400 focus:ring-2 focus:ring-blue-400 focus:bg-blue-950/80 transition-all duration-200 ease-in-out rounded-xl shadow-inner px-4 py-3 text-base placeholder-blue-200/60 outline-none font-mono"
-                      />
-                      </div>
-                    <div className="flex flex-col justify-end pb-1">
-                      <span className="text-blue-200 text-sm">{getCurrencySymbol(activeFormData.currency)}</span>
-                  </div>
-                  <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      onClick={editingReceipt ? handleEditItemAdd : handleAddItem}
-                      disabled={editingReceipt ? (!currentNewItem.name.trim() || !currentNewItem.price.trim()) : (!newItem.name.trim() || !newItem.price.trim())}
-                      className="text-blue-400 hover:bg-blue-900/40 hover:text-blue-300 transition-transform duration-150 ease-in-out active:scale-90"
-                      aria-label="Add item"
-                    >
-                      <svg className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" /></svg>
-                  </Button>
-                </div>
-                  {formErrors.items && <p className="text-red-400 text-xs mt-1 animate-fade-in duration-200 ease-in-out">{formErrors.items}</p>}
-
-
-          </div>
-              </form>
-            </div>
-            <div className="flex justify-end gap-2 pt-2 border-t border-blue-700/30 mt-2 bg-transparent">
-                <Button
-                    type="button" 
-                    variant="secondary" 
-                    onClick={handleCloseReceiptForm}
-                className="bg-slate-700/90 hover:bg-blue-900 text-white text-base py-3 rounded-xl shadow-md transition-all duration-150 ease-in-out px-4 md:px-8"
-                  >
-                    Cancel
-                </Button>
-                  <Button 
-                    type="submit" 
-                onClick={handleSaveReceiptSubmit}
-                className="bg-gradient-to-r from-blue-700 via-blue-600 to-blue-800 hover:from-blue-800 hover:to-blue-900 text-white text-base font-semibold py-3 rounded-xl shadow-xl transition-all duration-200 ease-in-out transform hover:scale-105 px-4 md:px-8"
-              >
-                {isBusy ? <span className="animate-spin mr-2">⏳</span> : (editingReceipt ? 'Save Changes' : 'Save Receipt')}
-                  </Button>
-            </div>
-          </DialogContent>
-        </Dialog>
-                  </div>
+        />
+        </div>
 
       {/* Full Screen Preview */}
-      {showFullScreenPreview && (
-        <div className="fixed inset-0 z-[100] bg-black flex flex-col animate-fade-in">
-          <img src={previewImageSrc} alt="Preview" className="flex-1 object-contain" />
-          {/* Status chip */}
-          {processingStage && (
-            <div className="absolute top-4 left-1/2 -translate-x-1/2 rounded-full bg-slate-800/80 border border-blue-400/30 text-blue-100 px-4 py-1 text-sm shadow-lg">
-              {processingStage === 'detecting_edges' && 'Detecting edges…'}
-              {processingStage === 'enhancing' && 'Enhancing…'}
-              {processingStage === 'reading_text' && 'Reading text…'}
-              {processingStage === 'parsed' && 'Parsed'}
-            </div>
-          )}
-          <div className="absolute bottom-12 left-0 right-0 flex justify-center items-center gap-4 p-4 bg-gradient-to-t from-black/80 to-transparent pb-36">
-            <Button
-              onClick={handleRetakePreview}
-              variant="outline"
-              className="text-lg py-3 px-6 bg-slate-700/80 border-slate-500 hover:bg-slate-600 text-white backdrop-blur-sm"
-            >
-              <XCircle className="h-5 w-5 mr-2" />
-              Retake
-            </Button>
-            <Button
-              onClick={handleConfirmPreview}
-              className="text-lg py-3 px-6 bg-blue-600/80 hover:bg-blue-500 text-white backdrop-blur-sm"
-            >
-              <CheckCircle className="h-5 w-5 mr-2" />
-              Process & Save
-            </Button>
-          </div>
-        </div>
-      )}
+      <ReceiptFullScreenPreview
+        show={showFullScreenPreview}
+        previewImageSrc={previewImageSrc}
+        processingStage={processingStage}
+        handleRetakePreview={handleRetakePreview}
+        handleConfirmPreview={handleConfirmPreview}
+      />
 
       {/* Camera View */}
-      <Dialog open={isCameraOpen} onOpenChange={(open) => {
-        if (!open) {
-          stopCamera(); // Ensure camera is stopped when modal is closed
-        }
-        setIsCameraOpen(open);
-      }}>
-        <DialogContent className="sm:max-w-[600px] bg-slate-800 text-white border-gray-700 p-6 rounded-lg shadow-xl animate-fade-in flex flex-col items-center">
-          <DialogHeader className="mb-4">
-            <DialogTitle className="text-2xl font-bold text-gray-100">Take Photo</DialogTitle>
-            <DialogDescription className="text-gray-400">
-              Position your receipt within the frame and click capture. Your receipt will be automatically processed and saved.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="relative w-full max-w-[560px] h-[420px] bg-gray-900 rounded-lg overflow-hidden flex items-center justify-center">
-            <video ref={videoRef} autoPlay playsInline className="w-full h-full object-cover" style={{ transform: `rotate(${rotation}deg)` }}></video>
-            {!isCameraReady && (
-              <p className="absolute text-gray-400">Camera not ready or access denied.</p>
-            )}
-            {/* Funny Guide Frame for Receipt positioning */}
-            <div className="absolute inset-0 flex items-center justify-center p-8 pointer-events-none">
-              <div className="w-full h-full border-2 border-dashed border-blue-400 rounded-lg opacity-70 flex items-center justify-center text-blue-300 text-sm font-semibold text-center leading-tight">
-                Point at the receipt.<br/>
-              </div>
-            </div>
-            <canvas ref={canvasRef} className="hidden"></canvas>
-            </div>
-          {/* Inline Controls: Shutter */}
-          <div className="mt-4 w-full flex flex-col gap-3">
-            <div className="flex items-center justify-between">
-            </div>
-            <div className="flex items-center justify-between">
-            <Button onClick={stopCamera} className="bg-red-700 hover:bg-red-800 text-white font-bold py-2 px-4 rounded">
-                <X className="h-5 w-5 mr-2" /> Close
-            </Button>
-              <Button onClick={capturePhoto} disabled={!isCameraReady} className="relative bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 px-6 rounded-full animate-pulse-fab">
-                <span className="absolute -inset-1 rounded-full bg-blue-400/30 blur-lg" aria-hidden="true"></span>
-                <Camera className="h-5 w-5 mr-2" /> Shutter
-            </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <ReceiptCameraDialog
+        isCameraOpen={isCameraOpen}
+        setIsCameraOpen={setIsCameraOpen}
+        stopCamera={stopCamera}
+        videoRef={videoRef}
+        canvasRef={canvasRef}
+        rotation={rotation}
+        isCameraReady={isCameraReady}
+        capturePhoto={capturePhoto}
+      />
       <footer className="w-full text-center py-4 text-gray-400 text-sm mt-8 mb-4">
         Powered with <span className="animate-very-slow-pulse inline-block">❤️</span> by ExpenseApp
       </footer>
-      <Dialog open={showDeleteModal} onOpenChange={setShowDeleteModal}>
-        <DialogContent className="max-w-xs bg-red-600/95 text-white border-none rounded-2xl shadow-2xl animate-fade-in-up">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-lg font-bold">
-              <Trash2 className="h-6 w-6 text-yellow-200 animate-bounce" />
-              Delete Receipt?
-            </DialogTitle>
-            <DialogDescription className="text-white/80 mt-2">
-              This action <span className="font-bold text-yellow-200">cannot be undone</span>.<br />
-              Are you sure you want to send this receipt to the digital shredder?
-            </DialogDescription>
-          </DialogHeader>
-          <div className="flex justify-end gap-3 mt-6">
-            <Button
-              variant="ghost"
-              className="bg-white/10 text-white hover:bg-white/20 rounded-lg px-4 py-2"
-              onClick={() => { setShowDeleteModal(false); setPendingDeleteId(null); }}
-            >
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              className="bg-yellow-400 text-red-700 font-bold hover:bg-yellow-300 rounded-lg px-4 py-2 shadow-md animate-pulse"
-              onClick={() => {
-                if (pendingDeleteId) handleDeleteReceipt(pendingDeleteId);
-                setShowDeleteModal(false); setPendingDeleteId(null);
-              }}
-            >
-              <Trash2 className="inline-block mr-1 h-5 w-5" /> Delete
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <ReceiptDeleteDialog
+        showDeleteModal={showDeleteModal}
+        setShowDeleteModal={setShowDeleteModal}
+        pendingDeleteId={pendingDeleteId}
+        setPendingDeleteId={setPendingDeleteId}
+        handleDeleteReceipt={deleteReceipt}
+      />
       {/* Category Details Modal */}
-      <Dialog open={modalOpen} onOpenChange={setModalOpen}>
-        <DialogContent className="max-w-md w-[95vw] bg-slate-900/95 text-white rounded-2xl shadow-2xl animate-fade-in-up p-0 flex flex-col overflow-hidden">
-          {selectedCategory && (
-            <>
-              <DialogHeader className="p-6 pb-4 flex-shrink-0 border-b border-white/10">
-                <DialogTitle className="flex items-center gap-3 text-2xl font-bold text-indigo-200 tracking-tight overflow-hidden">
-                  <span className="text-3xl flex-shrink-0">{selectedCategory.emoji}</span>
-                  <span className="truncate min-w-0">{selectedCategory.name}</span>
-                </DialogTitle>
-                <DialogDescription className="text-blue-200/80 mt-1 text-sm">
-                  Category breakdown, recent receipts, and stats.
-                </DialogDescription>
-              </DialogHeader>
-
-              <ScrollArea className="flex-1 max-h-[70vh] overflow-y-auto">
-                <div className="p-6 flex flex-col gap-4 overflow-x-hidden">
-                  {/* Amount and percent */}
-                  <div className="flex flex-row items-center justify-between mb-2">
-                    <div>
-                      <div className="text-2xl font-extrabold text-indigo-300">{formatCurrency(Math.abs(selectedCategory.amount), settings?.baseCurrency || 'EUR')}</div>
-                      <div className="text-xs text-gray-400">{selectedCategory.percent}% of total</div>
-                      {selectedCategory.categoryData && selectedCategory.categoryData.currencies && Object.keys(selectedCategory.categoryData.currencies).length > 0 && (
-                        <div className="text-xs text-blue-300/80 mt-1">
-                          {Object.entries(selectedCategory.categoryData.currencies).map(([currency, amount], idx) => (
-                            <span key={currency}>
-                              {formatCurrency(amount, currency)}
-                              {idx < Object.keys(selectedCategory.categoryData.currencies).length - 1 ? ' • ' : ''}
-                            </span>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                    {/* Mini bar chart for this category by day (last 7 days) */}
-                    <div className="w-28 h-16 flex items-end">
-                      {/* Mini bar chart */}
-                      {(() => {
-                        // Prepare mini bar chart data for this category (last 7 days)
-                        const today = new Date();
-                        const days = Array.from({ length: 7 }, (_, i) => {
-                          const d = new Date(today);
-                          d.setDate(today.getDate() - (6 - i));
-                          return d;
-                        });
-                        const dayLabels = days.map(d => d.toLocaleDateString(undefined, { weekday: 'short' }));
-                        const dayTotals = days.map(d => {
-                          const dStr = d.toISOString().split('T')[0];
-                          return receipts.filter(r =>
-                            (r.category || 'Uncategorized') === selectedCategory.name &&
-                            (
-                              (typeof r.transactionDate === 'string' && (r.transactionDate === dStr || r.transactionDate.startsWith(dStr))) ||
-                              (r.transactionDate && r.transactionDate.toDate && r.transactionDate.toDate().toISOString().startsWith(dStr))
-                            )
-                          ).reduce((sum, r) => sum + (parseFloat(r.total) || 0), 0);
-                        });
-                        const maxVal = Math.max(...dayTotals, 1);
-                        return (
-                          <div className="flex items-end w-full h-full">
-                            {dayTotals.map((val, i) => (
-                              <div key={i} className="flex-1 flex flex-col items-center justify-end h-full">
-                                <div
-                                  className="rounded-full"
-                                  style={{
-                                    width: 10,
-                                    height: `${Math.max(8, (val / maxVal) * 48)}px`,
-                                    background: selectedCategory.color,
-                                    opacity: val > 0 ? 1 : 0.25,
-                                    transition: 'height 0.4s cubic-bezier(.4,2,.3,1)',
-                                  }}
-                                ></div>
-                                <div className="text-[10px] text-gray-400 mt-1">{dayLabels[i][0]}</div>
-                              </div>
-                            ))}
-                          </div>
-                        );
-                      })()}
-                    </div>
-                  </div>
-                  {/* Recent receipts for this category */}
-                  <div>
-                    <div className="text-sm font-semibold text-blue-200 mb-1">Recent Receipts</div>
-                    <div className="flex flex-col gap-2">
-                      {(() => {
-                        // Get all receipts for this category, sorted by date (newest first)
-                        const categoryReceipts = receipts.filter(r => {
-                          // For group categories, show all receipts that belong to this group
-                          if (selectedCategory.name === 'Trip' || selectedCategory.name === 'Vacacions' || selectedCategory.name === 'Family') {
-                            return r.isGroupExpense && 
-                                   r.note && 
-                                   r.note.includes('Group: ') && 
-                                   r.note.split('Group: ')[1].split(' -')[0] === selectedCategory.name;
-                          }
-                          // For regular categories, show receipts with matching category
-                          return (r.category || 'Uncategorized') === selectedCategory.name;
-                        })
-                        .sort((a, b) => {
-                            // Use the same date parsing approach as the main receipts list
-                            const dateA = normalizeToLocalMidnight(a.transactionDate || a.date);
-                            const dateB = normalizeToLocalMidnight(b.transactionDate || b.date);
-                            
-                            if (!dateA && !dateB) return 0;
-                            if (!dateA) return 1; // Put receipts without dates at the end
-                            if (!dateB) return -1;
-                            return dateB - dateA; // Newest first
-                          }); // Show ALL receipts, no limit
-
-                        // Group receipts by month
-                        const groupedReceipts = [];
-                        let currentMonth = null;
-                        let currentMonthLabel = null;
-                        let currentMonthReceipts = [];
-
-                        categoryReceipts.forEach((receipt, index) => {
-                          // Use the same date parsing approach as the main receipts list
-                          const receiptDate = normalizeToLocalMidnight(receipt.transactionDate || receipt.date);
-                          
-                          // Check if date is valid
-                          if (!receiptDate) {
-                            console.warn('Invalid date for receipt:', receipt.id, receipt.transactionDate || receipt.date);
-                            return; // Skip this receipt
-                          }
-                          
-
-                          
-
-                          
-                          // Create month key and label using local time (consistent with main receipts list)
-                          const year = receiptDate.getFullYear();
-                          const month = receiptDate.getMonth(); // 0-based
-                          const monthKey = `${year}-${month}`;
-                          
-                          // Create month label with proper localization
-                          const monthLabel = receiptDate.toLocaleDateString(undefined, { 
-                            month: 'long', 
-                            year: 'numeric' 
-                          }).replace(/^[a-z]/, letter => letter.toUpperCase());
-                          
-
-                          
-
-                          
-
-
-                          if (monthKey !== currentMonth) {
-                            // Save previous month's receipts if any
-                            if (currentMonthReceipts.length > 0 && currentMonthLabel) {
-                              groupedReceipts.push({
-                                type: 'month',
-                                label: currentMonthLabel,
-                                receipts: currentMonthReceipts
-                              });
-                            }
-                            // Start new month
-                            currentMonth = monthKey;
-                            currentMonthLabel = monthLabel;
-                            currentMonthReceipts = [receipt];
-                          } else {
-                            // Add to current month
-                            currentMonthReceipts.push(receipt);
-                          }
-                        });
-
-                        // Add the last month's receipts
-                        if (currentMonthReceipts.length > 0 && currentMonthLabel) {
-                          groupedReceipts.push({
-                            type: 'month',
-                            label: currentMonthLabel,
-                            receipts: currentMonthReceipts
-                          });
-                        }
-
-                        return groupedReceipts.map((monthGroup, monthIndex) => (
-                          <div key={monthIndex} className="space-y-2">
-                            {/* Month separator */}
-                            <div className="flex items-center gap-2 py-1">
-                              <div className="flex-1 h-px bg-gradient-to-r from-transparent via-blue-400/30 to-transparent"></div>
-                              <span className="text-xs font-semibold text-blue-300/80 px-2 py-1 bg-blue-400/10 rounded-full">
-                                {monthGroup.label}
-                              </span>
-                              <div className="flex-1 h-px bg-gradient-to-r from-transparent via-blue-400/30 to-transparent"></div>
-                            </div>
-                            
-                            {/* Receipts for this month */}
-                            {monthGroup.receipts.map((r, idx) => {
-                          const isExpanded = expandedInCategoryModalId === r.id;
-                          return (
-                            <div key={r.id || idx} className="bg-slate-800/80 rounded-lg shadow-inner overflow-hidden transition-all duration-300 ease-in-out">
-                              <button
-                                className="w-full grid grid-cols-[1fr_auto] items-center gap-x-2 px-3 py-2 text-left"
-                                onClick={() => setExpandedInCategoryModalId(isExpanded ? null : r.id)}
-                              >
-                                {/* Left side: Merchant and Amount */}
-                                <div className="flex flex-col overflow-hidden">
-                                  <span className="font-medium text-white text-sm truncate">{r.merchant || 'Unknown'}</span>
-                                  <div className="flex flex-col gap-0.5">
-                                  <span className="text-xs text-gray-400">{formatCurrency(r.total, r.currency || settings?.baseCurrency || 'EUR')}</span>
-                                    {/* Show base currency equivalent if different */}
-                                    {r.currency && r.currency !== (settings?.baseCurrency || 'EUR') && (
-                                      <AsyncCurrencyConversion amount={r.total} currency={r.currency} date={r.transactionDate || r.date} />
-                                    )}
-                                  </div>
-                                </div>
-                                {/* Right side: Date and Icon */}
-                                <div className="flex items-center gap-3 text-right whitespace-nowrap">
-                                  <div className="flex flex-col items-end">
-                                    <span className="text-xs text-blue-200">{formatDateSafely(r.transactionDate || r.date)}</span>
-                                    <span className="text-xs text-gray-400">{r.paymentMethod || ''}</span>
-                                  </div>
-                                  <div className="transition-transform duration-300" style={{ transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)' }}>
-                                    <ChevronDown className="h-5 w-5 text-blue-400 flex-shrink-0" />
-                                  </div>
-                                </div>
-                              </button>
-                              {/* Expanded content */}
-                              <div
-                                style={{ maxHeight: isExpanded ? '250px' : '0px' }}
-                                    className="transition-all duration-300 ease-in-out"
-                              >
-                                    <div className="p-3 border-t border-white/10">
-                                      <div className="text-xs text-gray-400 mb-1">Items:</div>
-                                      {r.items && r.items.length > 0 ? (
-                                        <ul className="text-xs text-gray-300 space-y-0.5">
-                                          {r.items.map((item, i) => (
-                                            <li key={i} className="flex justify-between">
-                                              <span>{item.name}</span>
-                                              <div className="flex flex-col items-end gap-0.5">
-                                              <span>{formatCurrency(item.price, r.currency || settings?.baseCurrency || 'EUR')}</span>
-                                                {/* Show base currency equivalent if different */}
-                                                {r.currency && r.currency !== (settings?.baseCurrency || 'EUR') && (
-                                                  <AsyncCurrencyConversion amount={item.price} currency={r.currency} date={r.transactionDate || r.date} />
-                                                )}
-                                              </div>
-                                          </li>
-                                        ))}
-                                      </ul>
-                                      ) : (
-                                        <p className="text-xs text-gray-500">No items listed.</p>
-                                      )}
-                                </div>
-                              </div>
-                            </div>
-                          );
-                        })}
-                    </div>
-                        ));
-                      })()}
-                  </div>
-                  </div>
-                </div>
-              </ScrollArea>
-              <DialogFooter className="p-4 border-t border-white/10">
-                <Button onClick={() => setModalOpen(false)}>Close</Button>
-              </DialogFooter>
-            </>
-          )}
-        </DialogContent>
-      </Dialog>
+      <CategoryDetailsModal
+        modalOpen={modalOpen}
+        setModalOpen={setModalOpen}
+        selectedCategory={selectedCategory}
+        receipts={receipts}
+        settings={settings}
+        formatCurrency={formatCurrency}
+        formatDateSafely={formatDateSafely}
+        normalizeToLocalMidnight={normalizeToLocalMidnight}
+        expandedInCategoryModalId={expandedInCategoryModalId}
+        setExpandedInCategoryModalId={setExpandedInCategoryModalId}
+        AsyncCurrencyConversion={AsyncCurrencyConversion}
+      />
       
       {/* Swipe Hint Tooltip */}
-      <SwipeHintTooltip />
+      <SwipeHintTooltip
+        show={showSwipeHint}
+        onDismiss={() => setShowSwipeHint(false)}
+      />
     </div>
   );
 }
 
-export function UploadMethodModal({
-  file,
-  fileInputRef,
-  handleImageChange,
-  onUploadFile,
-  onTakePhoto,
-  onManualEntry,
-  className = '',
-}) {
-  return (
-    <Card className={`w-full max-w-sm p-6 ${className}`}>
-      <CardHeader>
-        <CardTitle className="flex items-center"><Upload className="mr-2" /> Upload Receipt</CardTitle>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-4">
-        <input
-          type="file"
-          id="fileInput"
-          ref={fileInputRef}
-          onChange={handleImageChange}
-          accept="image/*"
-          className="hidden"
-        />
-        <Button onClick={() => document.getElementById('fileInput').click()} className="w-full">
-          <Upload className="mr-2 h-4 w-4" /> Upload File
-        </Button>
-        <Button onClick={onTakePhoto} className="w-full">
-          <Camera className="mr-2 h-4 w-4" /> Take Photo
-        </Button>
-        <Button onClick={onManualEntry} className="w-full">
-          <List className="mr-2 h-4 w-4" /> Enter Manually
-        </Button>
-      </CardContent>
-    </Card>
-  );
-}
-
-export function ExpensesDashboard({ totalExpenses, categoryTotals, formatCurrency, formatDateSafely, settings, receipts = [], selectedCategory, setSelectedCategory, modalOpen, setModalOpen }) {
-  // --- Semi-Circle Doughnut Data ---
-  const sortedCategories = Object.entries(categoryTotals)
-    .map(([cat, data]) => {
-      // Handle both new format (object with baseCurrency) and old format (number)
-      const amount = typeof data === 'object' ? data.baseCurrency : data;
-      return [cat, typeof data === 'object' ? data : { baseCurrency: data, localCurrency: data, currencies: {} }];
-    })
-    .sort(([, a], [, b]) => (a.baseCurrency || 0) - (b.baseCurrency || 0))
-    .reverse(); // Sort descending
-  const categoryLabels = sortedCategories.map(c => c[0]);
-  const categoryData = sortedCategories.map(c => c[1].baseCurrency || c[1]);
-  // Use unified category colors for consistency
-  const chartColors = categoryLabels.map(cat => getCategoryColor(cat));
-
-  // Get current month for context
-  const currentMonth = new Date().toLocaleDateString('en-US', { month: 'short' });
-  const currentYear = new Date().getFullYear();
-
-  const doughnutData = {
-    labels: categoryLabels,
-    datasets: [
-      {
-        data: categoryData,
-        backgroundColor: chartColors,
-        borderWidth: 3,
-        borderColor: '#181e2a',
-        hoverBorderColor: '#6366F1',
-      },
-    ],
-  };
-  // --- UI ---
-  return (
-    <div className="w-full max-w-2xl mx-auto mt-4 mb-4 px-2">
-      <div className="bg-slate-800/60 backdrop-blur-lg shadow-2xl rounded-3xl border border-blue-400/20 p-6 flex flex-col items-center glass-card" style={{overflow: 'hidden', background: 'rgba(30,41,59,0.65)', boxShadow: '0 8px 32px 0 rgba(31, 38, 135, 0.18)', border: '1.5px solid rgba(99,102,241,0.12)', backdropFilter: 'blur(18px)'}}>
-        {/* Modern Semi-Circle Doughnut Chart (restored) */}
-        <div className="w-full flex flex-col items-center justify-center mb-6 relative group no-scrollbar overflow-hidden" style={{height: 140, maxHeight: 180, transition: 'transform 0.3s cubic-bezier(.4,2,.3,1)', willChange: 'transform'}}>
-          <Doughnut
-            data={doughnutData}
-            options={{
-              circumference: 180,
-              rotation: -90,
-              cutout: '80%',
-              animation: { animateRotate: true, duration: 1200, easing: 'easeOutQuart' },
-              plugins: {
-                legend: { display: false },
-                tooltip: {
-                  callbacks: {
-                    label: ctx => {
-                      const value = ctx.raw;
-                      const total = ctx.dataset.data.reduce((a, b) => a + b, 0);
-                      const percent = ((value / total) * 100).toFixed(1);
-                      return `${ctx.label}: ${formatCurrency(value, settings?.baseCurrency || 'EUR')} (${percent}%)`;
-                    },
-                  },
-                  backgroundColor: '#22223b',
-                  titleColor: '#fff',
-                  bodyColor: '#fff',
-                  borderColor: '#6366F1',
-                  borderWidth: 1,
-                  displayColors: false,
-                  padding: 12,
-                },
-              },
-              elements: {
-                arc: {
-                  borderCapStyle: 'round',
-                  borderJoinStyle: 'round',
-                  borderRadius: 99,
-                  shadowBlur: 10,
-                  shadowColor: 'rgba(99,102,241,0.18)',
-                },
-              },
-              responsive: true,
-              maintainAspectRatio: false,
-            }}
-            height={140}
-            style={{overflow: 'hidden'}}
-          />
-          {/* Centered stats overlay */}
-          <div className="absolute left-0 right-0 top-0 flex flex-col items-center justify-center pointer-events-none group-hover:scale-105 group-hover:shadow-blue-400/30 transition-transform duration-200 px-2 md:px-0 no-scrollbar overflow-hidden" style={{height: 100, marginTop: 30}}>
-            {/* Minimalistic month indicator */}
-            <div className="text-[10px] font-medium text-blue-300/70 mb-1 tracking-wider uppercase overflow-hidden" style={{letterSpacing: 1.5}}>
-              {currentMonth} {currentYear}
-            </div>
-            <div className="text-xs font-semibold text-gray-300 mb-1 tracking-wide overflow-hidden" style={{letterSpacing: 1}}>NET EXPENSES</div>
-            <div className={`text-3xl xs:text-4xl md:text-5xl font-extrabold mb-1 text-center ${
-              totalExpenses > 0 ? 'text-green-400' : 'text-white'
-            }`} style={{overflow: 'hidden', whiteSpace: 'nowrap', maxWidth: '100%', padding: '0 0.5rem'}}>
-              {totalExpenses > 0 ? '+' : ''}{formatCurrency(Math.abs(totalExpenses), settings?.baseCurrency || 'EUR')}
-            </div>
-            <div className="text-xs text-gray-400 overflow-hidden">{categoryLabels.length} categories</div>
-            {/* Current month indicator */}
-            <div className="text-[8px] text-blue-400/60 mt-1 tracking-wider uppercase overflow-hidden" style={{letterSpacing: 1}}>
-              THIS MONTH ONLY
-            </div>
-          </div>
-        </div>
-        {/* Category Cards Grid (mobile-friendly) */}
-        <div className="w-full grid grid-cols-1 gap-4 mb-4 md:grid-cols-2">
-          {sortedCategories.map(([cat, categoryData], idx) => {
-            const amt = categoryData.baseCurrency || categoryData; // Handle both new and old format
-            const percent = Math.abs(totalExpenses) > 0 ? Math.min(100, Math.round((Math.abs(amt) / Math.abs(totalExpenses)) * 100)) : 0;
-            const color = getCategoryColor(cat); // Use unified color system
-            // Determine emoji based on category or group name
-            let emoji = '💸'; // default
-            if (cat === 'Groceries') emoji = '🛒';
-            else if (cat === 'Dining') emoji = '🍽️';
-            else if (cat === 'Transportation') emoji = '🚌';
-            else if (cat === 'Bills') emoji = '💡';
-            else if (cat === 'Entertainment') emoji = '🎬';
-            else if (cat === 'Health') emoji = '💊';
-            // Check if this category is actually a group name
-            const isGroupCategory = receipts.some(r => 
-              r.isGroupExpense && 
-              r.note && 
-              r.note.includes('Group: ') && 
-              r.note.split('Group: ')[1].split(' -')[0] === cat
-            );
-            
-            if (isGroupCategory) {
-              emoji = '👥';
-            } else {
-              emoji = '💸';
-            }
-
-            
-            // Get the most common currency for this category
-            let localCurrencyDisplay = '';
-            if (categoryData.currencies && Object.keys(categoryData.currencies).length > 0) {
-              const currencies = Object.entries(categoryData.currencies);
-              if (currencies.length === 1) {
-                // Single currency
-                const [currency, amount] = currencies[0];
-                localCurrencyDisplay = formatCurrency(amount, currency);
-              } else {
-                // Multiple currencies - show the largest amount
-                const largestCurrency = currencies.reduce((a, b) => a[1] > b[1] ? a : b);
-                localCurrencyDisplay = formatCurrency(largestCurrency[1], largestCurrency[0]);
-              }
-            }
-            
-            return (
-              <button
-                key={cat}
-                className="rounded-2xl bg-slate-900/80 shadow-lg p-3 flex flex-col gap-2 items-start border border-blue-400/10 relative overflow-hidden cursor-pointer transition-transform duration-200 hover:scale-105 hover:shadow-blue-400/30 active:scale-95 w-full focus:outline-none focus:ring-2 focus:ring-blue-400"
-                style={{boxShadow: '0 2px 12px 0 rgba(99,102,241,0.08)', border: `1.5px solid ${color}33`, minHeight: 128, touchAction: 'manipulation'}}
-                onClick={() => { setSelectedCategory({ name: cat, amount: amt, percent, color, emoji, categoryData }); setModalOpen(true); }}
-                tabIndex={0}
-                aria-label={`Show details for ${cat}`}
-              >
-                <div className="flex items-center gap-2 mb-1">
-                  <span className="text-2xl">{emoji}</span>
-                  <span className="font-semibold text-base text-white/90">{cat}</span>
-
-                </div>
-                <div className="flex flex-col gap-1">
-                <div className="flex items-end gap-2">
-                  <span className={`text-xl md:text-2xl font-extrabold ${
-                    isGroupCategory ? 'text-white' : 
-                    amt > 0 ? 'text-green-400' : 'text-white'
-                  }`}>
-                    {isGroupCategory ? '' : amt > 0 ? '+' : ''}{formatCurrency(Math.abs(amt), settings?.baseCurrency || 'EUR')}
-                  </span>
-                  <span className={`text-xs font-bold ${
-                    isGroupCategory ? 'text-blue-400' : 'text-green-400'
-                  }`}>{percent}%</span>
-                  </div>
-                  {localCurrencyDisplay && (
-                    <div className="text-xs text-blue-300/80">
-                      {localCurrencyDisplay}
-                    </div>
-                  )}
-                </div>
-                {/* Progress Bar */}
-                <div className="w-full h-2 rounded-full bg-slate-700/60 mt-1 mb-1 overflow-hidden">
-                  <div
-                    className="h-2 rounded-full transition-all duration-700"
-                    style={{ width: `${percent}%`, background: color, boxShadow: `0 0 8px 0 ${color}80` }}
-                  ></div>
-                </div>
-              </button>
-            );
-          })}
-        </div>
-        
-        {/* Map Widget */}
-        <div className="w-full mb-4">
-          <MapWidget onViewMap={() => {
-            // Use a global event to avoid referencing potentially undefined variables
-            try {
-              console.log('[MapWidget] requestTabChange -> map');
-              document.dispatchEvent(new CustomEvent('requestTabChange', { detail: 'map' }));
-            } catch (e) {
-              console.warn('Failed to dispatch requestTabChange', e);
-            }
-          }} />
-        </div>
-      </div>
-    </div>
-  );
-}
-
-export function ReceiptsList({ receipts, renderReceiptCard, isFirestoreLoading, firestoreError, fetchReceipts, currentFunnyMessage, settings }) {
-  // Helper to robustly normalize a date string/object to local midnight
-  const normalizeToLocalMidnight = (d) => {
-    if (!d) return null;
-    if (typeof d.toDate === 'function') { d = d.toDate(); } // Handle Firestore Timestamps
-    if (typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d)) {
-      // Parse as local date (YYYY-MM-DD)
-      const [year, month, day] = d.split('-').map(Number);
-      return new Date(year, month - 1, day);
-    }
-    const date = new Date(d);
-    if (isNaN(date)) return null;
-    return new Date(date.getFullYear(), date.getMonth(), date.getDate());
-  };
-
-  // Sort receipts by transaction date (newest first) for consistent ordering
-  const sortedReceipts = [...receipts].sort((a, b) => {
-    // Prioritize transactionDate over date over createdAt for sorting
-    const dateA = normalizeToLocalMidnight(a.transactionDate || a.date);
-    const dateB = normalizeToLocalMidnight(b.transactionDate || b.date);
-    if (!dateA && !dateB) return 0;
-    if (!dateA) return 1; // Put receipts without dates at the end
-    if (!dateB) return -1;
-    return dateB - dateA; // Newest first
-  });
-
-  return (
-    <Card className="w-full max-w-sm p-6">
-      <CardHeader>
-        <CardTitle>Your Receipts</CardTitle>
-      </CardHeader>
-      <CardContent>
-        {isFirestoreLoading ? (
-          <div className="flex items-center justify-center text-gray-500">
-            <Loader2 className="h-8 w-8 animate-spin mr-2" />
-            <p>{currentFunnyMessage}</p>
-          </div>
-        ) : firestoreError ? (
-          <div className="text-center text-red-500">
-            <p>{firestoreError}</p>
-            <Button onClick={fetchReceipts} className="mt-4">Try Again</Button>
-          </div>
-        ) : receipts.length === 0 ? (
-          <p className="text-center text-gray-500">No receipts yet. Upload one to get started!</p>
-        ) : (
-          <div className="grid grid-cols-1 gap-4 w-full md:max-h-[400px] overflow-y-auto">
-            {sortedReceipts.map((receipt) => renderReceiptCard(receipt))}
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
-function InsightsSection({ receipts = [], categoryTotals = {}, calculatedTotals = {}, formatCurrency, settings }) {
-  const [period, setPeriod] = useState('week');
-  const [currentOffset, setCurrentOffset] = useState(0);
-  const [showComparison, setShowComparison] = useState(false);
-  const [comparisonType, setComparisonType] = useState('category');
-  const [comparisonCategoryA, setComparisonCategoryA] = useState('');
-  const [comparisonCategoryB, setComparisonCategoryB] = useState('');
-  const [comparisonPeriodType, setComparisonPeriodType] = useState('week');
-  const [comparisonPeriodOffset, setComparisonPeriodOffset] = useState(0);
-
-  // Helper to robustly normalize a date string/object to local midnight
-  const normalizeToLocalMidnight = (d) => {
-    if (!d) return null;
-    if (typeof d.toDate === 'function') { d = d.toDate(); }
-    if (typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d)) {
-      const [year, month, day] = d.split('-').map(Number);
-      return new Date(year, month - 1, day);
-    }
-    const date = new Date(d);
-    if (isNaN(date)) return null;
-    return new Date(date.getFullYear(), date.getMonth(), date.getDate());
-  };
-
-  // Navigation functions
-  const navigatePrevious = () => setCurrentOffset(prev => prev - 1);
-  const navigateNext = () => setCurrentOffset(prev => prev + 1);
-  const navigateToCurrent = () => setCurrentOffset(0);
-
-  // --- Date helpers ---
-  const today = new Date();
-  let periodStart, periodEnd, periodLabel;
-  const weekStartsOn = (settings?.weekStartsOn || 'monday').toLowerCase();
-  
-  if (period === 'week') {
-    const targetDate = new Date(today);
-    targetDate.setDate(today.getDate() + (currentOffset * 7));
-    
-    periodStart = new Date(targetDate);
-    periodStart.setHours(0, 0, 0, 0);
-    let dayOfWeek = targetDate.getDay();
-    let offset = weekStartsOn === 'monday' ? (dayOfWeek === 0 ? -6 : 1 - dayOfWeek) : -dayOfWeek;
-    periodStart.setDate(targetDate.getDate() + offset);
-    periodEnd = new Date(periodStart);
-    periodEnd.setDate(periodStart.getDate() + 6);
-    periodEnd.setHours(23, 59, 59, 999);
-    const formatShort = d => d.toLocaleDateString(undefined, { day: '2-digit', month: 'short' });
-    periodLabel = `${formatShort(periodStart)} - ${formatShort(periodEnd)}`.replace(/\b[a-z]/g, letter => letter.toUpperCase());
-  } else if (period === 'month') {
-    const targetDate = new Date(today.getFullYear(), today.getMonth() + currentOffset, 1);
-    periodStart = new Date(targetDate.getFullYear(), targetDate.getMonth(), 1, 0, 0, 0, 0);
-    periodEnd = new Date(targetDate.getFullYear(), targetDate.getMonth() + 1, 0, 23, 59, 59, 999);
-    const formatShort = d => d.toLocaleDateString(undefined, { day: '2-digit', month: 'short' });
-    periodLabel = `${formatShort(periodStart)} - ${formatShort(periodEnd)}`.replace(/\b[a-z]/g, letter => letter.toUpperCase());
-  } else {
-    const targetYear = today.getFullYear() + currentOffset;
-    periodStart = new Date(targetYear, 0, 1, 0, 0, 0, 0);
-    periodEnd = new Date(targetYear, 11, 31, 23, 59, 59, 999);
-    periodLabel = targetYear.toString();
-  }
-
-  // Calculate period receipts with location data
-  const periodReceipts = useMemo(() => {
-    const filteredReceipts = receipts.filter(r => {
-      const d = normalizeToLocalMidnight(r.transactionDate || r.date);
-      return d && d >= periodStart && d <= periodEnd;
-    });
-
-    return filteredReceipts.map(r => {
-      const date = normalizeToLocalMidnight(r.transactionDate || r.date);
-      let totalBaseCurrency = parseFloat(r.total) || 0;
-      
-      if (date && r.currency !== (settings?.baseCurrency || 'EUR') && calculatedTotals.monthlyTotals) {
-        const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-        const monthlyTotal = calculatedTotals.monthlyTotals[monthKey];
-        if (monthlyTotal && monthlyTotal.total > 0) {
-          const originalTotal = filteredReceipts
-            .filter(r2 => {
-              const d2 = normalizeToLocalMidnight(r2.transactionDate || r2.date);
-              return d2 && d2.getMonth() === date.getMonth() && d2.getFullYear() === date.getFullYear();
-            })
-            .reduce((sum, r2) => sum + (parseFloat(r2.total) || 0), 0);
-          
-          if (originalTotal > 0) {
-            totalBaseCurrency = (parseFloat(r.total) / originalTotal) * monthlyTotal.total;
-          }
-        }
-      }
-      
-      return {
-        ...r,
-        totalBaseCurrency,
-        subtotalBaseCurrency: r.subtotal ? parseFloat(r.subtotal) : 0,
-        taxBaseCurrency: r.tax ? parseFloat(r.tax) : 0
-      };
-    });
-  }, [receipts, periodStart, periodEnd, period, currentOffset, calculatedTotals, settings?.baseCurrency]);
-
-
-
-  const allCategories = useMemo(() => {
-    return Array.from(new Set(periodReceipts.map(r => r.category || 'Uncategorized')));
-  }, [periodReceipts]);
-
-  // Use the unified category colors
-  const allCategoryColors = categoryColors;
-
-  // --- Smart Data Structuring for Location-Based Analysis ---
-  let dailyData, labelsWithDates;
-
-  if (period === 'week') {
-    let weekDays = [];
-    if (weekStartsOn === 'monday') {
-      weekDays = [1,2,3,4,5,6,0];
-    } else {
-      weekDays = [0,1,2,3,4,5,6];
-    }
-    const weekDates = weekDays.map((weekday, i) => {
-      const d = new Date(periodStart);
-      d.setDate(periodStart.getDate() + i);
-      return d;
-    });
-    labelsWithDates = weekDates.map(d => ({
-      short: d.toLocaleDateString(undefined, { weekday: 'short' })[0],
-      full: d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric' })
-    }));
-    dailyData = weekDays.map(() => ({ categories: {}, locations: {}, total: 0 }));
-
-    periodReceipts.forEach(r => {
-      const date = normalizeToLocalMidnight(r.transactionDate || r.date);
-      if (date) {
-        const dayIndex = weekDates.findIndex(d => d.getTime() === date.getTime());
-        if (dayIndex !== -1) {
-          const category = r.category || 'Uncategorized';
-          const amount = r.totalBaseCurrency || parseFloat(r.total) || 0;
-          const location = r.place?.display_name || r.addressParsed?.city || 'Unknown';
-          
-          dailyData[dayIndex].categories[category] = (dailyData[dayIndex].categories[category] || 0) + amount;
-          dailyData[dayIndex].locations[location] = (dailyData[dayIndex].locations[location] || 0) + amount;
-          dailyData[dayIndex].total += amount;
-        }
-      }
-    });
-  } else if (period === 'month') {
-    const daysInMonth = periodEnd.getDate();
-    labelsWithDates = Array.from({ length: daysInMonth }, (_, i) => {
-      const d = new Date(periodStart.getFullYear(), periodStart.getMonth(), i + 1);
-      return {
-        short: (i + 1).toString(),
-        full: d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric' })
-      };
-    });
-    dailyData = Array.from({ length: daysInMonth }, () => ({ categories: {}, locations: {}, total: 0 }));
-
-    periodReceipts.forEach(r => {
-      const date = normalizeToLocalMidnight(r.date || r.transactionDate || r.createdAt);
-      if (date) {
-        const dayIndex = date.getDate() - 1;
-        if (dayIndex >= 0 && dayIndex < daysInMonth) {
-          const amount = parseFloat(r.total) || 0;
-          const category = r.category || 'Uncategorized';
-          const location = r.place?.display_name || r.addressParsed?.city || 'Unknown';
-          
-          dailyData[dayIndex].categories[category] = (dailyData[dayIndex].categories[category] || 0) + amount;
-          dailyData[dayIndex].locations[location] = (dailyData[dayIndex].locations[location] || 0) + amount;
-          dailyData[dayIndex].total += amount;
-        }
-      }
-    });
-  } else {
-    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    const targetYear = today.getFullYear() + currentOffset;
-    labelsWithDates = months.map((month, i) => ({
-      short: month,
-      full: `${month} ${targetYear}`
-    }));
-    dailyData = Array.from({ length: 12 }, () => ({ categories: {}, locations: {}, total: 0 }));
-
-    periodReceipts.forEach(r => {
-      const date = normalizeToLocalMidnight(r.transactionDate || r.date);
-      if (date) {
-        const monthIndex = date.getMonth();
-        if (monthIndex >= 0 && monthIndex < 12) {
-          const amount = parseFloat(r.total) || 0;
-          const category = r.category || 'Uncategorized';
-          const location = r.place?.display_name || r.addressParsed?.city || 'Unknown';
-          
-          dailyData[monthIndex].categories[category] = (dailyData[monthIndex].categories[category] || 0) + amount;
-          dailyData[monthIndex].locations[location] = (dailyData[monthIndex].locations[location] || 0) + amount;
-          dailyData[monthIndex].total += amount;
-        }
-      }
-    });
-  }
-  
-  const chartTotals = dailyData.map(d => d.total);
-  const expenses = chartTotals.reduce((a, b) => a + b, 0);
-  const spentPerDay = period === 'week' ? expenses / 7 : 
-                     period === 'month' ? (chartTotals.length > 0 ? expenses / chartTotals.length : 0) :
-                     period === 'year' ? expenses / 365 : 0;
-  
-  // Calculate category and location totals
-  const periodCategoryTotals = {};
-  const periodLocationTotals = {};
-  
-  periodReceipts.forEach(receipt => {
-    const amount = parseFloat(receipt.total) || 0;
-    const category = receipt.category || 'Uncategorized';
-    const location = receipt.place?.display_name || receipt.addressParsed?.city || 'Unknown';
-    
-    periodCategoryTotals[category] = (periodCategoryTotals[category] || 0) + amount;
-    periodLocationTotals[location] = (periodLocationTotals[location] || 0) + amount;
-  });
-  
-  const total = expenses;
-
-  // Calculate dynamic y-axis max value
-  const maxValue = Math.max(...chartTotals);
-  const yAxisMax = maxValue > 0 ? Math.ceil(maxValue * 1.2) : 100;
-
-  // --- Smart Comparison Datasets ---
-  let comparisonBarDatasets = null;
-  if (showComparison) {
-    if (comparisonType === 'category' && comparisonCategoryA && comparisonCategoryB) {
-      // Category comparison: two datasets, one for each category
-      const catData = [comparisonCategoryA, comparisonCategoryB].map((cat, idx) => {
-        let data = labelsWithDates.map((_, i) => 0);
-        periodReceipts.forEach(r => {
-          if ((r.category || 'Uncategorized') === cat) {
-            const date = normalizeToLocalMidnight(r.transactionDate || r.date);
-            let idxDate = -1;
-            if (period === 'week') {
-              const weekDays = [1,2,3,4,5,6,0];
-              const weekDates = weekDays.map((weekday, i) => { 
-                const d = new Date(periodStart); 
-                d.setDate(periodStart.getDate() + i); 
-                return d; 
-              });
-              idxDate = weekDates.findIndex(d => d.getTime() === date.getTime());
-            } else if (period === 'month') {
-              idxDate = date.getDate() - 1;
-            } else {
-              idxDate = date.getMonth();
-            }
-            if (idxDate >= 0 && idxDate < data.length) {
-              data[idxDate] += parseFloat(r.total) || 0;
-            }
-          }
-        });
-        return {
-          label: cat,
-          data,
-          backgroundColor: idx === 0 ? '#6366F1' : '#F59E42',
-          borderRadius: 12,
-          barPercentage: 0.6,
-          categoryPercentage: 0.7,
-          borderSkipped: false,
-          stack: undefined,
-        };
-      });
-      comparisonBarDatasets = catData;
-    } else if (comparisonType === 'period') {
-      // Smart period comparison: compare current period with previous period of same type
-      const currentPeriodData = dailyData.map(dayData => dayData.total);
-      
-      // Calculate previous period data based on comparisonPeriodType
-      let previousPeriodData = [];
-      if (comparisonPeriodType === 'week') {
-        // Compare with previous week
-        const prevWeekStart = new Date(periodStart);
-        prevWeekStart.setDate(periodStart.getDate() - 7);
-        const prevWeekEnd = new Date(periodEnd);
-        prevWeekEnd.setDate(periodEnd.getDate() - 7);
-        
-        const prevWeekReceipts = receipts.filter(r => {
-          const d = normalizeToLocalMidnight(r.transactionDate || r.date);
-          return d && d >= prevWeekStart && d <= prevWeekEnd;
-        });
-        
-        // Build previous week data
-        const weekDays = [1,2,3,4,5,6,0];
-        const prevWeekDates = weekDays.map((weekday, i) => {
-          const d = new Date(prevWeekStart);
-          d.setDate(prevWeekStart.getDate() + i);
-          return d;
-        });
-        
-        previousPeriodData = weekDays.map(() => 0);
-        prevWeekReceipts.forEach(r => {
-          const date = normalizeToLocalMidnight(r.transactionDate || r.date);
-          if (date) {
-            const dayIndex = prevWeekDates.findIndex(d => d.getTime() === date.getTime());
-            if (dayIndex !== -1) {
-              previousPeriodData[dayIndex] += parseFloat(r.total) || 0;
-            }
-          }
-        });
-        
-      } else if (comparisonPeriodType === 'month') {
-        // Compare with previous month
-        const prevMonthStart = new Date(periodStart.getFullYear(), periodStart.getMonth() - 1, 1);
-        const prevMonthEnd = new Date(periodStart.getFullYear(), periodStart.getMonth(), 0);
-        
-        const prevMonthReceipts = receipts.filter(r => {
-          const d = normalizeToLocalMidnight(r.transactionDate || r.date);
-          return d && d >= prevMonthStart && d <= prevMonthEnd;
-        });
-        
-        // Build previous month data
-        const daysInPrevMonth = prevMonthEnd.getDate();
-        previousPeriodData = Array.from({ length: daysInPrevMonth }, () => 0);
-        
-        prevMonthReceipts.forEach(r => {
-          const date = normalizeToLocalMidnight(r.transactionDate || r.date);
-          if (date) {
-            const dayIndex = date.getDate() - 1;
-            if (dayIndex >= 0 && dayIndex < daysInPrevMonth) {
-              previousPeriodData[dayIndex] += parseFloat(r.total) || 0;
-            }
-          }
-        });
-        
-      } else if (comparisonPeriodType === 'year') {
-        // Compare with previous year
-        const prevYearStart = new Date(periodStart.getFullYear() - 1, 0, 1);
-        const prevYearEnd = new Date(periodStart.getFullYear() - 1, 11, 31);
-        
-        const prevYearReceipts = receipts.filter(r => {
-          const d = normalizeToLocalMidnight(r.transactionDate || r.date);
-          return d && d >= prevYearStart && d <= prevYearEnd;
-        });
-        
-        // Build previous year data
-        previousPeriodData = Array.from({ length: 12 }, () => 0);
-        
-        prevYearReceipts.forEach(r => {
-          const date = normalizeToLocalMidnight(r.transactionDate || r.date);
-          if (date) {
-            const monthIndex = date.getMonth();
-            if (monthIndex >= 0 && monthIndex < 12) {
-              previousPeriodData[monthIndex] += parseFloat(r.total) || 0;
-            }
-          }
-        });
-      }
-      
-      // Create comparison datasets
-      comparisonBarDatasets = [
-        {
-          label: `Current ${comparisonPeriodType}`,
-          data: currentPeriodData,
-          backgroundColor: '#6366F1',
-          borderRadius: 12,
-          barPercentage: 0.6,
-          categoryPercentage: 0.7,
-          borderSkipped: false,
-          stack: undefined,
-        },
-        {
-          label: `Previous ${comparisonPeriodType}`,
-          data: previousPeriodData,
-          backgroundColor: '#F59E42',
-          borderRadius: 12,
-          barPercentage: 0.6,
-          categoryPercentage: 0.7,
-          borderSkipped: false,
-          stack: undefined,
-        }
-      ];
-    }
-  }
-
-  // Get all unique categories from the period
-  const allCategoriesFromPeriod = [...new Set(Object.keys(periodCategoryTotals))];
-  
-  // Create stacked bar chart datasets
-  const barDatasets = comparisonBarDatasets || allCategoriesFromPeriod.map(category => {
-    const categoryData = dailyData.map(dayData => dayData.categories[category] || 0);
-    return {
-      label: category,
-      data: categoryData,
-      backgroundColor: allCategoryColors[category] || '#9ca3af',
-      borderRadius: 12,
-      barPercentage: 0.6,
-      categoryPercentage: 0.7,
-      borderSkipped: false,
-      stack: 'stack0',
-    };
-  });
-
-  // Bar chart data
-  const barData = {
-    labels: labelsWithDates.map(l => l.short),
-    datasets: barDatasets,
-  };
-  
-  // Bar chart options
-  const barOptions = {
-    plugins: {
-      legend: { display: false },
-      tooltip: {
-        enabled: true,
-        mode: 'index',
-        intersect: false,
-        backgroundColor: '#1e293b',
-        titleColor: '#f1f5f9',
-        titleFont: { size: 14, weight: 'bold' },
-        bodyColor: '#cbd5e1',
-        bodyFont: { size: 12 },
-        borderColor: 'rgba(99,102,241,0.5)',
-        borderWidth: 1,
-        displayColors: false,
-        padding: 12,
-        cornerRadius: 8,
-        callbacks: {
-          title: function(context) {
-            if (!context[0]) return '';
-            return labelsWithDates[context[0].dataIndex].full;
-          },
-          label: () => null,
-          beforeBody: function(context) {
-            const dataIndex = context[0].dataIndex;
-            const dayData = dailyData[dataIndex];
-            const sortedCategories = Object.entries(dayData.categories).sort((a, b) => b[1] - a[1]);
-            if (sortedCategories.length === 0) return ['No expenses this day.'];
-            return sortedCategories.map(([name, amount]) => `${name}: ${formatCurrency(amount, settings?.baseCurrency || 'EUR')}`);
-          },
-          footer: function(context) {
-            const totalAmount = context[0].raw;
-            if (totalAmount > 0) {
-              return `\nTotal: ${formatCurrency(totalAmount, settings?.baseCurrency || 'EUR')}`;
-            }
-            return '';
-          },
-        },
-      },
-      annotation: {
-        annotations: {
-          averageLine: {
-            type: 'line',
-            yMin: spentPerDay,
-            yMax: spentPerDay,
-            borderColor: 'rgba(120,120,120,0.7)',
-            borderWidth: 2,
-            borderDash: [6, 6],
-            label: {
-              display: true,
-              content: 'Average',
-              color: '#888',
-              backgroundColor: 'transparent',
-              font: { weight: 'bold', size: 10 },
-              position: 'right',
-              padding: 0,
-            },
-            z: 10,
-          },
-        },
-      },
-    },
-    scales: {
-      x: {
-        grid: { drawBorder: false, color: 'rgba(226, 232, 240, 0.1)' },
-        ticks: { color: '#94a3b8', font: { weight: '600' } },
-      },
-      y: {
-        grid: { drawBorder: false, color: 'rgba(226, 232, 240, 0.1)' },
-        beginAtZero: true,
-        max: yAxisMax,
-        ticks: {
-          color: '#94a3b8',
-          callback: function(value) {
-            return formatCurrency(Math.round(value), settings?.baseCurrency || 'EUR');
-          },
-          stepSize: maxValue > 1000 ? Math.ceil(maxValue / 5) : 
-                   maxValue > 100 ? Math.ceil(maxValue / 4) : 
-                   maxValue > 10 ? Math.ceil(maxValue / 3) : 1
-        },
-      },
-    },
-    responsive: true,
-    maintainAspectRatio: false,
-    animation: { duration: 800, easing: 'easeOutQuart' },
-  };
-  
-  // Category legend with percentages
-  const legend = Object.keys(periodCategoryTotals).map((cat, i) => {
-    const percent = total ? ((periodCategoryTotals[cat] / total) * 100).toFixed(1) : 0;
-    return { name: cat, color: allCategoryColors[cat] || '#9ca3af', percent };
-  });
-
-  // Location insights
-  const topLocations = Object.entries(periodLocationTotals)
-    .sort(([,a], [,b]) => b - a)
-    .slice(0, 5)
-    .map(([location, amount]) => ({ location, amount }));
-
-  return (
-    <div className="w-full max-w-4xl mx-auto mt-2 mb-4 px-2">
-      <div className="bg-white/90 text-gray-900 shadow-xl rounded-2xl border border-gray-200 p-6 flex flex-col items-center">
-        {/* Header */}
-        <div className="w-full flex flex-row items-center justify-between mb-4">
-          <div className="text-lg font-bold">Insights</div>
-          <div className="flex items-center gap-2">
-            {/* Previous Arrow */}
-            <button
-              onClick={navigatePrevious}
-              className="w-8 h-8 flex items-center justify-center rounded-lg bg-gray-100 hover:bg-gray-200 transition-colors duration-200 border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-400"
-              title="Previous period"
-            >
-              <svg className="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-              </svg>
-            </button>
-            
-            {/* Period Dropdown */}
-            <select
-              className="bg-gray-100 rounded-lg px-3 py-1 text-sm font-semibold border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-400"
-              value={period}
-              onChange={e => setPeriod(e.target.value)}
-            >
-              <option value="week">Week</option>
-              <option value="month">Month</option>
-              <option value="year">Year</option>
-            </select>
-            
-            {/* Next Arrow - only show when not on current period */}
-            {currentOffset < 0 && (
-              <button
-                onClick={navigateNext}
-                className="w-8 h-8 flex items-center justify-center rounded-lg bg-gray-100 hover:bg-gray-200 transition-colors duration-200 border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-400"
-                title="Next period"
-              >
-                <svg className="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                </svg>
-              </button>
-            )}
-            
-            {/* Current Period Button (only show when not on current) */}
-            {currentOffset !== 0 && (
-              <button
-                onClick={navigateToCurrent}
-                className="px-2 py-1 text-xs font-medium text-blue-600 hover:text-blue-700 hover:bg-blue-50 rounded transition-colors duration-200"
-                title="Go to current period"
-              >
-                Today
-              </button>
-            )}
-
-            {/* Comparison Toggle */}
-            <button
-              onClick={() => setShowComparison(!showComparison)}
-              className={`px-3 py-1 text-xs font-medium rounded transition-colors duration-200 ${
-                showComparison 
-                  ? 'bg-blue-600 text-white' 
-                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-              }`}
-              title="Toggle comparison mode"
-            >
-              Compare
-            </button>
-          </div>
-        </div>
-
-        {/* Comparison Mode Controls */}
-        {showComparison && (
-          <div className="w-full flex flex-col gap-3 mb-4 p-4 bg-blue-50 rounded-xl border border-blue-200">
-            <div className="flex flex-row gap-2 items-center justify-center">
-              <span className="text-xs font-semibold text-blue-700">Compare:</span>
-                             <select
-                 className="bg-white rounded-full px-3 py-1 text-xs font-semibold border border-blue-300 focus:outline-none focus:ring-2 focus:ring-blue-400"
-                 value={comparisonType}
-                 onChange={e => setComparisonType(e.target.value)}
-               >
-                 <option value="category">Categories</option>
-                 <option value="period">Periods</option>
-               </select>
-            </div>
-            
-            
-
-            {/* Category Comparison */}
-            {comparisonType === 'category' && (
-              <div className="flex flex-row gap-2 items-center justify-center">
-                <select
-                  className="bg-blue-100 rounded-full px-3 py-1 text-xs font-semibold border border-blue-300 focus:outline-none"
-                  value={comparisonCategoryA}
-                  onChange={e => setComparisonCategoryA(e.target.value)}
-                >
-                  <option value="">Select category</option>
-                  {allCategories.map(cat => <option key={cat} value={cat}>{cat}</option>)}
-                </select>
-                <span className="text-blue-600 font-bold">vs</span>
-                <select
-                  className="bg-blue-100 rounded-full px-3 py-1 text-xs font-semibold border border-blue-300 focus:outline-none"
-                  value={comparisonCategoryB}
-                  onChange={e => setComparisonCategoryB(e.target.value)}
-                >
-                  <option value="">Select category</option>
-                  {allCategories.map(cat => <option key={cat} value={cat}>{cat}</option>)}
-                </select>
-              </div>
-            )}
-
-                         {/* Smart Period Comparison */}
-             {comparisonType === 'period' && (
-               <div className="flex flex-col gap-2 items-center justify-center">
-                 <div className="text-xs text-blue-600 font-medium">Compare with previous period:</div>
-                 <div className="flex flex-row gap-2 items-center justify-center">
-                   <select
-                     className="bg-blue-100 rounded-full px-3 py-1 text-xs font-semibold border border-blue-300 focus:outline-none"
-                     value={comparisonPeriodType}
-                     onChange={e => setComparisonPeriodType(e.target.value)}
-                   >
-                     <option value="week">Previous Week</option>
-                     <option value="month">Previous Month</option>
-                     <option value="year">Previous Year</option>
-                   </select>
-                 </div>
-               </div>
-             )}
-          </div>
-        )}
-
-        {/* Date range and stats */}
-        <div className="w-full flex flex-row items-center justify-between mb-2 text-xs font-semibold text-gray-500">
-          <span>{periodLabel}</span>
-          <span>SPENT/DAY</span>
-        </div>
-        <div className="w-full flex flex-row items-center justify-between mb-4">
-          <span className="text-2xl font-bold text-red-500">{formatCurrency(expenses, settings?.baseCurrency || 'EUR')}</span>
-          <span className="text-2xl font-bold text-gray-900">{formatCurrency(spentPerDay, settings?.baseCurrency || 'EUR')}</span>
-        </div>
-
-        {/* Bar Chart */}
-        <div className="w-full h-40 md:h-48 mb-4">
-          <Bar data={barData} options={barOptions} />
-        </div>
-
-        {/* Location Insights */}
-        {topLocations.length > 0 && (
-          <div className="w-full mb-4">
-            <h4 className="text-sm font-semibold text-gray-700 mb-2 text-center">📍 Top Spending Locations</h4>
-            <div className="flex flex-wrap justify-center gap-2">
-              {topLocations.map((location, index) => (
-                <div key={index} className="bg-blue-50 rounded-lg px-3 py-2 border border-blue-200">
-                  <div className="text-xs text-blue-600 font-medium truncate max-w-[120px]" title={location.location}>
-                    {location.location}
-                  </div>
-                  <div className="text-sm font-bold text-blue-800">
-                    {formatCurrency(location.amount, settings?.baseCurrency || 'EUR')}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Category Legend */}
-        <div className="flex flex-row flex-wrap items-center justify-center gap-4 mt-2 w-full">
-          {legend.map(l => (
-            <div key={l.name} className="flex items-center gap-2">
-              <span className="inline-block w-6 h-3 rounded-full" style={{background: l.color}}></span>
-              <span className="text-xs font-semibold text-gray-700">{l.name}</span>
-              <span className="text-xs text-gray-400">{l.percent}%</span>
-              <div className="flex flex-col">
-                <span className="text-xs text-gray-500 font-medium">
-                  {formatCurrency(periodCategoryTotals[l.name], settings?.baseCurrency || 'EUR')}
-                </span>
-                {/* Show original currency amounts if available */}
-                {(() => {
-                  const categoryReceipts = periodReceipts.filter(r => (r.category || 'Uncategorized') === l.name);
-                  const currencyTotals = {};
-                  categoryReceipts.forEach(r => {
-                    const currency = r.currency || settings?.baseCurrency || 'EUR';
-                    if (!currencyTotals[currency]) currencyTotals[currency] = 0;
-                    currencyTotals[currency] += parseFloat(r.total) || 0;
-                  });
-                  const currencies = Object.entries(currencyTotals);
-                  if (currencies.length > 1 || (currencies.length === 1 && currencies[0][0] !== (settings?.baseCurrency || 'EUR'))) {
-                    return (
-                      <span className="text-xs text-blue-600">
-                        {currencies.map(([currency, amount], idx) => (
-                          <span key={currency}>
-                            {formatCurrency(amount, currency)}
-                            {idx < currencies.length - 1 ? ' • ' : ''}
-                          </span>
-                        ))}
-                      </span>
-                    );
-                  }
-                  return null;
-                })()}
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
 

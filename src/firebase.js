@@ -1,7 +1,7 @@
 // Import the functions you need from the SDKs you need
 import { initializeApp } from "firebase/app";
-import { getAnalytics } from "firebase/analytics";
-import { getFirestore } from "firebase/firestore"; // Ensure Firestore is imported
+import { getAnalytics, isSupported } from "firebase/analytics";
+import { getFirestore, initializeFirestore } from "firebase/firestore"; // Ensure Firestore is imported
 import { getStorage } from "firebase/storage";
 import { getAuth } from "firebase/auth";
 // TODO: Add SDKs for Firebase products that you want to use
@@ -21,8 +21,32 @@ const firebaseConfig = {
 
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
-const analytics = getAnalytics(app);
-const db = getFirestore(app); // Initialize Firestore and assign to db
+let analytics = null;
+if (
+  typeof window !== 'undefined' &&
+  import.meta.env.PROD &&
+  firebaseConfig.measurementId
+) {
+  isSupported()
+    .then((supported) => {
+      if (supported) {
+        analytics = getAnalytics(app);
+      }
+    })
+    .catch((error) => {
+      console.warn('Firebase analytics disabled:', error);
+    });
+}
+const shouldUseLongPolling = typeof window !== 'undefined' &&
+  /iPad|iPhone|iPod|Safari/i.test(navigator.userAgent) &&
+  !/Chrome|Chromium|CriOS|Edg/i.test(navigator.userAgent);
+
+const db = shouldUseLongPolling
+  ? initializeFirestore(app, {
+      experimentalAutoDetectLongPolling: true,
+      useFetchStreams: false,
+    })
+  : getFirestore(app); // Initialize Firestore and assign to db
 const auth = getAuth(app);
 
 // Normalize storage bucket to avoid CORS issues when misconfigured

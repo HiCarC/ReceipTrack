@@ -41,6 +41,9 @@ module.exports = {
         "bounce-slow-delayed": "bounce-slow-delayed 2s ease-in-out infinite 1s",
         "pulse-ring": "pulse-ring 1.5s cubic-bezier(0.215, 0.61, 0.355, 1) infinite",
       },
+      fontFamily: {
+        display: ["Manrope", "sans-serif"],
+      },
       colors: {
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
@@ -74,6 +77,16 @@ module.exports = {
         card: {
           DEFAULT: "hsl(var(--card))",
           foreground: "hsl(var(--card-foreground))",
+        },
+        app: {
+          bg: "var(--app-bg)",
+          surface: "var(--app-surface)",
+          surface2: "var(--app-surface2)",
+          primary: "var(--app-primary)",
+          muted: "var(--app-muted)",
+          border: "var(--app-border)",
+          fg: "var(--app-fg)",
+          "fg-muted": "var(--app-fg-muted)",
         },
       },
       borderRadius: {

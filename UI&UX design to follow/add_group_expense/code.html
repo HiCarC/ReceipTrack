@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Add Group Expense</title>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@200..800&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#135bec",
+                        "background-light": "#f6f6f8",
+                        "background-dark": "#101622",
+                    },
+                    fontFamily: {
+                        "display": ["Manrope", "sans-serif"]
+                    },
+                    borderRadius: { "DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px" },
+                },
+            },
+        }
+    </script>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+  </head>
+<body class="bg-background-light dark:bg-background-dark font-display">
+<div class="relative flex h-full min-h-screen w-full flex-col overflow-x-hidden max-w-md mx-auto bg-background-light dark:bg-background-dark pb-20">
+<!-- Top App Bar -->
+<div class="sticky top-0 z-50 flex items-center bg-background-light dark:bg-background-dark p-4 pb-2 justify-between border-b border-gray-200 dark:border-gray-800">
+<div class="text-gray-900 dark:text-white flex size-10 shrink-0 items-center justify-center rounded-full hover:bg-gray-200 dark:hover:bg-gray-800 cursor-pointer">
+<span class="material-symbols-outlined text-2xl">close</span>
+</div>
+<h2 class="text-gray-900 dark:text-white text-lg font-bold leading-tight tracking-[-0.015em]">Add Group Expense</h2>
+<button class="flex px-3 py-1.5 rounded-full bg-primary text-white text-sm font-bold leading-normal tracking-[0.015em] shrink-0 hover:bg-primary/90 transition-colors">
+                Save
+            </button>
+</div>
+<!-- Scrollable Content -->
+<div class="flex-1 flex flex-col gap-6 p-4">
+<!-- Amount Input Section -->
+<div class="flex flex-col items-center justify-center py-6">
+<p class="text-gray-500 dark:text-gray-400 text-sm font-medium mb-2">Total Amount</p>
+<div class="flex items-center gap-2">
+<span class="text-gray-400 dark:text-gray-500 text-4xl font-bold">$</span>
+<input autofocus="" class="w-full max-w-[200px] bg-transparent text-center text-5xl font-extrabold text-gray-900 dark:text-white border-none focus:ring-0 p-0 placeholder-gray-300 dark:placeholder-gray-700" placeholder="0.00" type="text"/>
+</div>
+<!-- Currency Selector Pill -->
+<button class="mt-4 flex items-center gap-1 bg-gray-200 dark:bg-gray-800 px-3 py-1 rounded-full text-xs font-bold text-gray-700 dark:text-gray-300">
+                    USD <span class="material-symbols-outlined text-sm">expand_more</span>
+</button>
+</div>
+<!-- Details Card -->
+<div class="flex flex-col bg-white dark:bg-[#1c1f27] rounded-xl shadow-sm overflow-hidden">
+<!-- Description -->
+<div class="flex items-center gap-3 px-4 py-3 border-b border-gray-100 dark:border-gray-800">
+<div class="flex items-center justify-center size-10 rounded-full bg-primary/10 text-primary shrink-0">
+<span class="material-symbols-outlined">description</span>
+</div>
+<input class="flex-1 bg-transparent border-none p-0 text-base text-gray-900 dark:text-white placeholder-gray-400 focus:ring-0 font-medium" placeholder="What is this for?"/>
+</div>
+<!-- Category Selector -->
+<div class="flex items-center gap-3 px-4 py-3 border-b border-gray-100 dark:border-gray-800 cursor-pointer hover:bg-gray-50 dark:hover:bg-[#252a33] transition-colors">
+<div class="flex items-center justify-center size-10 rounded-full bg-orange-500/10 text-orange-500 shrink-0">
+<span class="material-symbols-outlined">restaurant</span>
+</div>
+<div class="flex-1 flex flex-col">
+<span class="text-sm text-gray-500 dark:text-gray-400">Category</span>
+<span class="text-base font-medium text-gray-900 dark:text-white">Food &amp; Drink</span>
+</div>
+<span class="material-symbols-outlined text-gray-400">chevron_right</span>
+</div>
+<!-- Date Selector -->
+<div class="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-gray-50 dark:hover:bg-[#252a33] transition-colors">
+<div class="flex items-center justify-center size-10 rounded-full bg-purple-500/10 text-purple-500 shrink-0">
+<span class="material-symbols-outlined">calendar_today</span>
+</div>
+<div class="flex-1 flex flex-col">
+<span class="text-sm text-gray-500 dark:text-gray-400">Date</span>
+<span class="text-base font-medium text-gray-900 dark:text-white">Today, 10:42 PM</span>
+</div>
+</div>
+</div>
+<!-- Payer Section -->
+<div class="flex flex-col gap-3">
+<p class="text-sm font-bold text-gray-500 dark:text-gray-400 px-1 uppercase tracking-wider">Paid By</p>
+<div class="flex items-center gap-3 overflow-x-auto pb-2 scrollbar-hide">
+<!-- Active User (You) -->
+<button class="flex flex-col items-center gap-2 group min-w-[70px]">
+<div class="relative size-14 rounded-full p-0.5 border-2 border-primary bg-background-light dark:bg-background-dark">
+<img alt="Your Avatar" class="size-full rounded-full object-cover" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAYQ7toYL4XJibYoStxNgq1pv3AJ3BpKYijiexzrUFYezVCv4GrI3X9eY1YdpQdPHoSOUCZihG3u-lJUod9VJf1zM6maogjlYeQhlrSLxvwK7OIDwHVSC-pUa8CM6TInYHIvZfwv-R24yDBn05ajVgjLkg3uI7ORFJtQGrb5z9a5PmWZ-P5LlUoIgk1DdgVi9ee914-s4Sb9tpeeshvoylRXVzpzcUR4jN9Ol8-iTYeAX0iwNIK24t_x9rCe-blKk49xWpDzwvCelDQ"/>
+<div class="absolute -bottom-1 -right-1 bg-primary text-white rounded-full p-0.5 border-2 border-white dark:border-background-dark">
+<span class="material-symbols-outlined text-[12px] font-bold block">check</span>
+</div>
+</div>
+<span class="text-xs font-bold text-primary">You</span>
+</button>
+<!-- Other User 1 -->
+<button class="flex flex-col items-center gap-2 group min-w-[70px] opacity-60 hover:opacity-100 transition-opacity">
+<div class="size-14 rounded-full p-0.5 border-2 border-transparent group-hover:border-gray-300 dark:group-hover:border-gray-600">
+<img alt="Alice Avatar" class="size-full rounded-full object-cover grayscale" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDZ_T34l4-FKpZCvk771WYQkDjG1zFZ-evpMpT0xAXS_3WJAMBq4TOui_ecNNcYfaDz3CEQGmStEUvl_Ys8s-hzNp9zjNazVB-bsP9fh6AfTWzwbQWHrpPwYYgDgFk5qoLHplrHs5Sw1Ye58UnmecnfQjistqTQc-hXS7by-TKy_PBBh0yP8J8kVxmrOgcXWCYGkYV-hNPHQKS8U6AQb7zcmxVmD6irnn_6z4XHodm3toeEWRFmzin7BKcawSjbdp_Rx67jzEGZxxWe"/>
+</div>
+<span class="text-xs font-medium text-gray-600 dark:text-gray-400">Alice</span>
+</button>
+<!-- Other User 2 -->
+<button class="flex flex-col items-center gap-2 group min-w-[70px] opacity-60 hover:opacity-100 transition-opacity">
+<div class="size-14 rounded-full p-0.5 border-2 border-transparent group-hover:border-gray-300 dark:group-hover:border-gray-600">
+<img alt="Bob Avatar" class="size-full rounded-full object-cover grayscale" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCrE9MmrIIDGsUuEBLNKwiFedLl_FiX8zqu5zdZjpBMwIZkI8_ddJwAdAthk0N6yZ3ZwJvZzpjzUEqbTDZ7Ccq1Axi2iHU8QzB-Z1oBiptKKJezKnn2Vt-MfCBtN1qTxjA4bRpo1H4KMEjXMp1JjPWBI8Tzjc8ppFZrZg9-XCxlFjfWiWIeXlKcxVvhr_6QNoRdoIQKap_mCah2IcFZZUf2v1WZqEGoaRwvBZnK8psSWvX5NqKf-LcMtKIHm6onVVAcEx9LJIO5-hUx"/>
+</div>
+<span class="text-xs font-medium text-gray-600 dark:text-gray-400">Bob</span>
+</button>
+<!-- Other User 3 -->
+<button class="flex flex-col items-center gap-2 group min-w-[70px] opacity-60 hover:opacity-100 transition-opacity">
+<div class="size-14 rounded-full p-0.5 border-2 border-transparent group-hover:border-gray-300 dark:group-hover:border-gray-600">
+<img alt="Charlie Avatar" class="size-full rounded-full object-cover grayscale" src="https://lh3.googleusercontent.com/aida-public/AB6AXuC6Zv4UTrwimVoUO-jID0C4I1oLo5XGTw5K7ylTms055q1nWJmfBKi4zeOGa5yws4w8eS8YzQQbG1bjOKdCJryrgOAvJ7IIciTm4l-8SbKygKlICPGApN5mCXzhhD2SKA0QghVzCmrl3DsEXtJ8ANUFioavqURFSv0j-O2MvKliwLyBoengFwST7BdAmJRrmLGIQ8xq7wcUY3O8EBD061pZBit62Hb5UvAvtpIpV5SfP8GFyfVpzGtUSGyUHnH38KdLZzhaEdpRKV_d"/>
+</div>
+<span class="text-xs font-medium text-gray-600 dark:text-gray-400">Charlie</span>
+</button>
+</div>
+</div>
+<!-- Split Section -->
+<div class="flex flex-col gap-4">
+<div class="flex items-center justify-between px-1">
+<p class="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Split With</p>
+<button class="text-primary text-sm font-bold">Advanced Split</button>
+</div>
+<!-- Split Type Toggle -->
+<div class="bg-gray-200 dark:bg-[#1c1f27] p-1 rounded-lg flex items-center">
+<button class="flex-1 py-1.5 px-3 rounded-md bg-white dark:bg-[#282e39] text-gray-900 dark:text-white text-sm font-bold shadow-sm transition-all text-center">
+                        = Equally
+                    </button>
+<button class="flex-1 py-1.5 px-3 rounded-md text-gray-500 dark:text-gray-400 text-sm font-medium hover:text-gray-900 dark:hover:text-white transition-all text-center">
+                        % Percent
+                    </button>
+<button class="flex-1 py-1.5 px-3 rounded-md text-gray-500 dark:text-gray-400 text-sm font-medium hover:text-gray-900 dark:hover:text-white transition-all text-center">
+                        $ Exact
+                    </button>
+</div>
+<!-- Member List -->
+<div class="bg-white dark:bg-[#1c1f27] rounded-xl overflow-hidden divide-y divide-gray-100 dark:divide-gray-800">
+<!-- You -->
+<div class="flex items-center p-3 gap-3">
+<img alt="Your Avatar" class="size-10 rounded-full object-cover" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDxcnnFEBPaXWN6I0q9ntr2C5-iM_i7DP9LiBhQBSiZ-EZCay2ao-HVJSBKhiCrZje0Vkte_G_o69N7skqjqO4CbEe5cwzzQDmn2xeLe2fR8XzR_QhOO5JcgFCr8aeQOdWhWOfwjnFpABG6pC80w0btNkGBlyQGRUZ1Q3KV_gOS8NFyRzWZliLhQMYJbj0MNrWCZBQrMLQxcNzqipYELn5WolcOPTdwZQhnbPBZRDfCXGXJlHGXMEuoNkEK36w5QpwLz6Xi4zCnmbQB"/>
+<div class="flex-1">
+<p class="text-sm font-bold text-gray-900 dark:text-white">You</p>
+<p class="text-xs text-gray-500 dark:text-gray-400">$0.00</p>
+</div>
+<div class="flex items-center">
+<input checked="" class="size-5 rounded border-gray-300 bg-gray-100 text-primary focus:ring-2 focus:ring-primary dark:border-gray-600 dark:bg-gray-700 dark:ring-offset-gray-800 cursor-pointer" type="checkbox"/>
+</div>
+</div>
+<!-- Alice -->
+<div class="flex items-center p-3 gap-3">
+<img alt="Alice Avatar" class="size-10 rounded-full object-cover" src="https://lh3.googleusercontent.com/aida-public/AB6AXuB4PsCbbkrerkWMuBDgygXeqMlSRGjLm21NyS04_WdG-7BFXOmiietTC8npLW6zCwT3-8mGWirP71uYv9csRn6nutxjgv8Xeav5BYXei19T6h6dbKtGVDEFC3AETlFblGbeOmWhUdL-QPoBdn3_jyEfW5nTwalUvyBl4hpr8-JyB-A9pDwGqXvdtAFapAF0oo7L3zOaoKEeuKMDSC-WAsLp_FC1rp6WhpmSRfHoDfZ3ciMxYwwooF5itmB6skOASMewosC-BcASChw1"/>
+<div class="flex-1">
+<p class="text-sm font-bold text-gray-900 dark:text-white">Alice</p>
+<p class="text-xs text-gray-500 dark:text-gray-400">$0.00</p>
+</div>
+<div class="flex items-center">
+<input checked="" class="size-5 rounded border-gray-300 bg-gray-100 text-primary focus:ring-2 focus:ring-primary dark:border-gray-600 dark:bg-gray-700 dark:ring-offset-gray-800 cursor-pointer" type="checkbox"/>
+</div>
+</div>
+<!-- Bob -->
+<div class="flex items-center p-3 gap-3">
+<img alt="Bob Avatar" class="size-10 rounded-full object-cover" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBnTDdPF4hETG-c5p1KCt6Y3AtWp5YMcdHFUDkkERqVBi7dzAIkIDN3xdsgVD7_Kle5z84rjph2lnSIgbC0k_UxT7McRTYbyuyjfYTwYDWRYO1-eUFipLnXhJm4K1d1h0zrlf-z_jktEhhUpbK3nrbRRPV9PD8ZIYS9K4G8NnZrE4cAIVa4BU58Hq_M3a1mK_T4nunJUPnMBVkYMx91sn2ud6C-D3uWApW4TGDa7X6L03XXC7M8Lcd_9IWTfSQYuGLQiRIRnRn9tIzm"/>
+<div class="flex-1">
+<p class="text-sm font-bold text-gray-900 dark:text-white">Bob</p>
+<p class="text-xs text-gray-500 dark:text-gray-400">$0.00</p>
+</div>
+<div class="flex items-center">
+<input checked="" class="size-5 rounded border-gray-300 bg-gray-100 text-primary focus:ring-2 focus:ring-primary dark:border-gray-600 dark:bg-gray-700 dark:ring-offset-gray-800 cursor-pointer" type="checkbox"/>
+</div>
+</div>
+<!-- Charlie (Unchecked) -->
+<div class="flex items-center p-3 gap-3 opacity-60">
+<img alt="Charlie Avatar" class="size-10 rounded-full object-cover grayscale" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAomTOPrUqNoH5K0aLKvfl7WxIhdQUcu0MJg6bqFLRjNISCcoKELWhqOfemI7pdgF5KNUUB9q63qAgEaXOC3o2c5dGl3-LWI6n58IA_OwhwVVGaDEJ-KuV7ySdU0KLdzgBRFNc9Dj3lxLorQYw3_Vr50JjNTN_K1usUTlK_kRgRDFzltFQSM4m2LF_aEhPW3VBOUpT4jhlSVTji52OAj08JmDak9sAHx-stpp_uyevWFiZOdPecrdyh6YgARdRIbh30Pp73RO8vtXUu"/>
+<div class="flex-1">
+<p class="text-sm font-bold text-gray-900 dark:text-white">Charlie</p>
+<p class="text-xs text-gray-500 dark:text-gray-400">Exempt</p>
+</div>
+<div class="flex items-center">
+<input class="size-5 rounded border-gray-300 bg-gray-100 text-primary focus:ring-2 focus:ring-primary dark:border-gray-600 dark:bg-gray-700 dark:ring-offset-gray-800 cursor-pointer" type="checkbox"/>
+</div>
+</div>
+</div>
+</div>
+<!-- Receipt Attachment Area -->
+<div class="mt-2">
+<button class="w-full border-2 border-dashed border-gray-300 dark:border-gray-700 rounded-xl p-4 flex flex-col items-center justify-center gap-2 hover:bg-gray-50 dark:hover:bg-[#1c1f27] transition-colors group">
+<div class="size-10 rounded-full bg-gray-100 dark:bg-[#282e39] flex items-center justify-center text-gray-500 dark:text-gray-400 group-hover:text-primary transition-colors">
+<span class="material-symbols-outlined">center_focus_strong</span>
+</div>
+<span class="text-sm font-bold text-gray-600 dark:text-gray-300">Scan Receipt</span>
+<span class="text-xs text-gray-400 dark:text-gray-500">Auto-extract items &amp; prices</span>
+</button>
+</div>
+</div>
+<!-- Sticky Bottom Action (if needed, but TopBar has Save) -->
+<!-- Just adding some extra space at bottom for scrolling -->
+<div class="h-10"></div>
+</div>
+</body></html>

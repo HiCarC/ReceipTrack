@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Group Balances</title>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@200..800&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#135bec",
+                        "background-light": "#f6f6f8",
+                        "background-dark": "#101622",
+                        "surface-dark": "#1c1f27",
+                        "secondary-text": "#9da6b9",
+                        "danger": "#ef4444",
+                    },
+                    fontFamily: {
+                        "display": ["Manrope", "sans-serif"]
+                    },
+                    borderRadius: {
+                        "DEFAULT": "0.5rem", 
+                        "lg": "0.75rem", 
+                        "xl": "1rem", 
+                        "2xl": "1.5rem",
+                        "full": "9999px"
+                    },
+                },
+            },
+        }
+    </script>
+<style>
+        /* Custom scrollbar for webkit */
+        ::-webkit-scrollbar {
+            width: 4px;
+        }
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #3b4354;
+            border-radius: 4px;
+        }
+    </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+  </head>
+<body class="bg-background-light dark:bg-background-dark font-display text-slate-900 dark:text-white overflow-x-hidden min-h-screen flex flex-col">
+<!-- Top App Bar -->
+<header class="sticky top-0 z-50 flex items-center justify-between bg-background-light/95 dark:bg-background-dark/95 backdrop-blur-md px-4 py-3 border-b border-gray-200 dark:border-gray-800">
+<div class="flex items-center gap-2">
+<button class="flex items-center justify-center w-10 h-10 rounded-full hover:bg-black/5 dark:hover:bg-white/5 transition-colors text-slate-900 dark:text-white">
+<span class="material-symbols-outlined text-2xl">arrow_back_ios_new</span>
+</button>
+</div>
+<h1 class="text-lg font-bold leading-tight tracking-tight text-center flex-1 truncate px-2">Ski Trip 2024</h1>
+<div class="flex items-center gap-2">
+<button class="flex items-center justify-center w-10 h-10 rounded-full hover:bg-black/5 dark:hover:bg-white/5 transition-colors text-slate-900 dark:text-white">
+<span class="material-symbols-outlined text-2xl">history</span>
+</button>
+</div>
+</header>
+<main class="flex-1 flex flex-col px-4 pb-24 max-w-md mx-auto w-full">
+<!-- Hero Section: User Status Card -->
+<div class="mt-6">
+<div class="relative overflow-hidden rounded-2xl bg-surface-dark shadow-lg border border-gray-800">
+<!-- Decorative background gradient -->
+<div class="absolute top-0 right-0 -mt-8 -mr-8 w-32 h-32 bg-primary/20 rounded-full blur-3xl"></div>
+<div class="absolute bottom-0 left-0 -mb-8 -ml-8 w-32 h-32 bg-primary/10 rounded-full blur-3xl"></div>
+<div class="relative p-6 flex items-center justify-between gap-4 z-10">
+<div class="flex flex-col gap-2">
+<span class="text-secondary-text text-sm font-medium tracking-wide uppercase">Total Balance</span>
+<div class="flex items-baseline gap-1">
+<span class="text-primary text-4xl font-extrabold tracking-tight">+$134.50</span>
+</div>
+<p class="text-secondary-text text-sm font-medium">You are owed in total</p>
+</div>
+<!-- Circular Progress / Status Indicator Visual -->
+<div class="shrink-0 relative w-16 h-16 flex items-center justify-center">
+<svg class="w-full h-full transform -rotate-90" viewbox="0 0 36 36">
+<path class="text-gray-800" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="currentColor" stroke-width="3"></path>
+<path class="text-primary" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="currentColor" stroke-dasharray="75, 100" stroke-linecap="round" stroke-width="3"></path>
+</svg>
+<span class="material-symbols-outlined text-primary absolute text-2xl">trending_up</span>
+</div>
+</div>
+</div>
+</div>
+<!-- Action Panel: Simplify Debts -->
+<div class="mt-6">
+<div class="flex items-center justify-between gap-4 rounded-xl border border-gray-200 dark:border-[#3b4354] bg-white dark:bg-[#111318] p-4 shadow-sm">
+<div class="flex items-center gap-3">
+<div class="flex h-10 w-10 items-center justify-center rounded-full bg-blue-100 dark:bg-blue-900/30 text-primary">
+<span class="material-symbols-outlined">call_merge</span>
+</div>
+<div class="flex flex-col">
+<p class="text-slate-900 dark:text-white text-sm font-bold leading-tight">Simplify Debts</p>
+<p class="text-slate-500 dark:text-[#9da6b9] text-xs font-normal leading-normal">Minimize transactions</p>
+</div>
+</div>
+<label class="relative flex h-[24px] w-[44px] cursor-pointer items-center rounded-full border-none bg-gray-300 dark:bg-[#282e39] p-0.5 has-[:checked]:justify-end has-[:checked]:bg-primary transition-all duration-200">
+<div class="h-[20px] w-[20px] rounded-full bg-white shadow-sm transition-all duration-200"></div>
+<input checked="" class="hidden" type="checkbox"/>
+</label>
+</div>
+</div>
+<!-- Section Header: Your Debts -->
+<div class="mt-8 mb-2 flex items-center justify-between px-1">
+<h3 class="text-slate-900 dark:text-white text-lg font-bold leading-tight">Your Transactions</h3>
+<button class="text-primary text-sm font-medium hover:text-blue-400">View all</button>
+</div>
+<!-- List Items: Direct Balances -->
+<div class="flex flex-col gap-3">
+<!-- Item 1: Someone owes you (Positive) -->
+<div class="group relative flex items-center justify-between gap-4 rounded-xl bg-white dark:bg-surface-dark p-4 shadow-sm border border-transparent hover:border-gray-200 dark:hover:border-gray-700 transition-all">
+<div class="flex items-center gap-4">
+<div class="relative">
+<div class="bg-center bg-no-repeat aspect-square bg-cover rounded-full h-12 w-12 border-2 border-white dark:border-gray-800 shadow-sm" data-alt="Portrait of Sarah smiling outdoors" style='background-image: url("https://lh3.googleusercontent.com/aida-public/AB6AXuB_mR0UdQElPQ7xe9ReFec3ZJREyxRRmxGmvdf8mSDRDMgpT64KPvGQIY2W58bfPFbNqfkzyLfzYvjOuMa234b_Kl3v88DHntYYdsDVNCpOUYIf-sKhHBq9CqPxicLPkWlwp_a4347_9dksmJmtNHfjRNPVxtxceCf8BmcHwacG9Ki_F429nVmlG8YuB_uRypR8YhpSnaMmluJiAVwEqH6GNUdOLey9VHV1XVolJKc1ZZyU71B9XChkTVp5pjLq7ktmoElsvf5T0aMa");'></div>
+<div class="absolute -bottom-1 -right-1 bg-green-500 w-4 h-4 rounded-full border-2 border-white dark:border-surface-dark"></div>
+</div>
+<div class="flex flex-col justify-center">
+<p class="text-slate-900 dark:text-white text-base font-semibold leading-snug">Sarah Jenkins</p>
+<p class="text-primary text-sm font-medium leading-snug">owes you $50.00</p>
+</div>
+</div>
+<button class="flex h-9 min-w-[80px] cursor-pointer items-center justify-center rounded-lg bg-gray-100 dark:bg-[#282e39] hover:bg-gray-200 dark:hover:bg-[#3b4354] text-slate-700 dark:text-white text-xs font-bold transition-colors">
+                    Remind
+                </button>
+</div>
+<!-- Item 2: You owe someone (Negative) -->
+<div class="group relative flex items-center justify-between gap-4 rounded-xl bg-white dark:bg-surface-dark p-4 shadow-sm border border-transparent hover:border-gray-200 dark:hover:border-gray-700 transition-all">
+<div class="flex items-center gap-4">
+<div class="relative">
+<div class="bg-center bg-no-repeat aspect-square bg-cover rounded-full h-12 w-12 border-2 border-white dark:border-gray-800 shadow-sm" data-alt="Portrait of Mike with sunglasses" style='background-image: url("https://lh3.googleusercontent.com/aida-public/AB6AXuDjUI2X-AIay_N3z5Pyqf8hN6oCkZjds_3oPllHO1TNh8BsVHF6I2KFbdS5QqVdCejjX64cApXWFQbWfXnTJVAKd5H_9Gq7VfShszw1dH9WlEPV1004fq-UCm-Dk-EmbJcOC2vD0wAVAThd-h_t1LNGJgjDzzz0jD4Mbn4yzqNf3eSpfR0AD8K5MPtbMC0OP3VZIg52kw7qoksbOvhxcCXkVE95xqTf8XFNWD7L2mAQf7xRpJdCMX2XQbvAstUYdERn5TCWBA3Mb4Ll");'></div>
+</div>
+<div class="flex flex-col justify-center">
+<p class="text-slate-900 dark:text-white text-base font-semibold leading-snug">Mike Ross</p>
+<p class="text-danger text-sm font-medium leading-snug">you owe $20.00</p>
+</div>
+</div>
+<button class="flex h-9 min-w-[80px] cursor-pointer items-center justify-center rounded-lg bg-primary hover:bg-blue-600 text-white text-xs font-bold shadow-lg shadow-blue-900/20 transition-colors">
+                    Pay
+                </button>
+</div>
+</div>
+<!-- Section Header: Other Balances -->
+<div class="mt-8 mb-2 px-1">
+<h3 class="text-slate-900 dark:text-white text-lg font-bold leading-tight">Other Balances</h3>
+<p class="text-secondary-text text-xs mt-1">Balances that don't involve you directly.</p>
+</div>
+<!-- List Items: Indirect Balances (Informational) -->
+<div class="flex flex-col gap-3 opacity-90">
+<!-- Item 3: Neutral/Third Party -->
+<div class="group relative flex items-center justify-between gap-4 rounded-xl bg-white dark:bg-surface-dark/60 p-3 shadow-sm border border-transparent">
+<div class="flex items-center gap-3">
+<div class="flex -space-x-2 overflow-hidden pl-1">
+<div class="inline-block h-8 w-8 rounded-full ring-2 ring-white dark:ring-[#1c1f27] bg-cover bg-center" data-alt="Portrait of John" style='background-image: url("https://lh3.googleusercontent.com/aida-public/AB6AXuCT8MRHa9RL7s06bMIQFfQro4RozxZoHLqL8Zc0TVpyQuXsZhq1yMJ2VaaUTEsGKjVMuqkVcTvq50cyeWebdYXZLs6VXODzWNoI910W6YWaReBxTRtzCbtR-1qpxtEHgrm-21LgDkOJl8olNR_UYYX7TlgXO9bYqFsFhKZeNwUOhNZBtT1PLrM4iTyD3xXE1DOwhBBM10_JR_yeBVjAPmnOJkCy-8-JkZA1vrBstNqG3Eh287ZxtgXq0uYyR0ud-QmVaIwuuRI9zf-5");'></div>
+<div class="inline-block h-8 w-8 rounded-full ring-2 ring-white dark:ring-[#1c1f27] bg-cover bg-center" data-alt="Portrait of Sarah" style='background-image: url("https://lh3.googleusercontent.com/aida-public/AB6AXuCtf8zTuPwGdsTnEgt9KTeAwQMHtOGRRU4456xDgWj4gyoqgbBaNyTmNdwELCFXEuxV2V4pfsd8kckVPV8d4iy-hU9sHQQodsk5-kcveLpoOZXp3WzOzVb7ZbZ5aKZRRv_-Q8e032Nvce8W08cbI34tGHFWygsUjyuhNoGHE5fv7Gg1dUlHDZ387vy7XTtvSc9RZqUDKQLi-NuG5QbvA5qapPTQ5r7ru7r_Z-FyZMN_6B7Vf2MXEOfoCWPP4KNC9DGalngDnAsw2Fk_");'></div>
+</div>
+<div class="flex flex-col justify-center">
+<p class="text-slate-700 dark:text-gray-300 text-sm font-medium leading-snug">
+<span class="text-slate-900 dark:text-white font-semibold">John</span> owes Sarah
+                        </p>
+<p class="text-secondary-text text-xs font-normal leading-snug">$15.00 for Dinner</p>
+</div>
+</div>
+<!-- Status Icon instead of button -->
+<div class="h-8 w-8 flex items-center justify-center rounded-full bg-gray-100 dark:bg-white/5 text-gray-400">
+<span class="material-symbols-outlined text-sm">visibility</span>
+</div>
+</div>
+<!-- Item 4: Another Third Party -->
+<div class="group relative flex items-center justify-between gap-4 rounded-xl bg-white dark:bg-surface-dark/60 p-3 shadow-sm border border-transparent">
+<div class="flex items-center gap-3">
+<div class="flex -space-x-2 overflow-hidden pl-1">
+<div class="inline-block h-8 w-8 rounded-full ring-2 ring-white dark:ring-[#1c1f27] bg-cover bg-center" data-alt="Portrait of Lisa" style='background-image: url("https://lh3.googleusercontent.com/aida-public/AB6AXuDWwdUmnh-2nSZctycA52CYsLRSjNl3s3mxwxiw7k-gkgOToOPityqrCYkQb-mlxKdwuaMc_TU57U3o8CvDxFuguNjWzgFXkTb_IKuBPfSjFwY_lfC9LB3VvwfWhmXeedkkX-ylfAoRMOxqCk4-eu3m3ssfEH5dFVskSESJm4YIbLoQBv0T8oQ29XzkDpdw5P1sNjJt3smzqmAfEp-qIUiIFrQp9H5_2VDreg9_-I4Kwc1XAOepJwdQGx6qJjT8O1Cg_ZCh4AQDdyUB");'></div>
+<div class="inline-block h-8 w-8 rounded-full ring-2 ring-white dark:ring-[#1c1f27] bg-cover bg-center" data-alt="Portrait of Mike" style='background-image: url("https://lh3.googleusercontent.com/aida-public/AB6AXuB7bXUUw3DbKh3DPWISW1Esc_ffAQnF8qy0Fnyg61WtVwW9bkmytz-baidtJ0ruu36perQ2hbbafsMiemlalv6CAUfPL6BqpYxItBgP2gV_YkLWuiJ1RGybhgbwsoBz29pm27bV0grrXKQJRMgFUKhcyAUzjIw-4UmX3GB71AjbpqIlhqAo71U7NLick37wSyzt2mqwQhvD7uMknkQ561BMed-XIf-TNwDqTW3SsA2Fbvt9Wr2BhwB86z0XoE_5hYlei7Qv8kCerVZ9");'></div>
+</div>
+<div class="flex flex-col justify-center">
+<p class="text-slate-700 dark:text-gray-300 text-sm font-medium leading-snug">
+<span class="text-slate-900 dark:text-white font-semibold">Lisa</span> owes Mike
+                        </p>
+<p class="text-secondary-text text-xs font-normal leading-snug">$120.00 for Cabin Rental</p>
+</div>
+</div>
+<div class="h-8 w-8 flex items-center justify-center rounded-full bg-gray-100 dark:bg-white/5 text-gray-400">
+<span class="material-symbols-outlined text-sm">visibility</span>
+</div>
+</div>
+</div>
+</main>
+<!-- Sticky Footer / FAB -->
+<div class="fixed bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-background-light via-background-light to-transparent dark:from-background-dark dark:via-background-dark dark:to-transparent z-50 pointer-events-none flex justify-center pb-8">
+<button class="pointer-events-auto shadow-[0_8px_30px_rgb(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgba(19,91,236,0.25)] flex w-full max-w-sm cursor-pointer items-center justify-center gap-2 rounded-xl h-14 bg-primary hover:bg-blue-600 active:scale-[0.98] transition-all text-white text-base font-bold leading-normal">
+<span class="material-symbols-outlined">payments</span>
+<span>Settle Up</span>
+</button>
+</div>
+</body></html>

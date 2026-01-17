@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+
+<html class="dark"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Receipts List</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;700;800&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#135bec",
+                        "background-light": "#f6f6f8",
+                        "background-dark": "#101622",
+                    },
+                    fontFamily: {
+                        "display": ["Manrope", "sans-serif"]
+                    },
+                    borderRadius: { "DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px" },
+                },
+            },
+        }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+    </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+  </head>
+<body class="bg-background-light dark:bg-background-dark font-display antialiased">
+<div class="relative flex min-h-screen w-full flex-col mx-auto bg-background-light dark:bg-background-dark overflow-x-hidden max-w-[480px] shadow-2xl border-x dark:border-[#1c1f27] border-gray-200">
+<!-- Top App Bar -->
+<header class="sticky top-0 z-30 bg-background-light/95 dark:bg-background-dark/95 backdrop-blur-md pt-safe">
+<div class="flex items-center justify-between p-4 pb-2">
+<div class="flex items-center gap-3">
+<button class="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gray-200 dark:bg-[#1c1f27] text-gray-600 dark:text-white transition-colors">
+<span class="material-symbols-outlined text-[24px]">person</span>
+<div class="absolute top-0 right-0 h-3 w-3 rounded-full bg-red-500 border-2 border-background-light dark:border-background-dark"></div>
+</button>
+<h2 class="text-gray-900 dark:text-white text-xl font-bold leading-tight tracking-[-0.015em]">My Receipts</h2>
+</div>
+<div class="flex items-center justify-end gap-2">
+<button class="flex h-10 w-10 cursor-pointer items-center justify-center rounded-full bg-transparent hover:bg-gray-200 dark:hover:bg-[#1c1f27] text-gray-900 dark:text-white transition-colors">
+<span class="material-symbols-outlined text-[24px]">sort</span>
+</button>
+</div>
+</div>
+<!-- Search Bar -->
+<div class="px-4 pb-4">
+<div class="relative flex w-full items-center">
+<div class="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none">
+<span class="material-symbols-outlined text-gray-400">search</span>
+</div>
+<input class="block w-full rounded-xl border-none bg-white dark:bg-[#1c1f27] py-3.5 pl-10 pr-4 text-sm text-gray-900 dark:text-white placeholder-gray-400 shadow-sm focus:ring-2 focus:ring-primary focus:outline-none" placeholder="Search merchant or amount" type="text" value=""/>
+<div class="absolute inset-y-0 right-0 flex items-center pr-3">
+<button class="p-1 rounded-md hover:bg-gray-100 dark:hover:bg-[#282e39] text-gray-400">
+<span class="material-symbols-outlined text-[20px]">tune</span>
+</button>
+</div>
+</div>
+</div>
+</header>
+<!-- Main Content -->
+<main class="flex-1 overflow-y-auto px-4 pb-28 pt-2">
+<!-- Monthly Summary Card -->
+<div class="relative mb-8 overflow-hidden rounded-2xl bg-[#1c1f27] p-5 shadow-lg">
+<!-- Decorative background -->
+<div class="absolute inset-0 opacity-30 mix-blend-overlay" data-alt="Abstract rising financial graph showing growth" style="background-image: url('https://lh3.googleusercontent.com/aida-public/AB6AXuCj-xP-WuENXLt-7Z12K7LVOVDdJc2oVHthQ1fKNpzfLgkxZZVbssnoxGd5n2C7dDHKWmEByW4iwu-hmgp3qnpdJwnWGyAXkaHxZr-yPe9sOj5bnW1I-dtApT25zwsVlG8KO_VEML2gjDShFlZWTmrudmnceaGl3zahwJb01ScyZ7_G_IYBXH_faFooi7cjcRO_782-nKf2BjAHTcpXonUu_xK1IY5lHBL3vHEG7-LDTZemOUHTlimjLiIT0QqrLkMa8sWcKlkdO-fO'); background-size: cover; background-position: center;"></div>
+<div class="absolute inset-0 bg-gradient-to-r from-primary/90 to-purple-900/80 z-0"></div>
+<div class="relative z-10 flex flex-col gap-2">
+<div class="flex items-center justify-between">
+<div class="flex flex-col gap-1">
+<p class="text-blue-100 text-sm font-medium leading-normal flex items-center gap-1">
+<span class="material-symbols-outlined text-[16px]">calendar_month</span>
+                                October 2023
+                            </p>
+<p class="text-white text-3xl font-bold leading-tight tracking-tight">$1,240.50</p>
+</div>
+<div class="h-12 w-12 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center">
+<span class="material-symbols-outlined text-white text-[24px]">analytics</span>
+</div>
+</div>
+<div class="mt-2 flex items-center gap-2">
+<span class="rounded-full bg-green-400/20 px-2 py-0.5 text-xs font-bold text-green-300 flex items-center gap-0.5">
+<span class="material-symbols-outlined text-[14px]">arrow_upward</span> 12%
+                        </span>
+<span class="text-blue-100/70 text-xs">vs last month</span>
+</div>
+</div>
+</div>
+<!-- List Section: Today -->
+<div class="mb-2">
+<h3 class="mb-3 px-1 text-sm font-bold uppercase tracking-wider text-gray-500 dark:text-[#9da6b9]">Today</h3>
+<div class="flex flex-col gap-3">
+<!-- Item 1 -->
+<div class="group flex items-center justify-between rounded-xl bg-white dark:bg-[#1c1f27] p-3 shadow-sm hover:bg-gray-50 dark:hover:bg-[#252932] transition-colors cursor-pointer">
+<div class="flex items-center gap-4">
+<div class="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-orange-100 dark:bg-orange-500/10 text-orange-600 dark:text-orange-400">
+<span class="material-symbols-outlined text-[24px]">coffee</span>
+</div>
+<div class="flex flex-col justify-center">
+<p class="text-base font-bold leading-normal text-gray-900 dark:text-white group-hover:text-primary transition-colors">Starbucks</p>
+<p class="line-clamp-1 text-sm font-normal leading-normal text-gray-500 dark:text-[#9da6b9]">Coffee • 9:41 AM</p>
+</div>
+</div>
+<div class="shrink-0 text-right">
+<p class="text-base font-bold leading-normal text-gray-900 dark:text-white">$5.40</p>
+</div>
+</div>
+<!-- Item 2 -->
+<div class="group flex items-center justify-between rounded-xl bg-white dark:bg-[#1c1f27] p-3 shadow-sm hover:bg-gray-50 dark:hover:bg-[#252932] transition-colors cursor-pointer">
+<div class="flex items-center gap-4">
+<div class="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-blue-100 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400">
+<span class="material-symbols-outlined text-[24px]">local_taxi</span>
+</div>
+<div class="flex flex-col justify-center">
+<p class="text-base font-bold leading-normal text-gray-900 dark:text-white group-hover:text-primary transition-colors">Uber</p>
+<p class="line-clamp-1 text-sm font-normal leading-normal text-gray-500 dark:text-[#9da6b9]">Transport • 8:15 AM</p>
+</div>
+</div>
+<div class="shrink-0 text-right">
+<p class="text-base font-bold leading-normal text-gray-900 dark:text-white">$24.15</p>
+</div>
+</div>
+</div>
+</div>
+<!-- List Section: Yesterday -->
+<div class="mt-6 mb-2">
+<h3 class="mb-3 px-1 text-sm font-bold uppercase tracking-wider text-gray-500 dark:text-[#9da6b9]">Yesterday</h3>
+<div class="flex flex-col gap-3">
+<!-- Item 3 -->
+<div class="group flex items-center justify-between rounded-xl bg-white dark:bg-[#1c1f27] p-3 shadow-sm hover:bg-gray-50 dark:hover:bg-[#252932] transition-colors cursor-pointer">
+<div class="flex items-center gap-4">
+<div class="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-red-100 dark:bg-red-500/10 text-red-600 dark:text-red-400">
+<span class="material-symbols-outlined text-[24px]">shopping_cart</span>
+</div>
+<div class="flex flex-col justify-center">
+<p class="text-base font-bold leading-normal text-gray-900 dark:text-white group-hover:text-primary transition-colors">Target</p>
+<p class="line-clamp-1 text-sm font-normal leading-normal text-gray-500 dark:text-[#9da6b9]">Groceries • 6:30 PM</p>
+</div>
+</div>
+<div class="shrink-0 text-right">
+<p class="text-base font-bold leading-normal text-gray-900 dark:text-white">$89.20</p>
+</div>
+</div>
+<!-- Item 4 -->
+<div class="group flex items-center justify-between rounded-xl bg-white dark:bg-[#1c1f27] p-3 shadow-sm hover:bg-gray-50 dark:hover:bg-[#252932] transition-colors cursor-pointer">
+<div class="flex items-center gap-4">
+<div class="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-purple-100 dark:bg-purple-500/10 text-purple-600 dark:text-purple-400">
+<span class="material-symbols-outlined text-[24px]">restaurant</span>
+</div>
+<div class="flex flex-col justify-center">
+<p class="text-base font-bold leading-normal text-gray-900 dark:text-white group-hover:text-primary transition-colors">Chipotle</p>
+<p class="line-clamp-1 text-sm font-normal leading-normal text-gray-500 dark:text-[#9da6b9]">Food • 1:20 PM</p>
+</div>
+</div>
+<div class="shrink-0 text-right">
+<p class="text-base font-bold leading-normal text-gray-900 dark:text-white">$14.50</p>
+</div>
+</div>
+</div>
+</div>
+<!-- List Section: Oct 22 -->
+<div class="mt-6 mb-2">
+<h3 class="mb-3 px-1 text-sm font-bold uppercase tracking-wider text-gray-500 dark:text-[#9da6b9]">Oct 22</h3>
+<div class="flex flex-col gap-3">
+<!-- Item 5 -->
+<div class="group flex items-center justify-between rounded-xl bg-white dark:bg-[#1c1f27] p-3 shadow-sm hover:bg-gray-50 dark:hover:bg-[#252932] transition-colors cursor-pointer border-l-4 border-primary">
+<div class="flex items-center gap-4">
+<div class="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-cyan-100 dark:bg-cyan-500/10 text-cyan-600 dark:text-cyan-400">
+<span class="material-symbols-outlined text-[24px]">flight</span>
+</div>
+<div class="flex flex-col justify-center">
+<p class="text-base font-bold leading-normal text-gray-900 dark:text-white group-hover:text-primary transition-colors">Delta Airlines</p>
+<p class="line-clamp-1 text-sm font-normal leading-normal text-gray-500 dark:text-[#9da6b9]">Travel • 11:00 AM</p>
+</div>
+</div>
+<div class="shrink-0 text-right">
+<p class="text-base font-bold leading-normal text-primary">$340.00</p>
+</div>
+</div>
+<!-- Item 6 (Processing State) -->
+<div class="group flex items-center justify-between rounded-xl bg-white/50 dark:bg-[#1c1f27]/50 p-3 shadow-sm border border-dashed border-gray-300 dark:border-gray-700">
+<div class="flex items-center gap-4">
+<div class="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-gray-100 dark:bg-gray-800 text-gray-400 animate-pulse">
+<span class="material-symbols-outlined text-[24px]">receipt_long</span>
+</div>
+<div class="flex flex-col justify-center">
+<p class="text-base font-bold leading-normal text-gray-900 dark:text-white">Scanning...</p>
+<div class="flex items-center gap-1 mt-0.5">
+<span class="material-symbols-outlined text-[14px] text-yellow-500">hourglass_top</span>
+<p class="line-clamp-1 text-sm font-medium leading-normal text-yellow-600 dark:text-yellow-500">Processing receipt</p>
+</div>
+</div>
+</div>
+<div class="shrink-0 text-right">
+<p class="text-sm font-bold leading-normal text-gray-400 dark:text-gray-600">--.--</p>
+</div>
+</div>
+</div>
+</div>
+<!-- End of list spacer -->
+<div class="h-8 text-center mt-4">
+<p class="text-xs text-gray-400 dark:text-gray-600">Showing recent transactions</p>
+</div>
+</main>
+<!-- Floating Action Button -->
+<div class="fixed bottom-24 right-6 z-40 group">
+<div class="absolute inset-0 rounded-full bg-primary blur opacity-40 group-hover:opacity-60 transition-opacity"></div>
+<button class="relative flex h-14 w-14 items-center justify-center rounded-full bg-primary text-white shadow-xl hover:bg-blue-600 active:scale-95 transition-all">
+<span class="material-symbols-outlined text-[28px]">add</span>
+</button>
+</div>
+<!-- Bottom Navigation -->
+<nav class="fixed bottom-0 left-0 right-0 z-30 bg-white/90 dark:bg-[#101622]/90 backdrop-blur-xl border-t border-gray-200 dark:border-[#1c1f27]">
+<div class="mx-auto flex h-16 max-w-[480px] items-center justify-around px-2 pb-safe">
+<button class="flex flex-1 flex-col items-center justify-center gap-1 py-1 text-primary">
+<span class="material-symbols-outlined fill-current text-[24px]">receipt_long</span>
+<span class="text-[10px] font-bold">Receipts</span>
+</button>
+<button class="flex flex-1 flex-col items-center justify-center gap-1 py-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors">
+<span class="material-symbols-outlined text-[24px]">pie_chart</span>
+<span class="text-[10px] font-medium">Analytics</span>
+</button>
+<button class="flex flex-1 flex-col items-center justify-center gap-1 py-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors">
+<span class="material-symbols-outlined text-[24px]">group</span>
+<span class="text-[10px] font-medium">Groups</span>
+</button>
+<button class="flex flex-1 flex-col items-center justify-center gap-1 py-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors">
+<span class="material-symbols-outlined text-[24px]">settings</span>
+<span class="text-[10px] font-medium">Settings</span>
+</button>
+</div>
+<!-- Safe area padding for bottom of screen -->
+<div class="h-6 w-full bg-transparent"></div>
+</nav>
+</div>
+</body></html>

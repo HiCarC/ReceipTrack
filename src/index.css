@@ -22,6 +22,9 @@
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     position: relative;
+    font-family: "Manrope", system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: var(--app-bg);
+    color: var(--app-fg);
   }
 
   /* Prevent horizontal scrolling globally */
@@ -44,7 +47,7 @@
       position: relative;
       touch-action: pan-y !important;
       padding-top: env(safe-area-inset-top);
-      background: #0f172a; /* fallback for dark bg */
+      background: var(--app-bg);
     }
     
     /* Prevent iOS Safari from adding padding */
@@ -72,65 +75,83 @@
   }
 
   :root {
-    --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
+    --background: 210 40% 98%;
+    --foreground: 222 47% 11%;
 
     --card: 0 0% 100%;
-    --card-foreground: 222.2 84% 4.9%;
+    --card-foreground: 222 47% 11%;
  
     --popover: 0 0% 100%;
-    --popover-foreground: 222.2 84% 4.9%;
+    --popover-foreground: 222 47% 11%;
  
-    --primary: 222.2 47.4% 11.2%;
+    --primary: 221 83% 53%;
     --primary-foreground: 210 40% 98%;
  
-    --secondary: 210 40% 96.1%;
-    --secondary-foreground: 222.2 47.4% 11.2%;
+    --secondary: 210 40% 96%;
+    --secondary-foreground: 222 47% 11%;
  
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
+    --muted: 210 40% 96%;
+    --muted-foreground: 215 20% 45%;
  
-    --accent: 210 40% 96.1%;
-    --accent-foreground: 222.2 47.4% 11.2%;
+    --accent: 210 40% 96%;
+    --accent-foreground: 222 47% 11%;
+ 
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 214 32% 91%;
+    --input: 214 32% 91%;
+    --ring: 221 83% 53%;
+ 
+    --radius: 0.5rem;
+
+    --app-bg: #f6f7fb;
+    --app-surface: #ffffff;
+    --app-surface2: #eef2f7;
+    --app-primary: #1f6feb;
+    --app-muted: #5b6677;
+    --app-border: #dbe2ea;
+    --app-fg: #0f172a;
+    --app-fg-muted: #475569;
+  }
+ 
+  .dark {
+    --background: 222 39% 10%;
+    --foreground: 210 40% 98%;
+ 
+    --card: 222 39% 12%;
+    --card-foreground: 210 40% 98%;
+ 
+    --popover: 222 39% 12%;
+    --popover-foreground: 210 40% 98%;
+ 
+    --primary: 221 84% 54%;
+    --primary-foreground: 210 40% 98%;
+ 
+    --secondary: 221 24% 20%;
+    --secondary-foreground: 210 40% 98%;
+ 
+    --muted: 221 24% 18%;
+    --muted-foreground: 214 14% 65%;
+ 
+    --accent: 221 24% 18%;
+    --accent-foreground: 210 40% 98%;
  
     --destructive: 0 84.2% 60.2%;
     --destructive-foreground: 210 40% 98%;
 
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --ring: 222.2 84% 4.9%;
- 
-    --radius: 0.5rem;
-  }
- 
-  .dark {
-    --background: 222.2 84% 4.9%;
-    --foreground: 210 40% 98%;
- 
-    --card: 222.2 84% 4.9%;
-    --card-foreground: 210 40% 98%;
- 
-    --popover: 222.2 84% 4.9%;
-    --popover-foreground: 210 40% 98%;
- 
-    --primary: 210 40% 98%;
-    --primary-foreground: 222.2 47.4% 11.2%;
- 
-    --secondary: 217.2 32.6% 17.5%;
-    --secondary-foreground: 210 40% 98%;
- 
-    --muted: 217.2 32.6% 17.5%;
-    --muted-foreground: 215 20.2% 65.1%;
- 
-    --accent: 217.2 32.6% 17.5%;
-    --accent-foreground: 210 40% 98%;
- 
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 210 40% 98%;
- 
-    --border: 217.2 32.6% 17.5%;
-    --input: 217.2 32.6% 17.5%;
-    --ring: 212.7 26.8% 83.9%;
+    --border: 222 28% 20%;
+    --input: 222 28% 20%;
+    --ring: 221 84% 54%;
+
+    --app-bg: #101622;
+    --app-surface: #1c232e;
+    --app-surface2: #1c1f27;
+    --app-primary: #135bec;
+    --app-muted: #9da6b9;
+    --app-border: #2a3241;
+    --app-fg: #e5e7eb;
+    --app-fg-muted: #9da6b9;
   }
 }
  
@@ -141,6 +162,19 @@
   body {
     @apply bg-background text-foreground;
   }
+}
+
+html:not(.dark) .text-white {
+  color: var(--app-fg);
+}
+
+html:not(.dark) .bg-app-primary.text-white,
+html:not(.dark) .bg-app-primary .text-white {
+  color: #ffffff;
+}
+
+html:not(.dark) .text-keep-white {
+  color: #ffffff;
 }
 
 html, body {
@@ -181,7 +215,7 @@ button, input, select, textarea {
 
 header, .fixed.top-0, .sticky.top-0 {
   padding-top: env(safe-area-inset-top);
-  background: #0f172a;
+  background: var(--app-bg);
 }
 
 @media (max-width: 768px) {

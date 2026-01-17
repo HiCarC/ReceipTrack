@@ -37,6 +37,20 @@ function normalizeSplitsToTotal(rawSplits, total) {
   return Object.fromEntries(rounded);
 }
 
+function normalizeSplitKeys(rawSplits, nameToUid) {
+  const merged = {};
+  Object.entries(rawSplits || {}).forEach(([key, amt]) => {
+    const resolved = nameToUid[key] || key;
+    const value = parseFloat(amt) || 0;
+    merged[resolved] = (merged[resolved] || 0) + value;
+  });
+  return merged;
+}
+
+function resolveNameKey(key, nameToUid) {
+  return nameToUid[key] || key;
+}
+
 export default function useGroupBalances(groupId) {
   const { user } = useAuth();
   const [balances, setBalances] = useState({});
@@ -64,12 +78,13 @@ export default function useGroupBalances(groupId) {
       const allUids = new Set();
       Object.values(nameToUid).forEach(uid => allUids.add(uid));
       currentExpenses.forEach(exp => {
-        if (exp.paidBy) allUids.add(exp.paidBy);
-        if (exp.splits) Object.keys(exp.splits).forEach(uid => allUids.add(uid));
+        if (exp.paidBy) allUids.add(resolveNameKey(exp.paidBy, nameToUid));
+        const normalizedSplits = normalizeSplitKeys(exp.splits || {}, nameToUid);
+        Object.keys(normalizedSplits).forEach(uid => allUids.add(uid));
       });
       currentSettlements.forEach(s => {
-        if (s.from) allUids.add(s.from);
-        if (s.to) allUids.add(s.to);
+        if (s.from) allUids.add(resolveNameKey(s.from, nameToUid));
+        if (s.to) allUids.add(resolveNameKey(s.to, nameToUid));
       });
       // Initialize balances
       const working = {};
@@ -77,8 +92,11 @@ export default function useGroupBalances(groupId) {
       // Process expenses (Tricount/ledger logic: payer + (total - their share), each participant -share)
       for (const exp of currentExpenses) {
         const total = roundCents(parseFloat(exp.amount) || 0);
-        const paidBy = exp.paidBy;
-        const splits = normalizeSplitsToTotal(exp.splits || {}, total);
+        const paidBy = resolveNameKey(exp.paidBy, nameToUid);
+        const splits = normalizeSplitsToTotal(
+          normalizeSplitKeys(exp.splits || {}, nameToUid),
+          total
+        );
         Object.entries(splits).forEach(([uid, amount]) => {
           const amt = roundCents(parseFloat(amount) || 0);
           if (!isNaN(amt)) working[uid] = roundCents(working[uid] - amt);
@@ -90,16 +108,19 @@ export default function useGroupBalances(groupId) {
       const reimbursementKeys = new Set();
       for (const exp of currentExpenses) {
         if (exp.expenseType === 'reimbursement' && exp.paidBy && exp.splits) {
-          const toUid = Object.keys(exp.splits)[0];
+          const normalizedSplits = normalizeSplitKeys(exp.splits, nameToUid);
+          const toUid = Object.keys(normalizedSplits)[0];
           const amt = parseFloat(exp.amount);
           const date = exp.date || '';
-          reimbursementKeys.add(`${exp.paidBy}_${toUid}_${amt}_${date}`);
+          reimbursementKeys.add(`${resolveNameKey(exp.paidBy, nameToUid)}_${toUid}_${amt}_${date}`);
         }
       }
       for (const s of currentSettlements) {
         const { from, to, amount, settled, settledAt } = s;
         if (!settled || !from || !to || !amount) continue;
         const amt = parseFloat(amount);
+        const resolvedFrom = resolveNameKey(from, nameToUid);
+        const resolvedTo = resolveNameKey(to, nameToUid);
         // Try to match by from, to, amount, and date (if available)
         let date = '';
         if (settledAt && settledAt.toDate) {
@@ -107,10 +128,10 @@ export default function useGroupBalances(groupId) {
           date = settledAt.toDate().toISOString().slice(0,10);
         }
         // If a reimbursement expense exists for this settlement, skip it
-        if (reimbursementKeys.has(`${from}_${to}_${amt}_${date}`)) continue;
+        if (reimbursementKeys.has(`${resolvedFrom}_${resolvedTo}_${amt}_${date}`)) continue;
         if (!isNaN(amt)) {
-          working[from] = roundCents(working[from] + amt);
-          working[to] = roundCents(working[to] - amt);
+          working[resolvedFrom] = roundCents(working[resolvedFrom] + amt);
+          working[resolvedTo] = roundCents(working[resolvedTo] - amt);
         }
       }
       // Map to names, always include all UIDs

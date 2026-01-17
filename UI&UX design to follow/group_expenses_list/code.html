@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Group Expenses List</title>
+<!-- Tailwind CSS -->
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<!-- Fonts -->
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;700;800&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<!-- Theme Configuration -->
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            colors: {
+              "primary": "#135bec",
+              "background-light": "#f6f6f8",
+              "background-dark": "#101622",
+              "surface-light": "#ffffff",
+              "surface-dark": "#1a2230",
+            },
+            fontFamily: {
+              "display": ["Manrope", "sans-serif"]
+            },
+            borderRadius: {"DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px"},
+          },
+        },
+      }
+    </script>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+  </head>
+<body class="bg-background-light dark:bg-background-dark font-display text-gray-900 dark:text-white transition-colors duration-200">
+<div class="relative flex min-h-screen w-full flex-col overflow-x-hidden pb-32">
+<!-- Top Navigation Bar -->
+<div class="flex flex-col gap-2 p-4 pb-2 bg-background-light/95 dark:bg-background-dark/95 backdrop-blur-md sticky top-0 z-30 transition-colors duration-200">
+<div class="flex items-center h-12 justify-between">
+<button class="flex size-10 shrink-0 items-center justify-center rounded-full text-gray-900 dark:text-white hover:bg-gray-200 dark:hover:bg-surface-dark transition-colors">
+<span class="material-symbols-outlined text-[24px]">arrow_back_ios_new</span>
+</button>
+<div class="flex items-center justify-end">
+<button class="text-primary hover:text-blue-400 text-base font-bold leading-normal tracking-[0.015em] shrink-0 transition-colors">Settle Up</button>
+</div>
+</div>
+<h1 class="text-gray-900 dark:text-white tracking-tight text-[32px] font-extrabold leading-tight pl-1">Apartment 4B</h1>
+</div>
+<!-- Stats Overview Cards -->
+<div class="flex flex-wrap gap-3 px-4 py-2">
+<!-- Total Spent Card -->
+<div class="flex flex-1 basis-[fit-content] flex-col gap-1 rounded-xl border border-gray-200 dark:border-gray-800 bg-surface-light dark:bg-surface-dark p-4 items-start shadow-sm transition-colors duration-200">
+<p class="text-gray-900 dark:text-white tracking-tight text-2xl font-bold leading-tight">$1,250.00</p>
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-gray-400 text-lg">payments</span>
+<p class="text-gray-500 dark:text-gray-400 text-sm font-medium leading-normal">Total Spent</p>
+</div>
+</div>
+<!-- Owed Card -->
+<div class="flex flex-1 basis-[fit-content] flex-col gap-1 rounded-xl border border-gray-200 dark:border-gray-800 bg-surface-light dark:bg-surface-dark p-4 items-start shadow-sm transition-colors duration-200">
+<p class="text-green-600 dark:text-green-400 tracking-tight text-2xl font-bold leading-tight">$120.00</p>
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-green-600 dark:text-green-400 text-lg">arrow_downward</span>
+<p class="text-gray-500 dark:text-gray-400 text-sm font-medium leading-normal">You are owed</p>
+</div>
+</div>
+</div>
+<!-- Filter Chips -->
+<div class="flex gap-2 px-4 py-2 overflow-x-auto no-scrollbar mask-gradient-right">
+<!-- Active Filter -->
+<button class="flex h-9 shrink-0 items-center justify-center gap-x-2 rounded-full bg-primary pl-4 pr-4 transition-transform active:scale-95">
+<span class="text-white text-sm font-bold leading-normal">All</span>
+</button>
+<!-- Inactive Filters -->
+<button class="flex h-9 shrink-0 items-center justify-center gap-x-2 rounded-full bg-surface-light dark:bg-surface-dark border border-gray-200 dark:border-gray-700 pl-4 pr-4 transition-transform active:scale-95 hover:border-gray-300 dark:hover:border-gray-600">
+<span class="text-gray-700 dark:text-gray-300 text-sm font-medium leading-normal">Your Expenses</span>
+</button>
+<button class="flex h-9 shrink-0 items-center justify-center gap-x-2 rounded-full bg-surface-light dark:bg-surface-dark border border-gray-200 dark:border-gray-700 pl-4 pr-4 transition-transform active:scale-95 hover:border-gray-300 dark:hover:border-gray-600">
+<span class="text-gray-700 dark:text-gray-300 text-sm font-medium leading-normal">Category</span>
+</button>
+<button class="flex h-9 shrink-0 items-center justify-center gap-x-2 rounded-full bg-surface-light dark:bg-surface-dark border border-gray-200 dark:border-gray-700 pl-4 pr-4 transition-transform active:scale-95 hover:border-gray-300 dark:hover:border-gray-600">
+<span class="text-gray-700 dark:text-gray-300 text-sm font-medium leading-normal">Unsettled</span>
+</button>
+</div>
+<!-- Expense List -->
+<div class="flex flex-col mt-2">
+<!-- Date Header: Today -->
+<div class="sticky top-[140px] z-20 bg-background-light/95 dark:bg-background-dark/95 backdrop-blur-sm px-5 pb-2 pt-4">
+<h3 class="text-gray-500 dark:text-gray-400 text-xs font-bold uppercase tracking-widest">Today</h3>
+</div>
+<!-- List Item 1 -->
+<div class="group flex items-center gap-4 px-4 py-3 cursor-pointer hover:bg-surface-light dark:hover:bg-surface-dark/50 transition-colors border-b border-gray-100 dark:border-gray-800/50">
+<div class="relative flex items-center justify-center h-12 w-12 rounded-full bg-blue-100 dark:bg-blue-900/30 text-primary shrink-0">
+<span class="material-symbols-outlined">wifi</span>
+</div>
+<div class="flex flex-col flex-1 justify-center gap-0.5">
+<p class="text-gray-900 dark:text-white text-base font-bold leading-snug line-clamp-1 group-hover:text-primary transition-colors">Internet Bill</p>
+<p class="text-gray-500 dark:text-gray-400 text-sm font-normal leading-normal line-clamp-1">Paid by <span class="text-gray-700 dark:text-gray-200 font-medium">Sarah</span></p>
+</div>
+<div class="shrink-0 text-right flex flex-col items-end">
+<p class="text-gray-900 dark:text-white text-base font-bold leading-normal">$80.00</p>
+<p class="text-xs font-medium text-gray-400 dark:text-gray-500">You owe $40.00</p>
+</div>
+</div>
+<!-- List Item 2 -->
+<div class="group flex items-center gap-4 px-4 py-3 cursor-pointer hover:bg-surface-light dark:hover:bg-surface-dark/50 transition-colors border-b border-gray-100 dark:border-gray-800/50">
+<div class="relative h-12 w-12 shrink-0">
+<div class="h-full w-full rounded-full bg-cover bg-center border border-gray-100 dark:border-gray-700" data-alt="A shopping basket filled with fresh groceries" style="background-image: url('https://lh3.googleusercontent.com/aida-public/AB6AXuD3Pj1Z-1XU3IJlLkqBe3hHXc1BxI6hp8DvaqG8oTIFOSpvgk-qIU0oGLx5ilUNHbNl37nKeDjSyqw7y6qWQ32c8J2hrFfj0el3BOvUCFRImUS2TEzE-1EVeJWn4Ba2tJJP2dwOvRk8GHB_mn9aZfacOG6j0O6Y6naW7xKJLi9TWmZ0G-kb7XYoSHk4ii18tXijfLKjhC_W_Rxv4KBT6hpxrsGiVRqr_ve6pJuSLb7VA5Cxz0Y7TKpq-w6BIRmE8GrQOOucnZ1HRBIP');">
+</div>
+<div class="absolute -bottom-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full bg-surface-light dark:bg-surface-dark ring-2 ring-background-light dark:ring-background-dark">
+<span class="material-symbols-outlined text-[12px] text-gray-900 dark:text-white">person</span>
+</div>
+</div>
+<div class="flex flex-col flex-1 justify-center gap-0.5">
+<p class="text-gray-900 dark:text-white text-base font-bold leading-snug line-clamp-1 group-hover:text-primary transition-colors">Groceries</p>
+<p class="text-gray-500 dark:text-gray-400 text-sm font-normal leading-normal line-clamp-1">Paid by <span class="text-primary font-bold">You</span></p>
+</div>
+<div class="shrink-0 text-right flex flex-col items-end">
+<p class="text-primary text-base font-bold leading-normal">$145.50</p>
+<p class="text-xs font-medium text-green-600 dark:text-green-400">Lent</p>
+</div>
+</div>
+<!-- Date Header: Yesterday -->
+<div class="sticky top-[140px] z-20 bg-background-light/95 dark:bg-background-dark/95 backdrop-blur-sm px-5 pb-2 pt-6">
+<h3 class="text-gray-500 dark:text-gray-400 text-xs font-bold uppercase tracking-widest">Yesterday</h3>
+</div>
+<!-- List Item 3 -->
+<div class="group flex items-center gap-4 px-4 py-3 cursor-pointer hover:bg-surface-light dark:hover:bg-surface-dark/50 transition-colors border-b border-gray-100 dark:border-gray-800/50">
+<div class="relative flex items-center justify-center h-12 w-12 rounded-full bg-orange-100 dark:bg-orange-900/30 text-orange-600 dark:text-orange-400 shrink-0">
+<span class="material-symbols-outlined">restaurant</span>
+</div>
+<div class="flex flex-col flex-1 justify-center gap-0.5">
+<p class="text-gray-900 dark:text-white text-base font-bold leading-snug line-clamp-1 group-hover:text-primary transition-colors">Dinner at Mario's</p>
+<p class="text-gray-500 dark:text-gray-400 text-sm font-normal leading-normal line-clamp-1">Paid by <span class="text-gray-700 dark:text-gray-200 font-medium">Mike</span></p>
+</div>
+<div class="shrink-0 text-right flex flex-col items-end">
+<p class="text-gray-900 dark:text-white text-base font-bold leading-normal">$88.20</p>
+<p class="text-xs font-medium text-red-500 dark:text-red-400">Borrowed</p>
+</div>
+</div>
+<!-- Date Header: October 20 -->
+<div class="sticky top-[140px] z-20 bg-background-light/95 dark:bg-background-dark/95 backdrop-blur-sm px-5 pb-2 pt-6">
+<h3 class="text-gray-500 dark:text-gray-400 text-xs font-bold uppercase tracking-widest">October 20</h3>
+</div>
+<!-- List Item 4 -->
+<div class="group flex items-center gap-4 px-4 py-3 cursor-pointer hover:bg-surface-light dark:hover:bg-surface-dark/50 transition-colors border-b border-gray-100 dark:border-gray-800/50">
+<div class="relative flex items-center justify-center h-12 w-12 rounded-full bg-purple-100 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400 shrink-0">
+<span class="material-symbols-outlined">cleaning_services</span>
+</div>
+<div class="flex flex-col flex-1 justify-center gap-0.5">
+<p class="text-gray-900 dark:text-white text-base font-bold leading-snug line-clamp-1 group-hover:text-primary transition-colors">Cleaning Supplies</p>
+<p class="text-gray-500 dark:text-gray-400 text-sm font-normal leading-normal line-clamp-1">Paid by <span class="text-primary font-bold">You</span></p>
+</div>
+<div class="shrink-0 text-right flex flex-col items-end">
+<p class="text-primary text-base font-bold leading-normal">$24.99</p>
+<p class="text-xs font-medium text-green-600 dark:text-green-400">Lent</p>
+</div>
+</div>
+<!-- List Item 5 -->
+<div class="group flex items-center gap-4 px-4 py-3 cursor-pointer hover:bg-surface-light dark:hover:bg-surface-dark/50 transition-colors border-b border-gray-100 dark:border-gray-800/50">
+<div class="relative flex items-center justify-center h-12 w-12 rounded-full bg-teal-100 dark:bg-teal-900/30 text-teal-600 dark:text-teal-400 shrink-0">
+<span class="material-symbols-outlined">local_taxi</span>
+</div>
+<div class="flex flex-col flex-1 justify-center gap-0.5">
+<p class="text-gray-900 dark:text-white text-base font-bold leading-snug line-clamp-1 group-hover:text-primary transition-colors">Uber to Airport</p>
+<p class="text-gray-500 dark:text-gray-400 text-sm font-normal leading-normal line-clamp-1">Paid by <span class="text-gray-700 dark:text-gray-200 font-medium">Sarah</span></p>
+</div>
+<div class="shrink-0 text-right flex flex-col items-end">
+<p class="text-gray-900 dark:text-white text-base font-bold leading-normal">$45.00</p>
+<p class="text-xs font-medium text-red-500 dark:text-red-400">Borrowed</p>
+</div>
+</div>
+</div>
+<!-- Floating Action Button Area -->
+<div class="fixed bottom-0 left-0 right-0 p-4 pb-8 z-40 bg-gradient-to-t from-background-light dark:from-background-dark via-background-light/80 dark:via-background-dark/80 to-transparent pointer-events-none">
+<button class="pointer-events-auto flex w-full items-center justify-center gap-2 rounded-xl bg-primary hover:bg-blue-600 py-4 shadow-xl shadow-blue-900/20 dark:shadow-blue-900/40 transition-all active:scale-[0.98]">
+<span class="material-symbols-outlined text-white text-[24px]">add</span>
+<span class="text-white text-lg font-bold leading-none tracking-wide">Add Expense</span>
+</button>
+</div>
+</div>
+</body></html>

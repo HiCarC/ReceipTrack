@@ -38,6 +38,15 @@ const DEFAULT_SETTINGS = {
     includeConvertedAmounts: true
   },
   weekStartsOn: 'monday' // 'monday' or 'sunday'
+  ,
+  appearance: 'dark',
+  appearanceLocked: false,
+  features: {
+    locationInsights: true
+  },
+  security: {
+    faceIdEnabled: false
+  }
 };
 
 // Load settings from localStorage

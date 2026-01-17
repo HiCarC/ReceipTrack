@@ -48,6 +48,15 @@ const FIRESTORE_ENABLED = false;
 // Daily cache tracking
 let dailyCacheStatus = new Map(); // Track which currencies we've fetched today
 
+const resetCachesForBase = (newBase) => {
+  if (sessionCache.base === newBase) return;
+  sessionCache.base = newBase;
+  sessionCache.rates = new Map();
+  sessionCache.conversionCache = new Map();
+  sessionCache.timestamp = null;
+  dailyCacheStatus = new Map();
+};
+
 // Rate limiting for API calls
 let lastApiCall = 0;
 const API_RATE_LIMIT_MS = 1000; // Minimum 1 second between API calls
@@ -148,7 +157,8 @@ const logRateSource = (currency, rate, source, date) => {
  */
 const getCacheKey = (date, currency) => {
   const dateStr = typeof date === 'string' ? date : date.toISOString().split('T')[0];
-  return `${dateStr}_${currency}`;
+  const baseCurrency = getBaseCurrency();
+  return `${baseCurrency}_${dateStr}_${currency}`;
 };
 
 /**
@@ -156,7 +166,8 @@ const getCacheKey = (date, currency) => {
  */
 const getConversionCacheKey = (amount, currency, date) => {
   const dateStr = typeof date === 'string' ? date : date.toISOString().split('T')[0];
-  return `${amount}_${currency}_${dateStr}`;
+  const baseCurrency = getBaseCurrency();
+  return `${baseCurrency}_${amount}_${currency}_${dateStr}`;
 };
 
 /**
@@ -165,8 +176,11 @@ const getConversionCacheKey = (amount, currency, date) => {
 const getBaseCurrency = () => {
   try {
     const settings = JSON.parse(localStorage.getItem('expenseAppSettings') || '{}');
-    return settings.baseCurrency || 'EUR';
+    const baseCurrency = settings.baseCurrency || 'EUR';
+    resetCachesForBase(baseCurrency);
+    return baseCurrency;
   } catch (error) {
+    resetCachesForBase('EUR');
     return 'EUR';
   }
 };
@@ -553,7 +567,7 @@ export const getCurrentExchangeRates = () => {
   // Get rates from session cache
   SUPPORTED_CURRENCIES.forEach(currency => {
     if (currency.code !== baseCurrency) {
-      const cachedRate = sessionCache.rates.get(`${today}_${currency.code}`);
+      const cachedRate = sessionCache.rates.get(getCacheKey(today, currency.code));
       if (cachedRate) {
         rates[currency.code] = cachedRate.rate;
       }
