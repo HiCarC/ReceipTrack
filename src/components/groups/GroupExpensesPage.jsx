@@ -15,6 +15,13 @@ import { Pie, Doughnut } from 'react-chartjs-2';
 import { Bar } from 'react-chartjs-2';
 import html2canvas from 'html2canvas';
 import { useToast } from '@/components/ui/use-toast';
+import {
+  addE2EGroupExpense,
+  deleteE2EGroupExpense,
+  getE2EGroupExpenses,
+  isE2E,
+  updateE2EGroupExpense,
+} from '@/utils/e2eUtils';
 
 const EXPENSE_CATEGORIES = [
   { name: 'Groceries', emoji: '🛒' },
@@ -185,6 +192,7 @@ function GroupExpensesPage({ group, onBack, initialTab, prefill, forceAdd }) {
   const { toast } = useToast();
   // const { groupId } = useParams();
   const groupId = group?.id;
+  const e2eEnabled = isE2E();
   console.log('GroupExpensesPage groupId:', groupId);
   const myName = getMyParticipantName(group, user);
   // If user hasn't claimed a name, show a message and block actions
@@ -299,6 +307,11 @@ function GroupExpensesPage({ group, onBack, initialTab, prefill, forceAdd }) {
       setLoading(false);
       return;
     }
+    if (e2eEnabled) {
+      setExpenses(getE2EGroupExpenses(group.id));
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setError('');
     // Use subcollection: groups/{groupId}/expenses
@@ -393,7 +406,16 @@ function GroupExpensesPage({ group, onBack, initialTab, prefill, forceAdd }) {
         items: [],
       };
       try {
-        await addDoc(collection(db, 'groups', group.id, 'expenses'), payload);
+        if (e2eEnabled) {
+          const expense = addE2EGroupExpense(group.id, {
+            ...payload,
+            id: `e2e-expense-${Date.now()}`,
+            createdAtMs: Date.now(),
+          });
+          setExpenses((prev) => [expense, ...prev]);
+        } else {
+          await addDoc(collection(db, 'groups', group.id, 'expenses'), payload);
+        }
         toast({ title: 'Transfer added', description: `${transferFrom} pays ${transferTo}` });
         setShowAdd(false);
         setTabFade(false);
@@ -477,11 +499,21 @@ function GroupExpensesPage({ group, onBack, initialTab, prefill, forceAdd }) {
         items: (Array.isArray(items) ? items.filter(it => (it.name || it.price)).map(it => ({ name: it.name || '', price: parseFloat(it.price) || 0 })) : []),
       };
 
-      const groupExpenseRef = await addDoc(collection(db, 'groups', group.id, 'expenses'), groupExpenseData);
+      let groupExpenseRef = { id: `e2e-expense-${Date.now()}` };
+      if (e2eEnabled) {
+        const expense = addE2EGroupExpense(group.id, {
+          ...groupExpenseData,
+          id: groupExpenseRef.id,
+          createdAtMs: Date.now(),
+        });
+        setExpenses((prev) => [expense, ...prev]);
+      } else {
+        groupExpenseRef = await addDoc(collection(db, 'groups', group.id, 'expenses'), groupExpenseData);
+      }
 
       // Sync to personal receipts ONLY if the current user paid for this expense
       // Personal receipts should only show actual money spent or received, not future obligations
-      if (group.claimedBy[paidBy] === user.uid) {
+      if (group.claimedBy[paidBy] === user.uid && !e2eEnabled) {
         await syncGroupExpenseToPersonalReceipts(groupExpenseRef.id, groupExpenseData, group);
       }
 
@@ -509,6 +541,7 @@ function GroupExpensesPage({ group, onBack, initialTab, prefill, forceAdd }) {
 
   // Function to sync group expenses to personal receipts
   const syncGroupExpenseToPersonalReceipts = async (groupExpenseId, groupExpenseData, group) => {
+    if (e2eEnabled) return;
     try {
       const personalReceiptData = {
         userId: user.uid,
@@ -543,6 +576,7 @@ function GroupExpensesPage({ group, onBack, initialTab, prefill, forceAdd }) {
 
   // Function to sync reimbursements to personal receipts (positive amounts)
   const syncReimbursementToPersonalReceipts = async (groupExpenseId, reimbursementData, group, amount) => {
+    if (e2eEnabled) return;
     try {
       const personalReceiptData = {
         userId: user.uid,
@@ -580,6 +614,7 @@ function GroupExpensesPage({ group, onBack, initialTab, prefill, forceAdd }) {
 
   // Helper function to update personal receipt for group expense
   const updatePersonalReceiptForGroupExpense = async (groupExpenseId, updatedExpense) => {
+    if (e2eEnabled) return;
     try {
       // Find and update the corresponding personal receipt
       const personalReceiptsQuery = query(
@@ -620,6 +655,7 @@ function GroupExpensesPage({ group, onBack, initialTab, prefill, forceAdd }) {
 
   // Helper function to delete personal receipts for group expense
   const deletePersonalReceiptsForGroupExpense = async (groupExpenseId) => {
+    if (e2eEnabled) return;
     try {
       // Find and delete all corresponding personal receipts
       const personalReceiptsQuery = query(
@@ -637,6 +673,7 @@ function GroupExpensesPage({ group, onBack, initialTab, prefill, forceAdd }) {
 
   // Function to sync existing group expenses to personal receipts (for new group members)
   const syncExistingGroupExpensesToPersonalReceipts = async (existingExpenses) => {
+    if (e2eEnabled) return;
     try {
       // Check if we already have personal receipts for this group
       const existingPersonalReceiptsQuery = query(
@@ -682,16 +719,32 @@ function GroupExpensesPage({ group, onBack, initialTab, prefill, forceAdd }) {
     }
     setError('');
     try {
-      // Use subcollection: groups/{groupId}/expenses
-      await updateDoc(doc(db, 'groups', group.id, 'expenses', editExpense.id), {
-        label: editExpense.label,
-        amount: parseFloat(editExpense.amount),
-        paidBy: editExpense.paidBy,
-        date: editExpense.date,
-      });
-      
-      // Update corresponding personal receipt if it exists
-      await updatePersonalReceiptForGroupExpense(editExpense.id, editExpense);
+      if (e2eEnabled) {
+        updateE2EGroupExpense(group.id, editExpense.id, {
+          label: editExpense.label,
+          amount: parseFloat(editExpense.amount),
+          paidBy: editExpense.paidBy,
+          date: editExpense.date,
+        });
+        setExpenses((prev) =>
+          prev.map((expense) =>
+            expense.id === editExpense.id
+              ? { ...expense, ...editExpense, amount: parseFloat(editExpense.amount) }
+              : expense
+          )
+        );
+      } else {
+        // Use subcollection: groups/{groupId}/expenses
+        await updateDoc(doc(db, 'groups', group.id, 'expenses', editExpense.id), {
+          label: editExpense.label,
+          amount: parseFloat(editExpense.amount),
+          paidBy: editExpense.paidBy,
+          date: editExpense.date,
+        });
+        
+        // Update corresponding personal receipt if it exists
+        await updatePersonalReceiptForGroupExpense(editExpense.id, editExpense);
+      }
       
       setEditExpense(null);
     } catch (err) {
@@ -706,6 +759,11 @@ function GroupExpensesPage({ group, onBack, initialTab, prefill, forceAdd }) {
       return;
     }
     try {
+      if (e2eEnabled) {
+        deleteE2EGroupExpense(group.id, id);
+        setExpenses((prev) => prev.filter((expense) => expense.id !== id));
+        return;
+      }
       // Delete corresponding personal receipts first
       await deletePersonalReceiptsForGroupExpense(id);
       
@@ -759,22 +817,49 @@ function GroupExpensesPage({ group, onBack, initialTab, prefill, forceAdd }) {
       // Use subcollection: groups/{groupId}/expenses
       // Ensure all required fields are present for update
       const original = editExpense;
-      await updateDoc(doc(db, 'groups', group.id, 'expenses', editExpense.id), {
-        label: updated.label,
-        tag: updated.tag || '',
-        amount: updated.amount,
-        paidBy: updated.paidBy,
-        date: updated.date,
-        createdBy: original.createdBy || user.uid,
-        createdAt: original.createdAt || serverTimestamp(),
-        expenseType: updated.expenseType || original.expenseType || 'expense',
-        currency: updated.currency || original.currency || group.currency || 'EUR',
-        splitType: updated.splitType || original.splitType || 'equally',
-        splits: updated.splits, // Always update splits (for all split types)
-        shares: updated.shares, // Always update shares (for all split types)
-        photo: updated.photo || '',
-        splitEnabled: updated.splitEnabled !== undefined ? updated.splitEnabled : (original.splitEnabled !== undefined ? original.splitEnabled : true),
-      });
+      if (e2eEnabled) {
+        updateE2EGroupExpense(group.id, editExpense.id, {
+          label: updated.label,
+          tag: updated.tag || '',
+          amount: updated.amount,
+          paidBy: updated.paidBy,
+          date: updated.date,
+          expenseType: updated.expenseType || original.expenseType || 'expense',
+          currency: updated.currency || original.currency || group.currency || 'EUR',
+          splitType: updated.splitType || original.splitType || 'equally',
+          splits: updated.splits,
+          shares: updated.shares,
+          photo: updated.photo || '',
+          splitEnabled:
+            updated.splitEnabled !== undefined
+              ? updated.splitEnabled
+              : original.splitEnabled !== undefined
+                ? original.splitEnabled
+                : true,
+        });
+        setExpenses((prev) =>
+          prev.map((expense) =>
+            expense.id === editExpense.id ? { ...expense, ...updated } : expense
+          )
+        );
+      } else {
+        await updateDoc(doc(db, 'groups', group.id, 'expenses', editExpense.id), {
+          label: updated.label,
+          tag: updated.tag || '',
+          amount: updated.amount,
+          paidBy: updated.paidBy,
+          date: updated.date,
+          createdBy: original.createdBy || user.uid,
+          createdAt: original.createdAt || serverTimestamp(),
+          expenseType: updated.expenseType || original.expenseType || 'expense',
+          currency: updated.currency || original.currency || group.currency || 'EUR',
+          splitType: updated.splitType || original.splitType || 'equally',
+          splits: updated.splits, // Always update splits (for all split types)
+          shares: updated.shares, // Always update shares (for all split types)
+          photo: updated.photo || '',
+          splitEnabled: updated.splitEnabled !== undefined ? updated.splitEnabled : (original.splitEnabled !== undefined ? original.splitEnabled : true),
+        });
+      }
       setEditExpense(null);
     } catch (err) {
       setError('Failed to update expense');
@@ -788,7 +873,12 @@ function GroupExpensesPage({ group, onBack, initialTab, prefill, forceAdd }) {
       return;
     }
     try {
-      await deleteDoc(doc(db, 'groups', group.id, 'expenses', editExpense.id));
+      if (e2eEnabled) {
+        deleteE2EGroupExpense(group.id, editExpense.id);
+        setExpenses((prev) => prev.filter((expense) => expense.id !== editExpense.id));
+      } else {
+        await deleteDoc(doc(db, 'groups', group.id, 'expenses', editExpense.id));
+      }
       setEditExpense(null);
     } catch (err) {
       setError('Failed to delete expense');
@@ -895,6 +985,10 @@ Please settle up when you can. Thank you!`;
   // Listen to settlements in real-time
   useEffect(() => {
     if (!group?.id) return;
+    if (e2eEnabled) {
+      setSettlements([]);
+      return;
+    }
     const settlementsCol = collection(db, 'groups', group.id, 'settlements');
     const unsub = onSnapshot(settlementsCol, (snapshot) => {
       setSettlements(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
@@ -977,12 +1071,12 @@ Please settle up when you can. Thank you!`;
     <div className="min-h-screen bg-app-bg flex flex-col text-app-fg">
 
         {/* Group header */}
-        <div className="sticky top-0 z-30 border-b border-slate-800/70 bg-app-bg/95 backdrop-blur">
+        <div className="sticky top-0 z-30 border-b border-slate-800/70 bg-app-bg/95 backdrop-blur" data-testid="group-header">
           <div className="flex items-center px-4 pt-4 pb-2">
             <button className="text-slate-300 hover:text-white p-2" onClick={onBack} aria-label="Back">
               <ArrowLeft className="h-5 w-5" />
             </button>
-            <h1 className="text-xl font-semibold text-white flex-1 text-center truncate px-2">{group.name}</h1>
+            <h1 className="text-xl font-semibold text-white flex-1 text-center truncate px-2" role="heading" aria-level="1">{group.name}</h1>
             <div className="flex items-center gap-1">
               <button
                 type="button"
@@ -1258,6 +1352,7 @@ Please settle up when you can. Thank you!`;
         <button
           className="fixed bottom-24 left-1/2 -translate-x-1/2 z-50 bg-blue-600 hover:bg-blue-700 text-white rounded-full w-14 h-14 md:w-16 md:h-16 flex items-center justify-center shadow-2xl border-4 border-blue-900 transition-all duration-300 ease-in-out active:scale-95 text-2xl md:text-3xl"
           onClick={() => setShowAdd(true)}
+          aria-label="Add expense"
         >
           <Plus className="h-8 w-8 md:h-10 md:w-10" />
         </button>

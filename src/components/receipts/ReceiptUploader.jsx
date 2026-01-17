@@ -1045,6 +1045,9 @@ export default function ReceiptUploader({ className, showOnly, onTabChange, onNe
   const normalizeToLocalMidnight = useCallback((d) => {
     if (!d) return null;
     if (typeof d.toDate === 'function') { d = d.toDate(); } // Handle Firestore Timestamps
+    if (d && typeof d === 'object' && typeof d.seconds === 'number') {
+      d = new Date(d.seconds * 1000);
+    }
     if (typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d)) {
       // Parse as local date (YYYY-MM-DD)
       const [year, month, day] = d.split('-').map(Number);

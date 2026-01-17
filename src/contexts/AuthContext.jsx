@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useRef } from 'r
 import { getAuth, onAuthStateChanged, signInWithPopup, GoogleAuthProvider, signOut, signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail as firebaseSendPasswordResetEmail, sendEmailVerification as firebaseSendEmailVerification, updateProfile as firebaseUpdateProfile, updateEmail as firebaseUpdateEmail, verifyBeforeUpdateEmail, connectAuthEmulator } from 'firebase/auth';
 import { doc, updateDoc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../firebase';
+import { getE2EUser, isE2E } from '@/utils/e2eUtils';
 
 const AuthContext = createContext();
 
@@ -16,6 +17,11 @@ export function AuthProvider({ children }) {
   const emulatorConnectedRef = useRef(false);
 
   useEffect(() => {
+    if (isE2E()) {
+      setUser(getE2EUser());
+      setLoading(false);
+      return () => {};
+    }
     let unsubscribe = () => {};
     let cancelled = false;
 

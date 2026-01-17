@@ -23,6 +23,7 @@ import {
 } from "firebase/firestore";
 import { useAuth } from "@/contexts/AuthContext";
 import QRCode from "react-qr-code";
+import { addE2EGroup, getE2EGroups, isE2E, updateE2EGroup } from "@/utils/e2eUtils";
 
 export default function GroupHomeScreen({ onGroupEnter }) {
   const { user } = useAuth();
@@ -52,6 +53,11 @@ export default function GroupHomeScreen({ onGroupEnter }) {
   useEffect(() => {
     if (!user) return;
     setLoading(true);
+    if (isE2E()) {
+      setGroups(getE2EGroups());
+      setLoading(false);
+      return;
+    }
 
     const createdQ = query(
       collection(db, "groups"),
@@ -125,12 +131,22 @@ export default function GroupHomeScreen({ onGroupEnter }) {
 
     setCreating(true);
     try {
-      const docRef = await addDoc(collection(db, "groups"), groupData);
-      setShowCreate(false);
-      setGroupName("");
-      setParticipants([user.displayName]);
-      setLastCreatedGroup({ id: docRef.id, ...groupData });
-      setShowShare(true);
+      if (isE2E()) {
+        const docRef = addE2EGroup({ id: `e2e-group-${Date.now()}`, ...groupData });
+        setShowCreate(false);
+        setGroupName("");
+        setParticipants([user.displayName]);
+        setLastCreatedGroup(docRef);
+        setGroups(getE2EGroups());
+        setShowShare(true);
+      } else {
+        const docRef = await addDoc(collection(db, "groups"), groupData);
+        setShowCreate(false);
+        setGroupName("");
+        setParticipants([user.displayName]);
+        setLastCreatedGroup({ id: docRef.id, ...groupData });
+        setShowShare(true);
+      }
     } catch (err) {
       console.error(err);
       setError("Failed to create group.");
@@ -157,10 +173,17 @@ export default function GroupHomeScreen({ onGroupEnter }) {
     if (!pendingClaim || !user) return;
     const { group, name } = pendingClaim;
     try {
-      await updateDoc(doc(db, "groups", group.id), {
-        [`claimedBy.${name}`]: user.uid,
-        memberUids: arrayUnion(user.uid),
-      });
+      if (isE2E()) {
+        const claimedBy = { ...(group.claimedBy || {}), [name]: user.uid };
+        const memberUids = Array.from(new Set([...(group.memberUids || []), user.uid]));
+        updateE2EGroup(group.id, { claimedBy, memberUids });
+        setGroups(getE2EGroups());
+      } else {
+        await updateDoc(doc(db, "groups", group.id), {
+          [`claimedBy.${name}`]: user.uid,
+          memberUids: arrayUnion(user.uid),
+        });
+      }
       setPendingClaim(null);
       onGroupEnter?.({
         ...group,
@@ -261,6 +284,7 @@ export default function GroupHomeScreen({ onGroupEnter }) {
                 <li key={group.id}>
                   <button
                     onClick={() => handleEnterGroup(group)}
+                    data-testid="group-item"
                     className="group flex w-full items-center gap-4 rounded-2xl border border-transparent bg-[#1c1f27] p-4 text-left shadow-sm transition hover:border-[#2a3241]"
                   >
                     <div className="relative h-14 w-14 rounded-full bg-[#2a3241] text-xl font-semibold flex items-center justify-center">
@@ -555,10 +579,16 @@ export default function GroupHomeScreen({ onGroupEnter }) {
                     <button
                       className="ml-4 bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-lg shadow transition-all text-sm"
                       onClick={async () => {
-                        const groupRef = doc(db, "groups", g.id);
                         const newArchivedBy = (g.archivedBy || []).filter(
                           (uid) => uid !== user.uid
                         );
+                        if (isE2E()) {
+                          updateE2EGroup(g.id, { archivedBy: newArchivedBy });
+                          setGroups(getE2EGroups());
+                          setShowArchived(false);
+                          return;
+                        }
+                        const groupRef = doc(db, "groups", g.id);
                         await updateDoc(groupRef, { archivedBy: newArchivedBy });
                         setShowArchived(false);
                       }}

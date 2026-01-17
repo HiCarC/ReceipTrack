@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { collection, getDocs } from 'firebase/firestore';
 import { db } from '@/firebase';
+import { getE2EGroups, isE2E } from '@/utils/e2eUtils';
 
 export default function useReceiptGroups({ user, receipts }) {
   const [recentGroups, setRecentGroups] = useState([]);
@@ -13,6 +14,21 @@ export default function useReceiptGroups({ user, receipts }) {
     const load = async () => {
       try {
         if (!user) return;
+        if (isE2E()) {
+          const list = getE2EGroups();
+          const counts = {};
+          receipts.forEach(r => { if (r.groupId) counts[r.groupId] = (counts[r.groupId] || 0) + 1; });
+          const enriched = list.map(g => ({
+            id: g.id,
+            name: g.name || `Group ${g.id.slice(0, 4)}`,
+            emoji: g.emoji || 'Group',
+            uses: counts[g.id] || 0,
+            archivedBy: Array.isArray(g.archivedBy) ? g.archivedBy : [],
+          }));
+          setGroups(enriched);
+          setRecentGroups(enriched);
+          return;
+        }
         const snap = await getDocs(collection(db, 'groups'));
         const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
         const active = list.filter(g => {

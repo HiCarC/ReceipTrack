@@ -40,6 +40,12 @@ const formatReceiptDateTime = (receipt) => {
   return isToday ? `Today, ${timeLabel}` : `${dateLabel} ${timeLabel}`;
 };
 
+export const _test = {
+  getMarkerPosition,
+  getReceiptTitle,
+  formatReceiptDateTime,
+};
+
 export default function MapWidget({ className = '', onViewMap }) {
   const { user } = useAuth();
   const [receipts, setReceipts] = useState([]);

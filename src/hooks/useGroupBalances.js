@@ -51,6 +51,91 @@ function resolveNameKey(key, nameToUid) {
   return nameToUid[key] || key;
 }
 
+function computeBalances(expenses, settlements, claimedBy) {
+  const nameToUid = claimedBy || {};
+  const uidToName = Object.fromEntries(
+    Object.entries(nameToUid).map(([name, uid]) => [uid, name])
+  );
+
+  const allUids = new Set();
+  Object.values(nameToUid).forEach(uid => allUids.add(uid));
+  expenses.forEach(exp => {
+    if (exp.paidBy) allUids.add(resolveNameKey(exp.paidBy, nameToUid));
+    const normalizedSplits = normalizeSplitKeys(exp.splits || {}, nameToUid);
+    Object.keys(normalizedSplits).forEach(uid => allUids.add(uid));
+  });
+  settlements.forEach(s => {
+    if (s.from) allUids.add(resolveNameKey(s.from, nameToUid));
+    if (s.to) allUids.add(resolveNameKey(s.to, nameToUid));
+  });
+
+  const working = {};
+  allUids.forEach(uid => { working[uid] = 0; });
+
+  for (const exp of expenses) {
+    const total = roundCents(parseFloat(exp.amount) || 0);
+    const paidBy = resolveNameKey(exp.paidBy, nameToUid);
+    const splits = normalizeSplitsToTotal(
+      normalizeSplitKeys(exp.splits || {}, nameToUid),
+      total
+    );
+    Object.entries(splits).forEach(([uid, amount]) => {
+      const amt = roundCents(parseFloat(amount) || 0);
+      if (!isNaN(amt)) working[uid] = roundCents(working[uid] - amt);
+    });
+    if (paidBy) working[paidBy] = roundCents(working[paidBy] + total);
+  }
+
+  const reimbursementKeys = new Set();
+  for (const exp of expenses) {
+    if (exp.expenseType === 'reimbursement' && exp.paidBy && exp.splits) {
+      const normalizedSplits = normalizeSplitKeys(exp.splits, nameToUid);
+      const toUid = Object.keys(normalizedSplits)[0];
+      const amt = parseFloat(exp.amount);
+      const date = exp.date || '';
+      reimbursementKeys.add(`${resolveNameKey(exp.paidBy, nameToUid)}_${toUid}_${amt}_${date}`);
+    }
+  }
+
+  for (const s of settlements) {
+    const { from, to, amount, settled, settledAt } = s;
+    if (!settled || !from || !to || !amount) continue;
+    const amt = parseFloat(amount);
+    const resolvedFrom = resolveNameKey(from, nameToUid);
+    const resolvedTo = resolveNameKey(to, nameToUid);
+    let date = '';
+    if (settledAt && settledAt.toDate) {
+      date = settledAt.toDate().toISOString().slice(0,10);
+    }
+    if (reimbursementKeys.has(`${resolvedFrom}_${resolvedTo}_${amt}_${date}`)) continue;
+    if (!isNaN(amt)) {
+      working[resolvedFrom] = roundCents(working[resolvedFrom] + amt);
+      working[resolvedTo] = roundCents(working[resolvedTo] - amt);
+    }
+  }
+
+  const finalBalances = {};
+  let sum = 0;
+  allUids.forEach(uid => {
+    const name = uidToName[uid] || uid;
+    let value = roundCents(working[uid] || 0);
+    if (Math.abs(value) < 0.005) value = 0.00;
+    finalBalances[name] = value;
+    sum += value;
+  });
+
+  if (Math.abs(sum) >= 0.005) {
+    let maxKey = Object.keys(finalBalances)[0];
+    let maxAbs = Math.abs(finalBalances[maxKey]);
+    Object.entries(finalBalances).forEach(([k, v]) => {
+      if (Math.abs(v) > maxAbs) { maxKey = k; maxAbs = Math.abs(v); }
+    });
+    finalBalances[maxKey] = roundCents(finalBalances[maxKey] - sum);
+  }
+
+  return finalBalances;
+}
+
 export default function useGroupBalances(groupId) {
   const { user } = useAuth();
   const [balances, setBalances] = useState({});
@@ -70,90 +155,8 @@ export default function useGroupBalances(groupId) {
     let unsubscribeSettlements = null;
     let currentExpenses = [];
     let currentSettlements = [];
-    let nameToUid = {};
-    let uidToName = {};
-
     const recalcBalances = () => {
-      // Collect all UIDs from claimedBy, expenses, and settlements
-      const allUids = new Set();
-      Object.values(nameToUid).forEach(uid => allUids.add(uid));
-      currentExpenses.forEach(exp => {
-        if (exp.paidBy) allUids.add(resolveNameKey(exp.paidBy, nameToUid));
-        const normalizedSplits = normalizeSplitKeys(exp.splits || {}, nameToUid);
-        Object.keys(normalizedSplits).forEach(uid => allUids.add(uid));
-      });
-      currentSettlements.forEach(s => {
-        if (s.from) allUids.add(resolveNameKey(s.from, nameToUid));
-        if (s.to) allUids.add(resolveNameKey(s.to, nameToUid));
-      });
-      // Initialize balances
-      const working = {};
-      allUids.forEach(uid => { working[uid] = 0; });
-      // Process expenses (Tricount/ledger logic: payer + (total - their share), each participant -share)
-      for (const exp of currentExpenses) {
-        const total = roundCents(parseFloat(exp.amount) || 0);
-        const paidBy = resolveNameKey(exp.paidBy, nameToUid);
-        const splits = normalizeSplitsToTotal(
-          normalizeSplitKeys(exp.splits || {}, nameToUid),
-          total
-        );
-        Object.entries(splits).forEach(([uid, amount]) => {
-          const amt = roundCents(parseFloat(amount) || 0);
-          if (!isNaN(amt)) working[uid] = roundCents(working[uid] - amt);
-        });
-        if (paidBy) working[paidBy] = roundCents(working[paidBy] + total);
-      }
-      // Process settlements, but ignore those that have a matching reimbursement expense
-      // Build a set of reimbursement keys: `${from}_${to}_${amount}_${date}`
-      const reimbursementKeys = new Set();
-      for (const exp of currentExpenses) {
-        if (exp.expenseType === 'reimbursement' && exp.paidBy && exp.splits) {
-          const normalizedSplits = normalizeSplitKeys(exp.splits, nameToUid);
-          const toUid = Object.keys(normalizedSplits)[0];
-          const amt = parseFloat(exp.amount);
-          const date = exp.date || '';
-          reimbursementKeys.add(`${resolveNameKey(exp.paidBy, nameToUid)}_${toUid}_${amt}_${date}`);
-        }
-      }
-      for (const s of currentSettlements) {
-        const { from, to, amount, settled, settledAt } = s;
-        if (!settled || !from || !to || !amount) continue;
-        const amt = parseFloat(amount);
-        const resolvedFrom = resolveNameKey(from, nameToUid);
-        const resolvedTo = resolveNameKey(to, nameToUid);
-        // Try to match by from, to, amount, and date (if available)
-        let date = '';
-        if (settledAt && settledAt.toDate) {
-          // Firestore Timestamp
-          date = settledAt.toDate().toISOString().slice(0,10);
-        }
-        // If a reimbursement expense exists for this settlement, skip it
-        if (reimbursementKeys.has(`${resolvedFrom}_${resolvedTo}_${amt}_${date}`)) continue;
-        if (!isNaN(amt)) {
-          working[resolvedFrom] = roundCents(working[resolvedFrom] + amt);
-          working[resolvedTo] = roundCents(working[resolvedTo] - amt);
-        }
-      }
-      // Map to names, always include all UIDs
-      const finalBalances = {};
-      let sum = 0;
-      allUids.forEach(uid => {
-        const name = uidToName[uid] || uid;
-        let value = roundCents(working[uid] || 0);
-        if (Math.abs(value) < 0.005) value = 0.00;
-        finalBalances[name] = value;
-        sum += value;
-      });
-      // Ensure exact zero sum by adjusting the largest absolute balance
-      if (Math.abs(sum) >= 0.005) {
-        let maxKey = Object.keys(finalBalances)[0];
-        let maxAbs = Math.abs(finalBalances[maxKey]);
-        Object.entries(finalBalances).forEach(([k, v]) => {
-          if (Math.abs(v) > maxAbs) { maxKey = k; maxAbs = Math.abs(v); }
-        });
-        finalBalances[maxKey] = roundCents(finalBalances[maxKey] - sum);
-      }
-      setBalances(finalBalances);
+      setBalances(computeBalances(currentExpenses, currentSettlements, nameToUid));
       setLoading(false);
     };
 
@@ -167,9 +170,6 @@ export default function useGroupBalances(groupId) {
         }
         const groupData = groupSnap.data();
         nameToUid = groupData?.claimedBy || {};
-        uidToName = Object.fromEntries(
-          Object.entries(nameToUid).map(([name, uid]) => [uid, name])
-        );
         // Subscribe to expenses
         unsubscribeExpenses = onSnapshot(expensesRef, (expenseSnap) => {
           currentExpenses = expenseSnap.docs.map((doc) => doc.data());
@@ -195,4 +195,12 @@ export default function useGroupBalances(groupId) {
   }, [user, groupId]);
 
   return { balances, loading, error };
-} 
+}
+
+export const _test = {
+  roundCents,
+  normalizeSplitsToTotal,
+  normalizeSplitKeys,
+  resolveNameKey,
+  computeBalances,
+};
