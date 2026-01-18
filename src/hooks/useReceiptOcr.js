@@ -627,6 +627,9 @@ const useReceiptOcr = ({
           status: 'queued',
         });
         toast({ title: 'Saved offline', description: 'Saved offline. Will sync when online.' });
+        if (onTabChange) {
+          onTabChange('expenses');
+        }
       } else {
         if (selectedGroupId) {
           try {

@@ -185,6 +185,12 @@ export default function useReceiptCamera({
     void applyFlash(desiredState);
   }, [applyFlash, isCameraOpen, isCameraReady, pendingFlash]);
 
+  useEffect(() => {
+    return () => {
+      stopCamera();
+    };
+  }, [stopCamera]);
+
   return {
     canvasRef,
     videoRef,

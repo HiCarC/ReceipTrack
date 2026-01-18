@@ -13,18 +13,17 @@ export default function MobileNavBar({ currentTab, onTabChange, needsFixCount = 
   const { isLoading } = useLoading();
 
   const handleTabChange = (tab) => {
+    if (isLoading) {
+      return;
+    }
     if (window.navigator && window.navigator.vibrate) {
       window.navigator.vibrate(18);
     }
     onTabChange(tab);
   };
 
-  if (isLoading) {
-    return null;
-  }
-
   return (
-    <nav className="fixed bottom-0 left-0 right-0 z-[2147483646] border-t border-[#1c1f27] bg-[#101622]/90 backdrop-blur-xl">
+    <nav className={`fixed bottom-0 left-0 right-0 z-[2147483646] border-t border-[#1c1f27] bg-[#101622]/90 backdrop-blur-xl ${isLoading ? 'pointer-events-none opacity-70' : ''}`}>
       <div className="relative mx-auto flex max-w-md items-center justify-between px-4 pb-6 pt-2">
         {showScanButton && (
           <button
@@ -44,11 +43,12 @@ export default function MobileNavBar({ currentTab, onTabChange, needsFixCount = 
               key={id}
               type="button"
               onClick={() => handleTabChange(id)}
-              className={`flex flex-1 flex-col items-center justify-center gap-1 py-2 text-[10px] font-medium transition-colors ${
-                isActive ? 'text-app-primary' : 'text-slate-500'
-              }`}
-              aria-label={label}
-            >
+            className={`flex flex-1 flex-col items-center justify-center gap-1 py-2 text-[10px] font-medium transition-colors ${
+              isActive ? 'text-app-primary' : 'text-slate-500'
+            }`}
+            aria-label={label}
+            aria-disabled={isLoading}
+          >
               <div className="relative">
                 <Icon className="h-5 w-5" />
                 {id === 'receipts' && needsFixCount > 0 && (

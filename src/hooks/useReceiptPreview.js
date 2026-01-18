@@ -75,7 +75,6 @@ export default function useReceiptPreview({
     setShowFullScreenPreview,
     stopCamera,
     toast,
-    onTabChange,
   ]);
 
   const handleRetakePreview = useCallback(() => {
