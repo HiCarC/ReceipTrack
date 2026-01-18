@@ -8,6 +8,8 @@ import SpendingMapBlock from '@/components/expenses/SpendingMapBlock';
 export default function ExpensesTabView({
   analyticsRange,
   setAnalyticsRange,
+  customRange,
+  setCustomRange,
   analyticsSummary,
   analyticsReport,
   formatCurrency,
@@ -38,6 +40,8 @@ export default function ExpensesTabView({
         <AnalyticsStatsHeader
           analyticsRange={analyticsRange}
           setAnalyticsRange={setAnalyticsRange}
+          customRange={customRange}
+          setCustomRange={setCustomRange}
           analyticsSummary={analyticsSummary}
           formatCurrency={formatCurrency}
           settings={settings}

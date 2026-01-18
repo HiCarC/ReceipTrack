@@ -2,6 +2,7 @@ import React from 'react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { X } from 'lucide-react';
 
 export default function AnalyticsReportDialog({
   open,
@@ -15,6 +16,15 @@ export default function AnalyticsReportDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="bg-app-bg text-white border border-white/10 rounded-3xl p-0 max-w-md w-[94vw] max-h-[92vh]">
+        <button
+          type="button"
+          onClick={() => onOpenChange(false)}
+          className="absolute right-4 z-10 rounded-full bg-white/10 p-2 text-white hover:bg-white/20"
+          style={{ top: 'max(1rem, env(safe-area-inset-top))' }}
+          aria-label="Close analytics report"
+        >
+          <X className="h-4 w-4" />
+        </button>
         <DialogHeader className="px-6 pt-6 pb-3 border-b border-white/10">
           <DialogTitle className="text-xl font-bold">Analytics Report</DialogTitle>
           <DialogDescription className="text-sm text-app-muted">

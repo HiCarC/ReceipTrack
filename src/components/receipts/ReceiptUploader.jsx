@@ -292,6 +292,16 @@ export default function ReceiptUploader({ className, showOnly, onTabChange, onNe
   const [currentFunnyMessage, setCurrentFunnyMessage] = useState('');
   const [showSuccessState, setShowSuccessState] = useState(false);
   const [analyticsRange, setAnalyticsRange] = useState('month');
+  const [customRange, setCustomRange] = useState(() => {
+    const end = new Date();
+    end.setHours(0, 0, 0, 0);
+    const start = new Date(end);
+    start.setDate(end.getDate() - 29);
+    return {
+      start: start.toISOString().split('T')[0],
+      end: end.toISOString().split('T')[0],
+    };
+  });
   const [showAnalyticsReport, setShowAnalyticsReport] = useState(false);
 
   // Combine isLoading and isFirestoreLoading for a global busy state
@@ -1482,6 +1492,7 @@ export default function ReceiptUploader({ className, showOnly, onTabChange, onNe
     receipts,
     settings,
     analyticsRange,
+    customRange,
     weekStart,
     weekEnd,
     normalizeToLocalMidnight,
@@ -1625,6 +1636,8 @@ export default function ReceiptUploader({ className, showOnly, onTabChange, onNe
       <ExpensesTabView
         analyticsRange={analyticsRange}
         setAnalyticsRange={setAnalyticsRange}
+        customRange={customRange}
+        setCustomRange={setCustomRange}
         analyticsSummary={analyticsSummary}
         analyticsReport={analyticsReport}
         formatCurrency={formatCurrency}
