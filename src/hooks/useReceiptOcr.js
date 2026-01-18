@@ -224,6 +224,14 @@ const useReceiptOcr = ({
     return Number.isFinite(num) ? num : 0;
   };
 
+  const normalizeMoney = (value) => {
+    if (value === null || value === undefined) return '';
+    const cleaned = value.toString().replace(/[^\d.,-]/g, '').replace(',', '.');
+    if (!cleaned) return '';
+    const num = parseFloat(cleaned);
+    return Number.isFinite(num) ? num.toFixed(2) : '';
+  };
+
   const toDateOnly = (value) => {
     if (!value) return null;
     if (typeof value.toDate === 'function') return value.toDate();
@@ -310,17 +318,17 @@ const useReceiptOcr = ({
         category: ocrData.category || 'Uncategorized',
         createdAt: serverTimestamp(),
         groupId: ocrData.groupId || null,
-        addressRaw: ocrData.addressRaw,
-        addressParsed: ocrData.addressParsed,
-        addressHash: ocrData.addressHash,
-        geocodeStatus: ocrData.geocodeStatus,
-        location: ocrData.location,
-        place: ocrData.place,
-        addressFromOCR: ocrData.addressFromOCR,
-        addressConfidence: ocrData.addressConfidence,
-        addressSource: ocrData.addressSource,
-        addressComponents: ocrData.addressComponents,
-        addressNotes: ocrData.addressNotes,
+        addressRaw: ocrData.addressRaw || null,
+        addressParsed: ocrData.addressParsed || null,
+        addressHash: ocrData.addressHash || null,
+        geocodeStatus: ocrData.geocodeStatus || 'pending',
+        location: ocrData.location || null,
+        place: ocrData.place || null,
+        addressFromOCR: ocrData.addressFromOCR || null,
+        addressConfidence: ocrData.addressConfidence || 0,
+        addressSource: ocrData.addressSource || null,
+        addressComponents: ocrData.addressComponents || null,
+        addressNotes: ocrData.addressNotes || null,
       };
 
       const duplicate = isLikelyDuplicate({
@@ -555,38 +563,43 @@ const useReceiptOcr = ({
         return { ...item, price };
       });
 
+      const rawTotal = parsedJSON.amount ?? parsedJSON.total ?? parsedJSON.total_amount ?? parsedJSON.grand_total;
+      const rawSubtotal = parsedJSON.subtotal ?? parsedJSON.sub_total ?? parsedJSON.subtotal_amount;
+
       let normalizedTax = 0;
       if (parsedJSON.tax) {
         const cleanedTax = parsedJSON.tax.toString().replace(/[^\d.,-]/g, '').replace(',', '.');
         normalizedTax = parseFloat(cleanedTax) || 0;
-      } else if (parsedJSON.subtotal && parsedJSON.amount) {
-        const subtotalVal = parseFloat(parsedJSON.subtotal.toString().replace(/[^\d.,-]/g, '').replace(',', '.')) || 0;
-        const totalVal = parseFloat(parsedJSON.amount.toString().replace(/[^\d.,-]/g, '').replace(',', '.')) || 0;
+      } else if (rawSubtotal && rawTotal) {
+        const subtotalVal = parseFloat(rawSubtotal.toString().replace(/[^\d.,-]/g, '').replace(',', '.')) || 0;
+        const totalVal = parseFloat(rawTotal.toString().replace(/[^\d.,-]/g, '').replace(',', '.')) || 0;
         const diff = totalVal - subtotalVal;
         normalizedTax = diff > 0 ? diff : 0;
       }
+      const normalizedTotal = normalizeMoney(rawTotal);
+      const normalizedSubtotal = normalizeMoney(rawSubtotal);
 
       const ocrData = {
         merchant: parsedJSON.store || '',
-        total: parsedJSON.amount ? parsedJSON.amount.replace(/[^\\d.,]/g, '').replace(',', '.') : '',
+        total: normalizedTotal,
         date: normalizedDate,
         category: parsedJSON.category || '',
         paymentMethod: parsedJSON.payment_method || '',
         currency: parsedJSON.currency || 'EUR',
         items: normalizedItems,
-        subtotal: parsedJSON.subtotal ? parsedJSON.subtotal.replace(/[^\\d.,]/g, '').replace(',', '.') : '',
+        subtotal: normalizedSubtotal,
         tax: normalizedTax,
         addressRaw: addressRaw,
-        addressParsed: geocodeResult?.addressParsed,
-        addressHash: geocodeResult?.addressHash,
+        addressParsed: geocodeResult?.addressParsed || null,
+        addressHash: geocodeResult?.addressHash || null,
         geocodeStatus: geocodeResult?.geocodeStatus || 'pending',
         addressFromOCR: parsedJSON.address || null,
         addressConfidence: parsedJSON.address_confidence || 0,
         addressSource: parsedJSON.address_source || null,
         addressComponents: parsedJSON.address_components || null,
         addressNotes: parsedJSON.address_notes || null,
-        location: geocodeResult?.location,
-        place: geocodeResult?.place,
+        location: geocodeResult?.location || null,
+        place: geocodeResult?.place || null,
       };
 
       if (!navigator.onLine) {
