@@ -71,7 +71,10 @@ export function AuthProvider({ children }) {
             email: user.email || '',
             photoURL: user.photoURL || '',
             createdAt: serverTimestamp(), // Add a creation timestamp
-            settings: {} // Initialize settings
+            settings: {
+              appearance: 'dark',
+              appearanceLocked: false
+            }
           }, { merge: true });
           setUser(user); // Set user after creating document
         }
@@ -111,7 +114,10 @@ export function AuthProvider({ children }) {
       email: user.email || '',
       photoURL: user.photoURL || '',
       createdAt: serverTimestamp(),
-      settings: {} // Initialize settings
+      settings: {
+        appearance: 'dark',
+        appearanceLocked: false
+      }
     }, { merge: true });
   };
 
